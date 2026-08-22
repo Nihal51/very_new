@@ -1,19 +1,19 @@
 # ============================================================================
-#  DriveBuddy — build and publish to GitHub Pages on your own domain.
+#  DriveBuddy — build and publish to GitHub Pages.
 #
-#  This is the only file you need. Push it with the rest of the project and
-#  GitHub builds the site and serves it at your domain on every commit to main.
+#  This is the only file you need. It builds the site and republishes it on
+#  every push to main. Firebase config is committed in .env.production (those
+#  values are public identifiers, not secrets — firestore.rules is what protects
+#  the data), so there are NO variables to set to get a working site.
 #
-#  ONE-TIME SETUP (see README, "Deploying from GitHub"):
-#    1. Repo → Settings → Pages → Source: "GitHub Actions"
-#    2. Repo → Settings → Secrets and variables → Actions → Variables tab →
+#  MINIMAL SETUP:
+#    Repo → Settings → Pages → Source: "GitHub Actions".  That's it — the site
+#    goes live at https://<you>.github.io/<repo>/.
+#
+#  TO USE YOUR OWN DOMAIN (optional, later):
+#    1. Repo → Settings → Secrets and variables → Actions → Variables tab →
 #       add SITE_DOMAIN = your-domain.in   (no https://, no trailing slash)
-#       and the six FIREBASE_* variables below.
-#    3. Point your domain's DNS at GitHub (records are in the README).
-#
-#  The Firebase values are repository *variables*, not secrets, on purpose:
-#  Firebase web config is a set of public identifiers that ship in the browser
-#  bundle either way. firestore.rules is what protects the data.
+#    2. Point your domain's DNS at GitHub (records are in the README).
 # ============================================================================
 
 name: Deploy to GitHub Pages
@@ -70,14 +70,8 @@ jobs:
             echo "::notice::SITE_DOMAIN is not set — publishing to https://${OWNER}.github.io/${REPO}/ instead. Set the SITE_DOMAIN variable to use your own domain."
           fi
 
+      # Firebase config comes from the committed .env.production — nothing to set.
       - name: Build static export
-        env:
-          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
-          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
-          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
-          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ vars.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
-          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
-          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }}
         run: npm run build
 
       - name: Audit the export (SEO, headings, JSON-LD, sitemap)
