@@ -105,12 +105,70 @@ Then <http://localhost:3000>.
 | `npm run lint` | `tsc --noEmit` — type errors only, no build |
 | `npm run og` | Regenerates `public/og.png` (the social preview card) |
 
-## Deploying
+## Deploying from GitHub (free, on your own domain)
+
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) is the only file
+you need. Push the project to GitHub and it builds and publishes the site on
+every commit to `main`. Four one-time steps:
+
+**1. Push the code.** From `C:\git\drivebuddy`:
+
+```bash
+git init && git add -A && git commit -m "DriveBuddy production site"
+```
+
+```bash
+git branch -M main && git remote add origin https://github.com/YOUR-USERNAME/drivebuddy.git && git push -u origin main
+```
+
+**2. Turn on Pages.** Repo → **Settings → Pages → Build and deployment →
+Source: GitHub Actions**. Then set **Custom domain** to your domain and tick
+**Enforce HTTPS** once the certificate is issued (that can take up to an hour).
+
+**3. Add the build variables.** Repo → **Settings → Secrets and variables →
+Actions → Variables** tab → *New repository variable*, seven of them:
+
+| Variable | Value |
+| --- | --- |
+| `SITE_DOMAIN` | `your-domain.in` — no `https://`, no trailing slash |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | copy from [`.env.local`](.env.local) |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | copy from `.env.local` |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | copy from `.env.local` |
+| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | copy from `.env.local` |
+| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | copy from `.env.local` |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | copy from `.env.local` |
+
+`.env.local` is gitignored, which is why these have to be re-entered here.
+They are repository *variables* rather than secrets deliberately: Firebase web
+config is a set of public identifiers that end up in the browser bundle either
+way. [`firestore.rules`](firestore.rules) is what protects the data — see step 1
+at the top of this file.
+
+Miss `SITE_DOMAIN` and the build still succeeds, but with placeholder canonical
+tags; the workflow logs a warning.
+
+**4. Point your DNS at GitHub.** At your registrar, for the apex domain
+(`your-domain.in`) create four `A` records — all with host `@`:
+
+```
+185.199.108.153
+185.199.109.153
+185.199.110.153
+185.199.111.153
+```
+
+and for `www`, one `CNAME` record pointing at `YOUR-USERNAME.github.io`.
+
+DNS takes anywhere from minutes to a few hours. After that, every `git push`
+redeploys: the workflow type-checks, builds, runs the SEO audit, and only
+publishes if all three pass — so a broken commit can't take the site down.
+
+### Other hosts
 
 `npm run build` produces `out/` — a folder of static HTML, CSS, JS and images.
-Upload it, or point a host at the repo:
+Upload it anywhere, or point a host at the repo:
 
-- **Vercel** — import the repo, no configuration needed. Add the six env vars.
+- **Vercel** — import the repo, no configuration needed. Add the seven env vars.
 - **Netlify** — build command `npm run build`, publish directory `out`.
 - **Cloudflare Pages** — build command `npm run build`, output directory `out`.
 - **Firebase Hosting** — add a `hosting` block to `firebase.json` with
