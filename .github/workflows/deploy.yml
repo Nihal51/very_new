@@ -4,16 +4,17 @@
 #  This is the only file you need. It builds the site and republishes it on
 #  every push to main. Firebase config is committed in .env.production (those
 #  values are public identifiers, not secrets — firestore.rules is what protects
-#  the data), so there are NO variables to set to get a working site.
+#  the data), and the domain is committed in the CNAME file, so there are NO
+#  variables to set.
 #
-#  MINIMAL SETUP:
-#    Repo → Settings → Pages → Source: "GitHub Actions".  That's it — the site
-#    goes live at https://<you>.github.io/<repo>/.
+#  SETUP:
+#    Repo → Settings → Pages → Source: "GitHub Actions".  That's it.
 #
-#  TO USE YOUR OWN DOMAIN (optional, later):
-#    1. Repo → Settings → Secrets and variables → Actions → Variables tab →
-#       add SITE_DOMAIN = your-domain.in   (no https://, no trailing slash)
-#    2. Point your domain's DNS at GitHub (records are in the README).
+#  TO CHANGE THE DOMAIN:
+#    Edit the CNAME file in the repo root (one line, e.g. example.in — no
+#    https://, no trailing slash) and point that domain's DNS at GitHub; the
+#    records are in the README. Delete CNAME and the site falls back to
+#    https://<you>.github.io/<repo>/, which also works.
 # ============================================================================
 
 name: Deploy to GitHub Pages
@@ -54,11 +55,21 @@ jobs:
 
       - name: Work out where the site will live
         run: |
-          if [ -n "${{ vars.SITE_DOMAIN }}" ]; then
+          # The domain lives in the committed CNAME file — the same file GitHub
+          # Pages itself reads for the custom-domain setting, so there is exactly
+          # one place to change it. The SITE_DOMAIN variable overrides it, which
+          # is only useful to a fork publishing on a different domain.
+          DOMAIN="${{ vars.SITE_DOMAIN }}"
+          if [ -z "$DOMAIN" ] && [ -f CNAME ]; then
+            DOMAIN=$(tr -d '[:space:]' < CNAME)
+          fi
+          echo "SITE_DOMAIN_RESOLVED=$DOMAIN" >> "$GITHUB_ENV"
+
+          if [ -n "$DOMAIN" ]; then
             # Custom domain: the site sits at the root, so no path prefix.
-            echo "NEXT_PUBLIC_SITE_URL=https://${{ vars.SITE_DOMAIN }}" >> "$GITHUB_ENV"
+            echo "NEXT_PUBLIC_SITE_URL=https://$DOMAIN" >> "$GITHUB_ENV"
             echo "NEXT_PUBLIC_BASE_PATH=" >> "$GITHUB_ENV"
-            echo "Publishing to https://${{ vars.SITE_DOMAIN }}"
+            echo "Publishing to https://$DOMAIN"
           else
             # No custom domain: GitHub Pages serves a project repo from a
             # sub-path, e.g. https://user.github.io/repo/. Without the matching
@@ -67,7 +78,7 @@ jobs:
             REPO="${GITHUB_REPOSITORY#*/}"
             echo "NEXT_PUBLIC_SITE_URL=https://${OWNER}.github.io/${REPO}" >> "$GITHUB_ENV"
             echo "NEXT_PUBLIC_BASE_PATH=/${REPO}" >> "$GITHUB_ENV"
-            echo "::notice::SITE_DOMAIN is not set — publishing to https://${OWNER}.github.io/${REPO}/ instead. Set the SITE_DOMAIN variable to use your own domain."
+            echo "::notice::No CNAME file and no SITE_DOMAIN variable — publishing to https://${OWNER}.github.io/${REPO}/ instead."
           fi
 
       # Firebase config comes from the committed .env.production — nothing to set.
@@ -86,11 +97,11 @@ jobs:
 
           # Ship the custom domain inside the artifact. Without this, a deploy
           # can clear the custom domain configured in Settings.
-          if [ -n "${{ vars.SITE_DOMAIN }}" ]; then
-            echo "${{ vars.SITE_DOMAIN }}" > out/CNAME
-            echo "CNAME → ${{ vars.SITE_DOMAIN }}"
+          if [ -n "$SITE_DOMAIN_RESOLVED" ]; then
+            echo "$SITE_DOMAIN_RESOLVED" > out/CNAME
+            echo "CNAME → $SITE_DOMAIN_RESOLVED"
           else
-            echo "::warning::SITE_DOMAIN is not set — deploying to the default github.io URL with placeholder canonical tags."
+            echo "::warning::No custom domain — deploying to the default github.io URL."
           fi
 
       - uses: actions/configure-pages@v5

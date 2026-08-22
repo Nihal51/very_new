@@ -16,6 +16,12 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const LOGO = path.join(ROOT, 'public', 'assets', 'logo.png');
 const OUT = path.join(ROOT, 'public', 'og.png');
 
+/* The domain printed in the corner, read from the repo-root CNAME file so the
+   card can never advertise a domain the site is not served from. */
+const DOMAIN = await readFile(path.join(ROOT, 'CNAME'), 'utf8')
+  .then((s) => s.trim())
+  .catch(() => 'thedrivebuddy.in');
+
 const W = 1200;
 const H = 630;
 
@@ -85,7 +91,7 @@ const svg = (logoW) => `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" hei
     +91 91114 73929
   </text>
   <text x="${W - PAD}" y="570" font-family="${SANS}" font-size="24" font-weight="400"
-        fill="${MUTED}" text-anchor="end">drivebuddy.in</text>
+        fill="${MUTED}" text-anchor="end">${DOMAIN}</text>
 </svg>`;
 
 const logoMeta = await sharp(LOGO).metadata();

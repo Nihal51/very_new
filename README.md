@@ -47,31 +47,29 @@ someone spamming ten thousand fake bookings into your collection.
 
 ### 2. Set the domain
 
-Two equivalent ways — pick one:
+The domain lives in one file: [`CNAME`](CNAME) in the repo root — a single line,
+no `https://`, no trailing slash. It currently reads `thedrivebuddy.in`. GitHub
+Pages reads that same file for its custom-domain setting, and
+[`deploy.yml`](.github/workflows/deploy.yml) reads it to set the canonical
+origin, so changing the domain is a one-line edit followed by `npm run og`.
 
-**On the host** (recommended, no code change) — add a build environment variable:
+On a host other than GitHub Pages, set a build environment variable instead:
 
 ```
 NEXT_PUBLIC_SITE_URL=https://your-domain.in
 ```
 
-**Or in code** — one line in [`lib/site.ts`](lib/site.ts):
-
-```ts
-process.env.NEXT_PUBLIC_SITE_URL ?? 'https://drivebuddy.in'   // ← change the fallback
-```
-
-Everything derives from it: canonical tags, `sitemap.xml`, `robots.txt`, Open
-Graph and Twitter URLs, and the JSON-LD business identity. No trailing slash
-needed — one is stripped if you leave it. `https://drivebuddy.in` is currently
-a placeholder, so set this before the production build or Google will index the
-wrong canonical.
+Failing both, the fallback literal in [`lib/site.ts`](lib/site.ts) applies.
+Everything derives from this origin: canonical tags, `sitemap.xml`, `robots.txt`,
+Open Graph and Twitter URLs, and the JSON-LD business identity. No trailing
+slash needed — one is stripped if you leave it.
 
 ### 3. Set the environment variables on your host
 
-Copy the six values from [`.env.local`](.env.local) into your host's environment
-settings (Vercel → Settings → Environment Variables, Netlify → Site
-configuration → Environment variables, Cloudflare Pages → Settings →
+Not needed on GitHub Pages — [`.env.production`](.env.production) is committed
+and the workflow uses it. On another host, copy the six values in from
+[`.env.local`](.env.local) (Vercel → Settings → Environment Variables, Netlify →
+Site configuration → Environment variables, Cloudflare Pages → Settings →
 Variables). Without them the booking form still works — it shows the WhatsApp
 fallback instead of saving — but you lose the lead record.
 
@@ -107,48 +105,41 @@ Then <http://localhost:3000>.
 
 ## Deploying from GitHub (free, on your own domain)
 
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) is the only file
-you need. Push the project to GitHub and it builds and publishes the site on
-every commit to `main`. Four one-time steps:
-
-**1. Push the code.** From `C:\git\drivebuddy`:
+Already set up: this repo pushes to
+[github.com/Nihal51/very_new](https://github.com/Nihal51/very_new) and publishes
+to <https://thedrivebuddy.in> via
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) on every commit to
+`main`. To redeploy:
 
 ```bash
-git init && git add -A && git commit -m "DriveBuddy production site"
+git push
+```
+
+Watch it in the repo's **Actions** tab. It type-checks, builds, runs the SEO
+audit, and only publishes if all three pass — so a broken commit cannot take the
+site down. There are no repository variables or secrets to set: the Firebase
+config is committed in [`.env.production`](.env.production) and the domain in
+[`CNAME`](CNAME).
+
+### Setting this up on a fresh repo
+
+**1. Push the code.**
+
+```bash
+git init && git add -A && git commit -m "DriveBuddy production site" && git branch -M main
 ```
 
 ```bash
-git branch -M main && git remote add origin https://github.com/YOUR-USERNAME/drivebuddy.git && git push -u origin main
+git remote add origin https://github.com/YOUR-USERNAME/YOUR-REPO.git && git push -u origin main
 ```
 
 **2. Turn on Pages.** Repo → **Settings → Pages → Build and deployment →
-Source: GitHub Actions**. Then set **Custom domain** to your domain and tick
-**Enforce HTTPS** once the certificate is issued (that can take up to an hour).
+Source: GitHub Actions**. Then set **Custom domain** to the domain in
+[`CNAME`](CNAME) and tick **Enforce HTTPS** once the certificate is issued (that
+can take up to an hour).
 
-**3. Add the build variables.** Repo → **Settings → Secrets and variables →
-Actions → Variables** tab → *New repository variable*, seven of them:
-
-| Variable | Value |
-| --- | --- |
-| `SITE_DOMAIN` | `your-domain.in` — no `https://`, no trailing slash |
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | copy from [`.env.local`](.env.local) |
-| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | copy from `.env.local` |
-| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | copy from `.env.local` |
-| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | copy from `.env.local` |
-| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | copy from `.env.local` |
-| `NEXT_PUBLIC_FIREBASE_APP_ID` | copy from `.env.local` |
-
-`.env.local` is gitignored, which is why these have to be re-entered here.
-They are repository *variables* rather than secrets deliberately: Firebase web
-config is a set of public identifiers that end up in the browser bundle either
-way. [`firestore.rules`](firestore.rules) is what protects the data — see step 1
-at the top of this file.
-
-Miss `SITE_DOMAIN` and the build still succeeds, but with placeholder canonical
-tags; the workflow logs a warning.
-
-**4. Point your DNS at GitHub.** At your registrar, for the apex domain
-(`your-domain.in`) create four `A` records — all with host `@`:
+**3. Point your DNS at GitHub.** At your registrar, for the apex domain create
+four `A` records — all with host `@`:
 
 ```
 185.199.108.153
@@ -159,9 +150,9 @@ tags; the workflow logs a warning.
 
 and for `www`, one `CNAME` record pointing at `YOUR-USERNAME.github.io`.
 
-DNS takes anywhere from minutes to a few hours. After that, every `git push`
-redeploys: the workflow type-checks, builds, runs the SEO audit, and only
-publishes if all three pass — so a broken commit can't take the site down.
+DNS takes anywhere from minutes to a few hours. Delete the `CNAME` file and the
+workflow publishes to `https://YOUR-USERNAME.github.io/YOUR-REPO/` instead —
+also fully working, with the sub-path handled automatically.
 
 ### Other hosts
 

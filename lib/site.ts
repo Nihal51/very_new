@@ -10,9 +10,10 @@
 
 /* Trailing slashes are stripped so `${site.url}/book/` can never double up.
    `||` rather than `??` on purpose: hosts and CI commonly pass an unset
-   variable through as an empty string, which must fall back too. */
+   variable through as an empty string, which must fall back too.
+   The fallback matches the domain in the repo-root CNAME file — change both. */
 const canonicalOrigin = (
-  process.env.NEXT_PUBLIC_SITE_URL || 'https://drivebuddy.in'
+  process.env.NEXT_PUBLIC_SITE_URL || 'https://thedrivebuddy.in'
 ).replace(/\/+$/, '');
 
 export const site = {
