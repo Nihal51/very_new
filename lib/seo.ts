@@ -18,7 +18,12 @@ export function pageMeta({
   ogImageAlt?: string;
   noIndex?: boolean;
 }): Metadata {
-  const url = new URL(path, site.url).toString();
+  /* Built by concatenation, not `new URL(path, site.url)`. An absolute pathname
+     resets the base's own path, so on a sub-path deployment (GitHub Pages
+     project sites) `new URL('/pricing/', 'https://x.io/repo')` silently yields
+     'https://x.io/pricing/' — a canonical pointing at a 404. */
+  const url = `${site.url}${path}`;
+  const ogImage = `${site.url}/og.png`;
 
   // The root layout appends " · DriveBuddy" via the title template. A page whose
   // title already names the brand opts out, so it never reads "… DriveBuddy · DriveBuddy".
@@ -40,7 +45,7 @@ export function pageMeta({
       description,
       images: [
         {
-          url: '/og.png',
+          url: ogImage,
           width: 1200,
           height: 630,
           alt: ogImageAlt ?? `${site.name} — verified drivers on demand in ${site.region}`,
@@ -51,7 +56,7 @@ export function pageMeta({
       card: 'summary_large_image',
       title,
       description,
-      images: ['/og.png'],
+      images: [ogImage],
     },
   };
 }

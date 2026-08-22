@@ -34,8 +34,7 @@ export const site = {
   foundingYear: '2024',
 } as const;
 
-/** `tel:` href for the primary number, in E.164. */
-export const telHref = `tel:+91${site.phone}`;
+/** `tel:` href for the primary number, in E.164. */export const telHref = `tel:+91${site.phone}`;
 export const telHrefAlt = `tel:+91${site.phoneAlt}`;
 export const mailHref = `mailto:${site.email}`;
 

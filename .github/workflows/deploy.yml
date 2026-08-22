@@ -52,11 +52,26 @@ jobs:
       - name: Type-check
         run: npm run lint
 
+      - name: Work out where the site will live
+        run: |
+          if [ -n "${{ vars.SITE_DOMAIN }}" ]; then
+            # Custom domain: the site sits at the root, so no path prefix.
+            echo "NEXT_PUBLIC_SITE_URL=https://${{ vars.SITE_DOMAIN }}" >> "$GITHUB_ENV"
+            echo "NEXT_PUBLIC_BASE_PATH=" >> "$GITHUB_ENV"
+            echo "Publishing to https://${{ vars.SITE_DOMAIN }}"
+          else
+            # No custom domain: GitHub Pages serves a project repo from a
+            # sub-path, e.g. https://user.github.io/repo/. Without the matching
+            # basePath every stylesheet and script would 404.
+            OWNER=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+            REPO="${GITHUB_REPOSITORY#*/}"
+            echo "NEXT_PUBLIC_SITE_URL=https://${OWNER}.github.io/${REPO}" >> "$GITHUB_ENV"
+            echo "NEXT_PUBLIC_BASE_PATH=/${REPO}" >> "$GITHUB_ENV"
+            echo "::notice::SITE_DOMAIN is not set — publishing to https://${OWNER}.github.io/${REPO}/ instead. Set the SITE_DOMAIN variable to use your own domain."
+          fi
+
       - name: Build static export
         env:
-          # Falls back to the literal in lib/site.ts if SITE_DOMAIN is unset,
-          # so a misconfigured repo still builds rather than failing opaquely.
-          NEXT_PUBLIC_SITE_URL: ${{ vars.SITE_DOMAIN && format('https://{0}', vars.SITE_DOMAIN) || '' }}
           NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
           NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
           NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
