@@ -1,0 +1,134 @@
+rules_version = '2';
+
+// =============================================================================
+//  DriveBuddy — Firestore security rules
+// =============================================================================
+//  The website is a static site with no server, so the browser writes directly
+//  to Firestore. That makes these rules the ONLY thing standing between your
+//  customers' names, phone numbers and home addresses and the open internet.
+//
+//  Deploy them:
+//      firebase deploy --only firestore:rules
+//
+//  Design:
+//    * create  — allowed, but only for documents that match the exact shape the
+//                two website forms produce. Nothing else gets written.
+//    * read    — DENIED. Nobody can list or fetch a booking from the browser.
+//                Read your leads in the Firebase console, or from a backend
+//                using the Admin SDK (which bypasses these rules).
+//    * update  — DENIED. A submitted lead is immutable from the client.
+//    * delete  — DENIED. Same reason.
+//
+//  Without the deny-read rule, anyone who views the page source can lift your
+//  project ID and dump every booking you have ever taken. With it, a leaked
+//  API key is worth nothing: the key identifies the project, it does not
+//  authorise access.
+//
+//  Recommended next step: turn on App Check (reCAPTCHA v3 / Enterprise) in the
+//  Firebase console and enforce it for Firestore. These rules validate the
+//  *shape* of a write; App Check validates that the write came from your real
+//  website rather than a script, which is what stops spam floods.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ----------------------------------------------------------- helpers -- */
+
+    function isText(value, minLen, maxLen) {
+      return value is string
+        && value.size() >= minLen
+        && value.size() <= maxLen;
+    }
+
+    // Optional free-text: must still be a string, may be empty.
+    function isOptionalText(value, maxLen) {
+      return value is string && value.size() <= maxLen;
+    }
+
+    // Indian mobile: exactly ten digits, starting 6–9. The form normalises
+    // away any +91 or leading 0 before writing.
+    function isMobile(value) {
+      return value is string && value.matches('^[6-9][0-9]{9}$');
+    }
+
+    function isServedCity(value) {
+      return value in ['Raipur', 'Bhilai', 'Durg', 'Bilaspur'];
+    }
+
+    // Clients cannot backdate or forge a submission time, invent a source, or
+    // create a lead that is already marked as handled.
+    function isServerStamped(data) {
+      return data.createdAt == request.time
+        && data.source == 'website'
+        && data.status == 'new';
+    }
+
+    /* ---------------------------------------------------------- bookings -- */
+    //  Written by components/BookingForm.tsx
+
+    match /bookings/{bookingId} {
+      allow read, update, delete: if false;
+
+      allow create: if
+        // No extra fields, no missing fields — the shape is exact.
+        request.resource.data.keys().hasOnly([
+          'name', 'phone', 'city', 'package', 'pickup',
+          'preferredTime', 'notes', 'createdAt', 'status', 'source'
+        ])
+        && request.resource.data.keys().hasAll([
+          'name', 'phone', 'city', 'package', 'pickup',
+          'preferredTime', 'notes', 'createdAt', 'status', 'source'
+        ])
+        && isText(request.resource.data.name, 2, 60)
+        && isMobile(request.resource.data.phone)
+        && isServedCity(request.resource.data.city)
+        && request.resource.data.package in [
+          '1-hour-300',
+          '3-hours-600',
+          'local-full-day',
+          'outstation',
+          'night-driver',
+          'medical-emergency'
+        ]
+        && isText(request.resource.data.pickup, 6, 300)
+        && isOptionalText(request.resource.data.preferredTime, 40)
+        && isOptionalText(request.resource.data.notes, 500)
+        && isServerStamped(request.resource.data);
+    }
+
+    /* ----------------------------------------------------------- drivers -- */
+    //  Written by components/DriverForm.tsx
+
+    match /drivers/{driverId} {
+      allow read, update, delete: if false;
+
+      allow create: if
+        request.resource.data.keys().hasOnly([
+          'name', 'phone', 'city', 'experienceYears',
+          'licence', 'about', 'createdAt', 'status', 'source'
+        ])
+        && request.resource.data.keys().hasAll([
+          'name', 'phone', 'city', 'experienceYears',
+          'licence', 'about', 'createdAt', 'status', 'source'
+        ])
+        && isText(request.resource.data.name, 2, 60)
+        && isMobile(request.resource.data.phone)
+        && isServedCity(request.resource.data.city)
+        && request.resource.data.experienceYears is int
+        && request.resource.data.experienceYears >= 5
+        && request.resource.data.experienceYears <= 60
+        && request.resource.data.licence in ['commercial', 'lmv', 'both']
+        && isOptionalText(request.resource.data.about, 500)
+        && isServerStamped(request.resource.data);
+    }
+
+    /* --------------------------------------------------------- catch-all -- */
+    //  Anything not explicitly allowed above is denied, including any
+    //  collection someone invents. Deny last, deny everything.
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
