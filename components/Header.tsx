@@ -75,17 +75,22 @@ export function Header() {
         </nav>
 
         <div className="flex items-center gap-2">
+          {/* Phone + Book stay out of the top bar until the 1024px desktop
+              layout, where the nav appears and there is room. Below that they
+              would crowd the menu button and overflow on large phones sitting
+              just above the 640px mark. CTAs still live in the hero, the drawer
+              and the mobile bottom bar, so nothing is lost. */}
           <ButtonAnchor
             href={telHref}
             variant="outline"
             size="sm"
-            className="hidden sm:inline-flex"
+            className="hidden lg:inline-flex"
           >
             <PhoneIcon className="size-4" />
             <span className="tabular">{formatPhone(site.phone)}</span>
           </ButtonAnchor>
 
-          <ButtonLink href="/book/" size="sm" className="hidden sm:inline-flex">
+          <ButtonLink href="/book/" size="sm" className="hidden lg:inline-flex">
             Book a driver
           </ButtonLink>
 
