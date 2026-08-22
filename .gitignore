@@ -1,43 +1,42 @@
 # dependencies
-/node_modules
-/.pnp
+node_modules/
+.pnp/
 .pnp.*
 .yarn/*
 
-# next.js
-/.next/
-/out/
+# Next.js
+.next/
+out/
 next-env.d.ts
 
 # production
-/build
+build/
 
-# misc
-.DS_Store
-*.pem
-Thumbs.db
-
-# debug
+# logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.pnpm-debug.log*
+pnpm-debug.log*
 
-# env files — .env.local holds the Firebase project pointers.
-# They are public identifiers rather than secrets, but keeping them out of git
-# means staging and production can differ without a code change.
-.env*.local
+# environment files
 .env
+.env.local
+.env.production
+.env*.local
 
-# typescript
+# TypeScript
 *.tsbuildinfo
 
-# firebase tooling
+# Firebase
 .firebase/
 firebase-debug.log*
 firestore-debug.log*
 
 # editors
-.vscode/*
+.vscode/
 !.vscode/extensions.json
 .idea/
+
+# OS
+.DS_Store
+Thumbs.db
