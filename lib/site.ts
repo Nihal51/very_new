@@ -34,6 +34,15 @@ export const site = {
   foundingYear: '2024',
 } as const;
 
+/**
+ * Prefix for files served straight out of `public/`. Empty on a normal domain;
+ * on a GitHub Pages project site it is `/<repo>`, and without it the logo and
+ * favicon 404. `next/image` does not apply basePath when images are unoptimized,
+ * so raw `public/` paths must go through here.
+ */
+export const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+export const asset = (path: string) => `${basePath}${path}`;
+
 /** `tel:` href for the primary number, in E.164. */export const telHref = `tel:+91${site.phone}`;
 export const telHrefAlt = `tel:+91${site.phoneAlt}`;
 export const mailHref = `mailto:${site.email}`;

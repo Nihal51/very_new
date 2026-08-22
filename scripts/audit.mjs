@@ -139,12 +139,16 @@ if (!robots.includes('Sitemap:')) {
   console.log(`robots.txt   — ok, ${robots.trim().split('\n').length} lines`);
 }
 
-/* Every indexable page must be in the sitemap. */
+/* Every indexable page must be in the sitemap. On a sub-path deployment (GitHub
+   Pages project site) every <loc> carries the basePath prefix, so compare
+   against prefix + page path rather than the bare path — an exact match, not a
+   suffix match, so `/pricing/` can't be satisfied by `/anything/pricing/`. */
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
 const indexable = rows
   .filter((r) => !r.rel.includes('404') && !r.rel.includes('_not-found'))
   .map((r) => r.rel.replace(/index\.html$/, ''));
 const missing = indexable.filter(
-  (rel) => !urls.some((u) => new URL(u).pathname === `/${rel}`),
+  (rel) => !urls.some((u) => new URL(u).pathname === `${BASE}/${rel}`),
 );
 if (missing.length) {
   console.log(`      ↳ FAIL not in sitemap: ${missing.join(', ')}`);

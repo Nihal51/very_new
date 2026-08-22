@@ -7,7 +7,7 @@ import { Header } from '@/components/Header';
 import { JsonLd } from '@/components/JsonLd';
 import { MobileCTABar } from '@/components/MobileCTABar';
 import { localBusinessSchema } from '@/lib/schema';
-import { site } from '@/lib/site';
+import { asset, site } from '@/lib/site';
 
 /**
  * Fonts are downloaded at build time and served from our own origin, so there is
@@ -56,8 +56,8 @@ export const metadata: Metadata = {
   },
   alternates: { canonical: '/' },
   icons: {
-    icon: [{ url: '/assets/logo.png', type: 'image/png' }],
-    apple: [{ url: '/assets/logo.png' }],
+    icon: [{ url: asset('/assets/logo.png'), type: 'image/png' }],
+    apple: [{ url: asset('/assets/logo.png') }],
   },
 };
 

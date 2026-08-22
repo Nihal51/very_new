@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { site } from '@/lib/site';
+import { asset, site } from '@/lib/site';
 import { cn } from '@/lib/cn';
 
 /**
@@ -21,7 +21,7 @@ export function Logo({
   return (
     <span className={cn('flex items-center gap-2.5', className)}>
       <Image
-        src="/assets/logo.png"
+        src={asset('/assets/logo.png')}
         alt=""
         width={Math.round(size * (200 / 167))}
         height={size}
