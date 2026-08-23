@@ -88,9 +88,17 @@ export function Field({
 
 /* -------------------------------------------------------------- controls -- */
 
-/** One control skin shared by input, select and textarea. */
+/**
+ * One control skin shared by input, select and textarea.
+ *
+ * The control text is 16px (text-base) on purpose: iOS Safari auto-zooms the
+ * page the moment you focus a control whose font-size is under 16px, which on
+ * a phone lurches the whole layout sideways mid-typing. 16px is the documented
+ * threshold that suppresses it. The height is fixed at h-11, so the size never
+ * reflows anything — don't drop this back below 16px to shave a pixel.
+ */
 const controlStyles = cn(
-  'w-full rounded-xl border bg-bg px-3.5 text-[0.9375rem]',
+  'w-full rounded-xl border bg-bg px-3.5 text-base',
   'border-border-strong placeholder:text-fg-subtle',
   'transition-[border-color,box-shadow] duration-150',
   'hover:border-fg-subtle',
