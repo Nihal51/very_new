@@ -79,20 +79,24 @@ export function Header() {
               layout, where the nav appears and there is room. Below that they
               would crowd the menu button and overflow on large phones sitting
               just above the 640px mark. CTAs still live in the hero, the drawer
-              and the mobile bottom bar, so nothing is lost. */}
-          <ButtonAnchor
-            href={telHref}
-            variant="outline"
-            size="sm"
-            className="hidden lg:inline-flex"
-          >
-            <PhoneIcon className="size-4" />
-            <span className="tabular">{formatPhone(site.phone)}</span>
-          </ButtonAnchor>
+              and the mobile bottom bar, so nothing is lost.
 
-          <ButtonLink href="/book/" size="sm" className="hidden lg:inline-flex">
-            Book a driver
-          </ButtonLink>
+              The gate lives on this wrapper, not the buttons: the buttons carry
+              `inline-flex` from buttonStyles, and `.inline-flex` is emitted
+              after `.hidden` in the compiled sheet, so a bare `hidden` on the
+              same element loses the source-order tie and never actually hides.
+              A plain wrapper has no competing base display, so `hidden lg:flex`
+              hides cleanly below 1024px. */}
+          <div className="hidden items-center gap-2 lg:flex">
+            <ButtonAnchor href={telHref} variant="outline" size="sm">
+              <PhoneIcon className="size-4" />
+              <span className="tabular">{formatPhone(site.phone)}</span>
+            </ButtonAnchor>
+
+            <ButtonLink href="/book/" size="sm">
+              Book a driver
+            </ButtonLink>
+          </div>
 
           {/* Mobile menu trigger */}
           <button
