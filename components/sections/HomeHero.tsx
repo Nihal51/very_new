@@ -72,11 +72,12 @@ export function HomeHero() {
           </ul>
           </div>
 
-          {/* The live-dispatch card rides along on phones too, filling what used
-              to be empty ink beside the copy. Its SVG is w-full and scales by its
-              viewBox, so it never forces horizontal overflow. On phones it stacks
-              below the copy; from lg it becomes the right column. */}
-          <HeroDispatch />
+          {/* Desktop only: the card fills the hero's right column from lg up.
+              On phones it read as cramped stacked under the copy, so it is hidden
+              there and the hero stays copy-only — cleaner on a narrow screen. */}
+          <div className="hidden lg:block">
+            <HeroDispatch />
+          </div>
         </div>
       </Container>
     </section>

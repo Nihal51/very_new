@@ -6,8 +6,9 @@ import { CheckIcon, MapPinIcon, ShieldIcon } from '@/components/icons';
  * This is the site's only piece of decorative-adjacent motion, and it earns its
  * place by carrying the pitch — the route draws itself in about the time it
  * takes to read "30 minutes". It is pure CSS and SVG (no image, no library,
- * ~1 KB of markup), shown on every screen size, and it stops dead under
- * `prefers-reduced-motion` via the global rule in globals.css.
+ * ~1 KB of markup), shown from the lg breakpoint up (hidden on phones, where it
+ * read as cramped), and it stops dead under `prefers-reduced-motion` via the
+ * global rule in globals.css.
  *
  * Deliberately not a mascot: the product being sold here is trust.
  */
