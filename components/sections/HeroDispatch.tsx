@@ -28,9 +28,10 @@ export function HeroDispatch() {
       aria-hidden="true"
       className="border-ink-border bg-ink-soft/80 shadow-lg relative overflow-hidden rounded-2xl border p-6"
     >
-      {/* faint amber wash, top-right — echoes the OG card */}
+      {/* faint amber wash, top-right — echoes the OG card. Kept small on phones
+          so it stays a wash and not a blob on the narrower card. */}
       <div
-        className="from-accent/12 pointer-events-none absolute -top-24 -right-24 size-64 rounded-full bg-radial to-transparent"
+        className="from-accent/10 pointer-events-none absolute -top-16 -right-16 size-44 rounded-full bg-radial to-transparent sm:-top-24 sm:-right-24 sm:size-64"
       />
 
       <div className="relative flex items-center justify-between">
@@ -52,12 +53,12 @@ export function HeroDispatch() {
         focusable="false"
       >
         {/* grid, suggesting a street map without pretending to be one */}
-        <g stroke="currentColor" className="text-white/[0.06]" strokeWidth="1">
+        <g stroke="currentColor" className="text-white/[0.1]" strokeWidth="1">
           <path d="M0 44h286M0 96h286M0 148h286M60 0v176M132 0v176M204 0v176" />
         </g>
 
-        {/* the road, dimmed */}
-        <path d={ROUTE} fill="none" stroke="currentColor" className="text-white/12" strokeWidth="3" strokeLinecap="round" />
+        {/* the road, dimmed — the full track the amber line traces over */}
+        <path d={ROUTE} fill="none" stroke="currentColor" className="text-white/20" strokeWidth="3" strokeLinecap="round" />
 
         {/* the road, drawn in amber */}
         <path
