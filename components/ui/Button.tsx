@@ -31,7 +31,11 @@ export function buttonStyles({
     'disabled:pointer-events-none disabled:opacity-55',
     'aria-disabled:pointer-events-none aria-disabled:opacity-55',
 
-    size === 'sm' && 'h-9 px-3.5 text-sm',
+    // sm stays a dense 36px for mouse pointers (e.g. the desktop-only header
+    // CTAs), but lifts to the 44px tap-target floor on touch via pointer-coarse.
+    // The recovery CTAs in the form error alerts render at this size on phones,
+    // so the coarse floor keeps those tappable without changing the desktop look.
+    size === 'sm' && 'h-9 px-3.5 text-sm pointer-coarse:h-11',
     size === 'md' && 'h-11 px-5 text-[0.9375rem]', // 44px — minimum tap target
     size === 'lg' && 'h-13 px-6.5 text-base',
 
