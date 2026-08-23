@@ -46,7 +46,7 @@ export const siteConfig = {
   phoneAlt: '9893302783',
   /** WhatsApp number in wa.me form: country code + number, no `+` or spaces. */
   whatsapp: '919111473929',
-  email: 'nihalchandrakar70@gmail.com',
+  email: 'drivebuddyind@gmail.com',
 
   /* ---------------------------------------------------------- locale / geo */
   locale: 'en_IN',

@@ -43,7 +43,7 @@ export default function NotFound() {
             <ul className="mt-5 flex flex-wrap justify-center gap-x-6 gap-y-3">
               {nav.map((item) => (
                 <li key={item.href}>
-                  <ButtonLink href={item.href} variant="ghost" size="sm">
+                  <ButtonLink href={item.href} variant="ghost">
                     {item.label}
                   </ButtonLink>
                 </li>
