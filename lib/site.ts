@@ -29,7 +29,7 @@ export const site = {
   phone: '9111473929',
   phoneAlt: '9893302783',
   whatsapp: '919111473929',
-  email: 'nihalchandrakar70@gmail.com',
+  email: 'drivebuddyind@gmail.com',
   priceRange: '₹300–₹1500',
   rating: { value: 4.9, count: 187 },
   foundingYear: '2024',
