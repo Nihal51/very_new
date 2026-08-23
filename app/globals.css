@@ -189,6 +189,10 @@
     scroll-behavior: smooth;
     /* Offset for the sticky header when jumping to an #anchor. */
     scroll-padding-top: 6rem;
+    /* No element may force a horizontal scrollbar or pinch-zoom-out: clip any
+       accidental overflow at the root. `clip` (not `hidden`) is used so the
+       viewport stays the scroll container and the sticky header keeps working. */
+    overflow-x: clip;
   }
 
   body {
@@ -200,6 +204,9 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    /* Belt and braces: the body can never be wider than the viewport. */
+    max-width: 100%;
+    overflow-x: clip;
   }
 
   h1,
