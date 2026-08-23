@@ -1,32 +1,38 @@
 /**
- * Company details, navigation and SEO basics, re-exported for convenience.
+ * Single source of truth for company details, navigation and SEO basics.
  *
- * The underlying business / contact facts now live in one place —
- * `lib/site-config.ts`. This module derives the `site` object from that config
- * and adds the link helpers (`tel:` / `mailto:` / `wa.me`, phone formatting) so
- * that everything already importing from '@/lib/site' keeps working unchanged.
- * To edit a phone number, the email, the address or the service-area list,
- * change `lib/site-config.ts`; do not hard-code values here.
+ * The canonical origin comes from `NEXT_PUBLIC_SITE_URL` if it is set at build
+ * time (every host below supports build env vars), otherwise from the fallback
+ * literal — so you can point the site at the real domain either by setting one
+ * variable on the host or by editing one line here. Canonical tags, the sitemap,
+ * robots.txt, Open Graph and every JSON-LD `@id` all derive from it.
  */
 
-import { siteConfig } from './site-config';
+/* Trailing slashes are stripped so `${site.url}/book/` can never double up.
+   `||` rather than `??` on purpose: hosts and CI commonly pass an unset
+   variable through as an empty string, which must fall back too.
+   The fallback matches the domain in the repo-root CNAME file — change both. */
+const canonicalOrigin = (
+  process.env.NEXT_PUBLIC_SITE_URL || 'https://thedrivebuddy.in'
+).replace(/\/+$/, '');
 
 export const site = {
-  name: siteConfig.name,
-  legalName: siteConfig.legalName,
-  url: siteConfig.url,
-  tagline: siteConfig.tagline,
-  description: siteConfig.description,
-  locale: siteConfig.locale,
-  region: siteConfig.region,
-  country: siteConfig.country,
-  phone: siteConfig.phone,
-  phoneAlt: siteConfig.phoneAlt,
-  whatsapp: siteConfig.whatsapp,
-  email: siteConfig.email,
-  priceRange: siteConfig.priceRange,
-  rating: siteConfig.rating,
-  foundingYear: siteConfig.foundingYear,
+  name: 'DriveBuddy',
+  legalName: 'DriveBuddy Driver Services',
+  url: canonicalOrigin,
+  tagline: 'Premium Driver Services',
+  description:
+    "Verified, sober, professional drivers at your doorstep in 30 minutes. DriveBuddy serves Raipur, Bhilai, Durg and Bilaspur, 24 hours a day.",
+  locale: 'en_IN',
+  region: 'Chhattisgarh',
+  country: 'IN',
+  phone: '9111473929',
+  phoneAlt: '9893302783',
+  whatsapp: '919111473929',
+  email: 'drivebuddyind@gmail.com',
+  priceRange: '₹300–₹1500',
+  rating: { value: 4.9, count: 187 },
+  foundingYear: '2024',
 } as const;
 
 /**
@@ -38,8 +44,7 @@ export const site = {
 export const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
 export const asset = (path: string) => `${basePath}${path}`;
 
-/** `tel:` href for the primary number, in E.164. */
-export const telHref = `tel:+91${site.phone}`;
+/** `tel:` href for the primary number, in E.164. */export const telHref = `tel:+91${site.phone}`;
 export const telHrefAlt = `tel:+91${site.phoneAlt}`;
 export const mailHref = `mailto:${site.email}`;
 

@@ -5,7 +5,6 @@
  */
 
 import type { IconName } from '@/components/icons';
-import { siteConfig } from '@/lib/site-config';
 
 /* ---------------------------------------------------------------- services */
 
@@ -233,15 +232,10 @@ export type City = {
   landmarks: string[];
 };
 
-type CitySlug = (typeof siteConfig.serviceAreas)[number]['slug'];
-
-/**
- * SEO copy per city, keyed by the slug defined in siteConfig.serviceAreas.
- * The authoritative list of cities (slug + display name) lives in site-config;
- * this record only attaches the marketing prose to each of those slugs.
- */
-const cityContent: Record<CitySlug, Omit<City, 'slug' | 'name'>> = {
-  raipur: {
+export const cities: City[] = [
+  {
+    slug: 'raipur',
+    name: 'Raipur',
     badge: 'Headquarters',
     isHq: true,
     short: 'State capital HQ — airport, railway station and all major hospitals.',
@@ -268,7 +262,9 @@ const cityContent: Record<CitySlug, Omit<City, 'slug' | 'name'>> = {
       'Marine Drive, Telibandha',
     ],
   },
-  bhilai: {
+  {
+    slug: 'bhilai',
+    name: 'Bhilai',
     badge: 'Full coverage',
     short: 'Industrial and residential coverage across the Steel City, round the clock.',
     intro:
@@ -293,7 +289,9 @@ const cityContent: Record<CitySlug, Omit<City, 'slug' | 'name'>> = {
       'IIT Bhilai',
     ],
   },
-  durg: {
+  {
+    slug: 'durg',
+    name: 'Durg',
     badge: 'Full coverage',
     short: 'Complete coverage of wards, markets and institutions across Durg.',
     intro:
@@ -318,7 +316,9 @@ const cityContent: Record<CitySlug, Omit<City, 'slug' | 'name'>> = {
       'Government Engineering College',
     ],
   },
-  bilaspur: {
+  {
+    slug: 'bilaspur',
+    name: 'Bilaspur',
     badge: 'Full coverage',
     short: 'University campuses, medical hubs and all residential colonies.',
     intro:
@@ -343,18 +343,7 @@ const cityContent: Record<CitySlug, Omit<City, 'slug' | 'name'>> = {
       'Bilasa Devi Kevat Airport',
     ],
   },
-};
-
-/**
- * The city pages, built from the canonical service-area list in site-config so
- * the slugs and display names have a single source of truth, with the per-city
- * marketing copy attached from `cityContent` above.
- */
-export const cities: City[] = siteConfig.serviceAreas.map((area) => ({
-  slug: area.slug,
-  name: area.name,
-  ...cityContent[area.slug],
-}));
+];
 
 export const cityNames = cities.map((c) => c.name);
 
@@ -403,7 +392,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'What is the difference between Local and Outstation?',
-    a: `Local Full Day (₹1000–1200) covers eight hours of driving inside city limits. Outstation (₹1200–1500) is for journeys beyond the city, on highways, and can include an overnight halt. Call us on ${siteConfig.phone} for a precise quote on long trips.`,
+    a: 'Local Full Day (₹1000–1200) covers eight hours of driving inside city limits. Outstation (₹1200–1500) is for journeys beyond the city, on highways, and can include an overnight halt. Call us on 9111473929 for a precise quote on long trips.',
   },
   {
     q: 'What if I need to extend my booking?',
@@ -419,7 +408,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can I book for a hospital emergency?',
-    a: `Yes, and these get absolute priority. For an emergency, call ${siteConfig.phone} directly rather than using the form — that routes straight to instant dispatch.`,
+    a: 'Yes, and these get absolute priority. For an emergency, call 9111473929 directly rather than using the form — that routes straight to instant dispatch.',
   },
   {
     q: 'Do I need to provide the car?',

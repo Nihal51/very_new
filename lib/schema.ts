@@ -4,22 +4,11 @@
  */
 
 import { site } from './site';
-import { siteConfig } from './site-config';
 import { cities, faqs, plans, services, testimonials } from './content';
 
 const abs = (path = '/') => new URL(path, site.url).toString();
 
 const ORG_ID = `${site.url}/#business`;
-
-/** Opening hours, from the single 24/7 definition in site-config. */
-const openingHoursSpecification = [
-  {
-    '@type': 'OpeningHoursSpecification',
-    dayOfWeek: [...siteConfig.hours.days],
-    opens: siteConfig.hours.opens,
-    closes: siteConfig.hours.closes,
-  },
-];
 
 /** LocalBusiness — the anchor entity every other node points at. */
 export function localBusinessSchema() {
@@ -42,16 +31,31 @@ export function localBusinessSchema() {
     slogan: 'Your car. Our driver.',
     address: {
       '@type': 'PostalAddress',
-      addressLocality: siteConfig.address.locality,
-      addressRegion: siteConfig.address.region,
-      addressCountry: siteConfig.address.country,
+      addressLocality: 'Raipur',
+      addressRegion: site.region,
+      addressCountry: site.country,
     },
     areaServed: cities.map((c) => ({
       '@type': 'City',
       name: c.name,
       containedInPlace: { '@type': 'AdministrativeArea', name: site.region },
     })),
-    openingHoursSpecification,
+    openingHoursSpecification: [
+      {
+        '@type': 'OpeningHoursSpecification',
+        dayOfWeek: [
+          'Monday',
+          'Tuesday',
+          'Wednesday',
+          'Thursday',
+          'Friday',
+          'Saturday',
+          'Sunday',
+        ],
+        opens: '00:00',
+        closes: '23:59',
+      },
+    ],
     aggregateRating: {
       '@type': 'AggregateRating',
       ratingValue: String(site.rating.value),
@@ -141,15 +145,30 @@ export function citySchema(slug: string) {
     address: {
       '@type': 'PostalAddress',
       addressLocality: city.name,
-      addressRegion: siteConfig.address.region,
-      addressCountry: siteConfig.address.country,
+      addressRegion: site.region,
+      addressCountry: site.country,
     },
     areaServed: {
       '@type': 'City',
       name: city.name,
       containedInPlace: { '@type': 'AdministrativeArea', name: site.region },
     },
-    openingHoursSpecification,
+    openingHoursSpecification: [
+      {
+        '@type': 'OpeningHoursSpecification',
+        dayOfWeek: [
+          'Monday',
+          'Tuesday',
+          'Wednesday',
+          'Thursday',
+          'Friday',
+          'Saturday',
+          'Sunday',
+        ],
+        opens: '00:00',
+        closes: '23:59',
+      },
+    ],
   };
 }
 
