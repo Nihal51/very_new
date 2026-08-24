@@ -101,7 +101,7 @@ export default function ContactPage() {
                 </h2>
                 <p className="tabular text-display-sm font-display mt-3">24 / 7</p>
                 <p className="text-fg-muted mt-2 text-sm">
-                  Every day of the year. Night driver bookings run 8 PM to 6 AM at a flat ₹500.
+                  Every day of the year. Night driver bookings run 8 PM to 6 AM, starting from ₹500.
                 </p>
               </Card>
 

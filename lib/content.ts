@@ -52,10 +52,10 @@ export const services: Service[] = [
     icon: 'moon',
     title: 'Night Safety Driver',
     short: 'Verified late-night travel for women, families and office returns.',
-    body: 'A dedicated night shift from 8 PM to 6 AM at a flat rate. Every night driver is police-verified and breath-tested before the shift starts, so a late finish at the office never has to mean an unsafe ride home.',
+    body: 'A dedicated night shift from 8 PM to 6 AM, starting from ₹500. Every night driver is police-verified and breath-tested before the shift starts, so a late finish at the office never has to mean an unsafe ride home.',
     badge: 'Popular choice',
     includes: [
-      'Flat ₹500 for the 8 PM – 6 AM window',
+      'From ₹500 for the 8 PM – 6 AM window',
       'Breathalyser check before every shift',
       'Driver details shared before arrival',
       'Preferred by women travelling alone',
@@ -157,8 +157,8 @@ export const plans: Plan[] = [
 export const extraRates = [
   {
     label: 'Night driver',
-    detail: '8 PM – 6 AM, flat rate',
-    price: '₹500',
+    detail: '8 PM – 6 AM',
+    price: 'from ₹500',
   },
   {
     label: 'Hospital / emergency',
@@ -175,7 +175,7 @@ export const bookingPackages = [
   { value: '3-hours-600', label: '3 Hours — ₹600 (most popular)' },
   { value: 'local-full-day', label: 'Local Full Day, 8 hrs — ₹1000–1200' },
   { value: 'outstation', label: 'Outstation Trip — ₹1200–1500' },
-  { value: 'night-driver', label: 'Night Driver, 8 PM – 6 AM — ₹500' },
+  { value: 'night-driver', label: 'Night Driver, 8 PM – 6 AM — from ₹500' },
   { value: 'medical-emergency', label: 'Hospital / Emergency — priority' },
 ] as const;
 
@@ -388,7 +388,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Is the service available at night?',
-    a: 'Yes. DriveBuddy operates 24 hours a day, 7 days a week. Our dedicated night safety driver service runs from 8 PM to 6 AM at a flat ₹500, and is widely used by women travelling alone, families and late-finishing office staff.',
+    a: 'Yes. DriveBuddy operates 24 hours a day, 7 days a week. Our dedicated night safety driver service runs from 8 PM to 6 AM, starting from ₹500, and is widely used by women travelling alone, families and late-finishing office staff.',
   },
   {
     q: 'What is the difference between Local and Outstation?',

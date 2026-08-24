@@ -18,7 +18,7 @@ const trail = [{ name: 'Pricing', path: '/pricing/' }];
 export const metadata: Metadata = pageMeta({
   title: 'Driver Charges & Hourly Rates in Chhattisgarh',
   description:
-    'Driver charges from ₹300 an hour, ₹600 for 3 hours, ₹1000–1200 a full day, ₹1200–1500 outstation, ₹500 at night. No surge, no hidden fees.',
+    'Driver charges from ₹300 an hour, ₹600 for 3 hours, ₹1000–1200 a full day, ₹1200–1500 outstation, from ₹500 at night. No surge, no hidden fees.',
   path: '/pricing/',
 });
 
