@@ -15,7 +15,7 @@ import { site } from '@/lib/site';
 const trail = [{ name: 'Cities', path: '/cities/' }];
 
 export const metadata: Metadata = pageMeta({
-  title: 'Cities We Serve',
+  title: 'Driver on Hire Across Chhattisgarh',
   description:
     'DriveBuddy provides verified drivers in Raipur, Bhilai, Durg and Bilaspur — 24 hours a day, with a 30-minute arrival guarantee. See coverage area by city.',
   path: '/cities/',

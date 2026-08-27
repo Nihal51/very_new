@@ -59,7 +59,7 @@ export function Footer() {
             <ul id="footer-services" className="mt-4 flex flex-col gap-3">
               {services.map((s) => (
                 <li key={s.slug}>
-                  <Link href={`/services/#${s.slug}`} className={linkClass}>
+                  <Link href={`/services/${s.slug}/`} className={linkClass}>
                     {s.title}
                   </Link>
                 </li>

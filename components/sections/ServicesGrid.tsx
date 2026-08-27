@@ -42,15 +42,15 @@ export function ServicesGrid({ detailed = false }: { detailed?: boolean }) {
             )}
           </div>
 
-          {!detailed && (
-            <Link
-              href={`/services/#${service.slug}`}
-              className="text-accent-text ease-out-quart mt-auto inline-flex min-h-11 items-end gap-1.5 rounded-lg pt-5 text-sm font-semibold transition-[gap] duration-150 hover:gap-2.5"
-            >
-              What&apos;s included
-              <ArrowRightIcon className="size-4" />
-            </Link>
-          )}
+          <Link
+            href={`/services/${service.slug}/`}
+            className={`text-accent-text ease-out-quart inline-flex min-h-11 items-end gap-1.5 rounded-lg pt-5 text-sm font-semibold transition-[gap] duration-150 hover:gap-2.5${
+              detailed ? '' : ' mt-auto'
+            }`}
+          >
+            {detailed ? 'Full details and pricing' : "What's included"}
+            <ArrowRightIcon className="size-4" />
+          </Link>
         </Card>
       ))}
     </div>

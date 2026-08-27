@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-import { cities } from '@/lib/content';
+import { cities, services } from '@/lib/content';
 import { site } from '@/lib/site';
 
 /**
@@ -12,7 +12,7 @@ export const dynamic = 'force-static';
 
 type Entry = MetadataRoute.Sitemap[number];
 
-const LAST_MODIFIED = new Date('2026-08-22T00:00:00.000Z');
+const LAST_MODIFIED = new Date('2026-08-28T00:00:00.000Z');
 
 const CORE: ReadonlyArray<Pick<Entry, 'url' | 'changeFrequency' | 'priority'>> = [
   { url: '/', changeFrequency: 'weekly', priority: 1 },
@@ -41,5 +41,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.9,
   }));
 
-  return [...core, ...cityPages];
+  const servicePages: Entry[] = services.map((service) => ({
+    url: `${site.url}/services/${service.slug}/`,
+    lastModified: LAST_MODIFIED,
+    changeFrequency: 'monthly',
+    priority: 0.8,
+  }));
+
+  return [...core, ...cityPages, ...servicePages];
 }

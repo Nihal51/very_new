@@ -10,11 +10,14 @@ const abs = (path = '/') => new URL(path, site.url).toString();
 
 const ORG_ID = `${site.url}/#business`;
 
+/** Registered business location = the HQ city (Raipur, first in the list). */
+const HQ_GEO = cities[0]?.geo ?? { lat: 21.2514, lng: 81.6296 };
+
 /** LocalBusiness — the anchor entity every other node points at. */
 export function localBusinessSchema() {
   return {
     '@context': 'https://schema.org',
-    '@type': 'LocalBusiness',
+    '@type': ['LocalBusiness', 'ProfessionalService'],
     '@id': ORG_ID,
     name: site.name,
     legalName: site.legalName,
@@ -25,6 +28,22 @@ export function localBusinessSchema() {
     logo: abs('/assets/logo.png'),
     telephone: `+91${site.phone}`,
     email: site.email,
+    contactPoint: [
+      {
+        '@type': 'ContactPoint',
+        telephone: `+91${site.phone}`,
+        contactType: 'customer service',
+        areaServed: site.country,
+        availableLanguage: ['en', 'hi'],
+      },
+      {
+        '@type': 'ContactPoint',
+        telephone: `+91${site.phoneAlt}`,
+        contactType: 'customer service',
+        availableLanguage: ['en', 'hi'],
+      },
+    ],
+    knowsLanguage: ['en', 'hi'],
     priceRange: site.priceRange,
     currenciesAccepted: 'INR',
     paymentAccepted: 'Cash, UPI, Bank transfer',
@@ -36,9 +55,19 @@ export function localBusinessSchema() {
       addressRegion: site.region,
       addressCountry: site.country,
     },
+    geo: {
+      '@type': 'GeoCoordinates',
+      latitude: String(HQ_GEO.lat),
+      longitude: String(HQ_GEO.lng),
+    },
     areaServed: cities.map((c) => ({
       '@type': 'City',
       name: c.name,
+      geo: {
+        '@type': 'GeoCoordinates',
+        latitude: String(c.geo.lat),
+        longitude: String(c.geo.lng),
+      },
       containedInPlace: { '@type': 'AdministrativeArea', name: site.region },
     })),
     openingHoursSpecification: [
@@ -114,6 +143,24 @@ export function servicesSchema() {
   };
 }
 
+/** Single Service node for a dedicated /services/<slug>/ landing page. */
+export function serviceSchema(slug: string) {
+  const service = services.find((s) => s.slug === slug);
+  if (!service) return null;
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    '@id': `${abs(`/services/${service.slug}/`)}#service`,
+    name: service.title,
+    description: service.body,
+    serviceType: service.title,
+    url: abs(`/services/${service.slug}/`),
+    provider: { '@id': ORG_ID },
+    areaServed: cities.map((c) => ({ '@type': 'City', name: c.name })),
+    audience: { '@type': 'Audience', audienceType: 'Car owners' },
+  };
+}
+
 /** Price list for /pricing. */
 export function pricingSchema() {
   return {
@@ -153,7 +200,7 @@ export function citySchema(slug: string) {
   if (!city) return null;
   return {
     '@context': 'https://schema.org',
-    '@type': 'LocalBusiness',
+    '@type': ['LocalBusiness', 'ProfessionalService'],
     '@id': `${abs(`/cities/${city.slug}/`)}#business`,
     parentOrganization: { '@id': ORG_ID },
     name: `${site.name} — Drivers in ${city.name}`,
@@ -168,9 +215,19 @@ export function citySchema(slug: string) {
       addressRegion: site.region,
       addressCountry: site.country,
     },
+    geo: {
+      '@type': 'GeoCoordinates',
+      latitude: String(city.geo.lat),
+      longitude: String(city.geo.lng),
+    },
     areaServed: {
       '@type': 'City',
       name: city.name,
+      geo: {
+        '@type': 'GeoCoordinates',
+        latitude: String(city.geo.lat),
+        longitude: String(city.geo.lng),
+      },
       containedInPlace: { '@type': 'AdministrativeArea', name: site.region },
     },
     openingHoursSpecification: [

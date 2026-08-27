@@ -14,6 +14,10 @@ export type Service = {
   title: string;
   short: string;
   body: string;
+  /** SEO for the dedicated /services/<slug>/ landing page. */
+  heading: string;
+  metaTitle: string;
+  metaDescription: string;
   badge?: string;
   includes: string[];
 };
@@ -25,6 +29,10 @@ export const services: Service[] = [
     title: 'Personal Driver',
     short: 'Your car, our driver — errands, school runs and the daily commute.',
     body: 'A verified driver takes the wheel of your own vehicle for as long as you need. Ideal for the daily office commute, school pickups, shopping trips or a day of errands without the parking hassle.',
+    heading: 'Personal driver for your own car',
+    metaTitle: 'Personal Driver on Hire, Hourly or Full Day',
+    metaDescription:
+      'Hire a personal driver for your own car in Raipur, Bhilai, Durg and Bilaspur — hourly, half-day or full day. Police-verified, sober, from ₹300.',
     badge: 'Most booked',
     includes: [
       'Hourly, half-day or full-day booking',
@@ -39,6 +47,10 @@ export const services: Service[] = [
     title: 'Medical Transport',
     short: 'Hospital visits, clinic appointments and emergency transfers.',
     body: 'Calm, patient drivers for hospital and clinic journeys. They wait through the appointment, help with boarding, and drive gently — which matters a great deal when you have elderly parents or a patient in the car.',
+    heading: 'Medical and hospital transport driver',
+    metaTitle: 'Hospital and Medical Transport Driver',
+    metaDescription:
+      'A calm, police-verified driver for hospital and clinic visits in Raipur, Bhilai, Durg and Bilaspur. Waiting time included, priority dispatch, 24/7.',
     badge: '24/7 priority',
     includes: [
       'Priority dispatch for emergencies',
@@ -53,6 +65,10 @@ export const services: Service[] = [
     title: 'Night Safety Driver',
     short: 'Verified late-night travel for women, families and office returns.',
     body: 'A dedicated night shift from 8 PM to 6 AM, starting from ₹500. Every night driver is police-verified and breath-tested before the shift starts, so a late finish at the office never has to mean an unsafe ride home.',
+    heading: 'Night driver service, 8 PM to 6 AM',
+    metaTitle: 'Night Driver Service, 8 PM to 6 AM',
+    metaDescription:
+      'Book a verified night driver from 8 PM to 6 AM in Raipur, Bhilai, Durg and Bilaspur — a safe ride home for women, families and late shifts, from ₹500.',
     badge: 'Popular choice',
     includes: [
       'From ₹500 for the 8 PM – 6 AM window',
@@ -67,6 +83,10 @@ export const services: Service[] = [
     title: 'Airport & Outstation',
     short: 'Flight-tracked pickups, drops and long-distance highway trips.',
     body: 'Airport transfers with your flight tracked, so the driver is waiting whether you land early or three hours late. For journeys beyond the city, highway-experienced drivers handle long stretches and overnight halts.',
+    heading: 'Airport pickups and outstation drivers',
+    metaTitle: 'Airport and Outstation Drivers on Hire',
+    metaDescription:
+      'Flight-tracked airport pickups and highway-experienced outstation drivers from Raipur, Bhilai, Durg and Bilaspur. You keep your car; we drive it.',
     badge: 'Flight tracked',
     includes: [
       'Live flight tracking for pickups',
@@ -220,6 +240,8 @@ export const stats = [
 export type City = {
   slug: string;
   name: string;
+  /** City-centre coordinates, fed into the LocalBusiness / City JSON-LD `geo`. */
+  geo: { lat: number; lng: number };
   badge: string;
   isHq?: boolean;
   short: string;
@@ -236,6 +258,7 @@ export const cities: City[] = [
   {
     slug: 'raipur',
     name: 'Raipur',
+    geo: { lat: 21.2514, lng: 81.6296 },
     badge: 'Headquarters',
     isHq: true,
     short: 'State capital HQ — airport, railway station and all major hospitals.',
@@ -265,6 +288,7 @@ export const cities: City[] = [
   {
     slug: 'bhilai',
     name: 'Bhilai',
+    geo: { lat: 21.1938, lng: 81.3509 },
     badge: 'Full coverage',
     short: 'Industrial and residential coverage across the Steel City, round the clock.',
     intro:
@@ -292,6 +316,7 @@ export const cities: City[] = [
   {
     slug: 'durg',
     name: 'Durg',
+    geo: { lat: 21.1904, lng: 81.2849 },
     badge: 'Full coverage',
     short: 'Complete coverage of wards, markets and institutions across Durg.',
     intro:
@@ -319,6 +344,7 @@ export const cities: City[] = [
   {
     slug: 'bilaspur',
     name: 'Bilaspur',
+    geo: { lat: 22.0797, lng: 82.1409 },
     badge: 'Full coverage',
     short: 'University campuses, medical hubs and all residential colonies.',
     intro:

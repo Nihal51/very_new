@@ -12,7 +12,7 @@ import { pageMeta } from '@/lib/seo';
 const trail = [{ name: 'FAQ', path: '/faq/' }];
 
 export const metadata: Metadata = pageMeta({
-  title: 'Frequently Asked Questions',
+  title: 'Driver Service FAQ — Timings, Rates, Safety',
   description:
     'How quickly drivers arrive, how they are verified, night service timings, payment methods, extending a booking and whether you need to provide the car — answered.',
   path: '/faq/',
