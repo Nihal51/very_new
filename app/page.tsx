@@ -22,9 +22,9 @@ import { pageMeta } from '@/lib/seo';
 import { site } from '@/lib/site';
 
 export const metadata: Metadata = pageMeta({
-  title: `${site.name} — Verified Drivers in Raipur, Bhilai & Durg`,
+  title: `${site.name} — Hire a Driver in Raipur, Bhilai, Durg & Bilaspur`,
   description:
-    'Hire a police-verified, sober, trained driver for your own car. 30-minute arrival, 24/7, from ₹300 — Raipur, Bhilai, Durg and Bilaspur.',
+    'Hire a verified, sober driver by the hour, full day or outstation. 30-min arrival, 24/7, from ₹300 in Raipur, Bhilai, Durg and Bilaspur.',
   path: '/',
 });
 

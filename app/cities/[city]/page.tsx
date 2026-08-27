@@ -33,8 +33,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!city) return {};
 
   return pageMeta({
-    title: `Driver on Call in ${city.name} — 30-Min Arrival`,
-    description: `Hire a police-verified driver for your own car in ${city.name} — 30-minute arrival, 24/7, from ₹300. Covering ${city.areas.slice(0, 2).join(' and ')}.`,
+    title: `Driver on Hire in ${city.name} — Hourly, Full Day, 24/7`,
+    description: `Hire a police-verified driver in ${city.name} — hourly, full day or night. 30-min arrival, 24/7, from ₹300. Serving ${city.areas[0]} and more.`,
     path: `/cities/${city.slug}/`,
     ogImageAlt: `${site.name} — verified drivers in ${city.name}`,
   });

@@ -6,7 +6,7 @@ import { Footer } from '@/components/Footer';
 import { Header } from '@/components/Header';
 import { JsonLd } from '@/components/JsonLd';
 import { MobileCTABar } from '@/components/MobileCTABar';
-import { localBusinessSchema } from '@/lib/schema';
+import { localBusinessSchema, websiteSchema } from '@/lib/schema';
 import { asset, site } from '@/lib/site';
 
 /**
@@ -55,6 +55,13 @@ export const metadata: Metadata = {
     googleBot: { index: true, follow: true, 'max-image-preview': 'large' },
   },
   alternates: { canonical: '/' },
+  // Google Search Console ownership check. Copy the code from Search Console
+  // (Add property → HTML tag → the content="..." value) into
+  // NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION in .env.production, then redeploy.
+  // Left unset, no tag is emitted — so this is safe to ship as-is.
+  verification: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION
+    ? { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION }
+    : undefined,
   icons: {
     icon: [{ url: asset('/assets/logo.png'), type: 'image/png' }],
     apple: [{ url: asset('/assets/logo.png') }],
@@ -88,6 +95,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
         {/* Site-wide business entity; page-level schema references it by @id. */}
         <JsonLd data={localBusinessSchema()} />
+        {/* Brand → domain anchor: makes "DriveBuddy"/"Drive Buddy" resolve to this site. */}
+        <JsonLd data={websiteSchema()} />
       </body>
     </html>
   );

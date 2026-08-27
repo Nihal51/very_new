@@ -18,7 +18,7 @@ const trail = [{ name: 'Services', path: '/services/' }];
 export const metadata: Metadata = pageMeta({
   title: 'Personal, Medical, Night & Airport Drivers',
   description:
-    'Personal drivers, hospital transport, night safety drivers (8 PM–6 AM) and airport or outstation trips — verified drivers for your own car.',
+    'Hire a driver by the hour or full day — personal, hospital, night-safety (8 PM–6 AM), airport and outstation trips. Verified, sober, trained.',
   path: '/services/',
 });
 

@@ -33,7 +33,24 @@ export const site = {
   priceRange: '₹300–₹1500',
   rating: { value: 4.9, count: 187 },
   foundingYear: '2024',
+  /** The other spelling people type ("drive buddy", two words). Fed into JSON-LD
+      so Google links both spellings of the name to this one official site. */
+  alternateName: ['Drive Buddy'],
 } as const;
+
+/**
+ * Public profiles for this business. Paste your real profile URLs here — Instagram,
+ * Facebook, YouTube, and especially your Google Business Profile "share" link — and
+ * they flow automatically into the JSON-LD `sameAs` on every page. This is one of the
+ * strongest brand signals you can give Google: it ties all of your official pages to a
+ * single entity and helps a "DriveBuddy" knowledge panel show up on the right.
+ * Uncomment and replace the examples once the accounts exist.
+ */
+export const socialProfiles: string[] = [
+  // 'https://www.instagram.com/your_handle',
+  // 'https://www.facebook.com/your_page',
+  // 'https://g.page/your-google-business',
+];
 
 /**
  * Prefix for files served straight out of `public/`. Empty on a normal domain;

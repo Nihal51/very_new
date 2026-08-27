@@ -3,7 +3,7 @@
  * data is reviewable in one place, and every page emits a consistent graph.
  */
 
-import { site } from './site';
+import { site, socialProfiles } from './site';
 import { cities, faqs, plans, services, testimonials } from './content';
 
 const abs = (path = '/') => new URL(path, site.url).toString();
@@ -18,6 +18,7 @@ export function localBusinessSchema() {
     '@id': ORG_ID,
     name: site.name,
     legalName: site.legalName,
+    alternateName: site.alternateName,
     description: site.description,
     url: abs('/'),
     image: abs('/og.png'),
@@ -73,7 +74,26 @@ export function localBusinessSchema() {
       '@type': 'Offer',
       itemOffered: { '@type': 'Service', name: s.title, description: s.short },
     })),
-    sameAs: [`https://wa.me/${site.whatsapp}`],
+    sameAs: [`https://wa.me/${site.whatsapp}`, ...socialProfiles],
+  };
+}
+
+/**
+ * WebSite entity. Ties the brand name — and its two-word spelling — to this one
+ * official domain, so a search for "DriveBuddy" or "Drive Buddy" resolves here and
+ * Google can treat the site as the brand's home. No SearchAction is declared: this
+ * is a static brochure site with no internal search endpoint to point a query at.
+ */
+export function websiteSchema() {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    '@id': `${site.url}/#website`,
+    name: site.name,
+    alternateName: site.alternateName,
+    url: abs('/'),
+    inLanguage: 'en-IN',
+    publisher: { '@id': ORG_ID },
   };
 }
 
