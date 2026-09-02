@@ -228,11 +228,16 @@ export const pillars = [
   },
 ];
 
+/* Every entry here has to be a fact the business can stand behind if asked, not a
+   number that sounds good. "500+ families served" and "4.9★ average rating" used
+   to sit in this array and were both invented; the audit script now fails the
+   build on that shape of claim. The first two are what render beside the booking
+   form (`stats.slice(0, 2)` in app/page.tsx), so immediacy leads. */
 export const stats = [
-  { value: '500+', label: 'Families served' },
+  { value: '30 min', label: 'Arrival target' },
   { value: '24/7', label: 'Always available' },
-  { value: '30 min', label: 'Average response' },
-  { value: '4.9★', label: 'Average rating' },
+  { value: '4 cities', label: 'Raipur, Bhilai, Durg & Bilaspur' },
+  { value: '₹300', label: 'Starting rate, one hour' },
 ];
 
 /* ------------------------------------------------------------------ cities */

@@ -314,6 +314,33 @@ sitemap entry, the nav listing and the structured data all follow.
 
 Phone numbers, email and the domain live in [`lib/site.ts`](lib/site.ts).
 
+### Claims the build will not let you make
+
+`npm run check` fails if any page's rendered text asserts something the business
+cannot prove. The patterns live in the `UNSUBSTANTIATED` array in
+[`scripts/audit.mjs`](scripts/audit.mjs) and cover review counts, star ratings,
+customer or trip totals, satisfaction percentages, and "#1"/"top-rated"/"most
+trusted" style rankings. `aggregateRating` and `Review` markup are blocked
+separately, anywhere in the HTML.
+
+This exists because the site shipped with three invented figures — "4.9 from 187
+reviews", "4.9★" and "500+ families served" — and deleting the strings only fixed
+that day. Under the Consumer Protection Act 2019 an invented statistic is a
+misleading advertisement, and Google's review policy (updated 24 July 2026) treats
+fabricated review signals as grounds for a manual action, which makes it ignore
+*all* structured data on the page.
+
+The guard reads each page's text with tags, scripts and React's comment markers
+stripped — not the raw HTML. React renders `from <!-- -->187<!-- --> reviews`, and
+a stats block puts "500+" and "Families served" in sibling elements, so a
+raw-HTML check silently passes and the guard becomes decoration.
+
+When you genuinely have reviews and want to show the number: take it from the
+Business Profile, keep it current, attribute it on the page, delete just that one
+pattern, and say in the commit message where the figure came from. Do not re-add
+`aggregateRating` — [`lib/schema.ts`](lib/schema.ts) explains why it earns nothing
+and risks everything.
+
 ### Design system
 
 `app/globals.css` holds every colour, type scale, radius and shadow as a
@@ -356,16 +383,13 @@ and focus moved to the confirmation panel after a successful submit.
 - **Have `/privacy` and `/terms` reviewed by a lawyer.** Both pages carry a
   visible notice saying so. They describe accurately what the site does, but
   the liability, insurance and DPDP Act wording needs a professional eye.
-- **Verify the visible rating claim.** The homepage hero shows "4.9 from 187
-  reviews" and the stats strip shows "4.9★", both from `site.rating` in
-  [`lib/site.ts`](lib/site.ts), carried over from the old site. The *structured
-  data* no longer publishes it — see the comment in
-  [`lib/schema.ts`](lib/schema.ts) for why that would have been all risk and no
-  benefit — but the visible text is still a factual claim about the business. If
-  187 is not a real, countable number, change the copy in
-  [`components/sections/HomeHero.tsx`](components/sections/HomeHero.tsx) and the
-  `stats` array in [`lib/content.ts`](lib/content.ts) to something you can stand
-  behind. Real stars come from the Google Business Profile.
+- **Get real reviews on the Google Business Profile.** This replaced the old
+  "verify the rating" item, which is now settled: the hero's "4.9 from 187
+  reviews", the stats strip's "4.9★" and "500+ families served" were all
+  invented, the owner confirmed as much on 2 Sep 2026, and all three are gone
+  along with the `rating` field in [`lib/site.ts`](lib/site.ts). The only honest
+  source of stars is the profile — see
+  [`docs/google-business-profile.md`](docs/google-business-profile.md).
 - **Submit `sitemap.xml` to Google Search Console** once the domain is live, and
   claim the Google Business Profile for each city. Step-by-step, with every field
   written out ready to paste: [`docs/google-business-profile.md`](docs/google-business-profile.md).

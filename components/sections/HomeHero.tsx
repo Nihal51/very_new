@@ -8,7 +8,6 @@ import {
   NoAlcoholIcon,
   PhoneIcon,
   ShieldIcon,
-  StarFilledIcon,
 } from '@/components/icons';
 import { formatPhone, site, telHref } from '@/lib/site';
 
@@ -34,11 +33,11 @@ export function HomeHero() {
               <span className="bg-success size-1.5 rounded-full" aria-hidden="true" />
               Available now · 24/7
             </Badge>
-            <span className="flex items-center gap-1.5 text-sm text-white/70">
-              <StarFilledIcon className="text-accent size-4" />
-              <span className="tabular font-semibold text-white">{site.rating.value}</span>
-              from {site.rating.count} reviews
-            </span>
+            {/* A star rating used to sit here, reading "4.9 from 187 reviews". The
+                figure was never real, so it is gone — see the UNSUBSTANTIATED guard
+                in scripts/audit.mjs, which now fails the build if it comes back.
+                Real stars belong on the Google Business Profile, earned from real
+                customers; the trust chips below carry this slot's work meanwhile. */}
           </div>
 
           {/* Two lines in one H1: the slogan carries the brand and stays visually

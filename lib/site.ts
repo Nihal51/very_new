@@ -31,7 +31,13 @@ export const site = {
   whatsapp: '919111473929',
   email: 'drivebuddyind@gmail.com',
   priceRange: '₹300–₹1500',
-  rating: { value: 4.9, count: 187 },
+  /* No `rating` field. One used to live here — `{ value: 4.9, count: 187 }` — and fed
+     a line in the home hero reading "4.9 from 187 reviews". The owner confirmed on
+     2 Sep 2026 that the figure was invented, so both are gone. Deleting the field
+     rather than zeroing it is deliberate: there is now nothing to wire back up by
+     accident, and `scripts/audit.mjs` fails the build if a rating, review count or
+     customer total reappears in the rendered text. Real ratings live on the Google
+     Business Profile, where real customers put them. */
   foundingYear: '2024',
   /** The other spellings people type, and the one the Google Business Profile is
       registered under ("The Drive Buddy"). Fed into JSON-LD so every spelling of

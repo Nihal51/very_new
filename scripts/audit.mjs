@@ -5,9 +5,10 @@
  *
  * Asserts, for every exported page: exactly one <h1>, a title within Google's
  * display limit, a description in the useful length band, a canonical URL, an
- * absolute OG image, a twitter card, at least one JSON-LD block, and that no
- * placeholder or unreplaced token made it into the HTML. Exits non-zero on
- * failure so it can gate a deploy.
+ * absolute OG image, a twitter card, at least one JSON-LD block, that no
+ * placeholder or unreplaced token made it into the HTML, and that the page makes
+ * no factual claim the business cannot prove. Exits non-zero on failure so it
+ * can gate a deploy.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
@@ -25,6 +26,47 @@ const FORBIDDEN = ['lorem ipsum', 'TODO', 'undefined', 'NaN', '[object Object]']
 /** Strings that must not appear anywhere, scripts included — the old site's
     undeployed Cloudflare Worker and the blocking Google Fonts request. */
 const FORBIDDEN_ANYWHERE = ['YOUR-WORKER', 'workers.dev', 'fonts.googleapis.com'];
+
+/**
+ * Claims the business cannot currently prove, as patterns.
+ *
+ * On 2 Sep 2026 the owner confirmed the homepage's "4.9 from 187 reviews" was
+ * invented, along with "500+ families served". Deleting those strings fixes
+ * today; this guard fixes tomorrow, by making their return a build failure
+ * rather than something a reader has to notice. Under the Consumer Protection
+ * Act 2019 an invented statistic is a misleading advertisement, and Google's
+ * review policy (updated 24 July 2026) treats fabricated review signals as
+ * grounds for a manual action.
+ *
+ * Matched against the page's *text* — tags, `<script>`, `<style>` and React's
+ * comment markers stripped, whitespace collapsed — never against raw HTML.
+ * React emits `from <!-- -->187<!-- --> reviews`, and a stat block puts "500+"
+ * and "Families served" in sibling elements, so a raw-HTML regex silently
+ * passes and the guard becomes decoration. Verified to match all three real
+ * claims and nothing else across the 21 exported pages.
+ *
+ * To publish a real rating one day: take the figure from the Google Business
+ * Profile, keep it current, attribute it on the page, then delete just the one
+ * pattern below and say in the commit message where the number came from. Do
+ * not re-add `aggregateRating` or `Review` markup regardless — see lib/schema.ts.
+ */
+const UNSUBSTANTIATED = [
+  [/\b\d[\d,]*(?:\.\d+)?\s*\+?\s*(?:verified |genuine |google |customer )?reviews?\b/i, 'review count'],
+  [/\bfrom\s+\d[\d,]*\s+ratings?\b/i, 'rating count'],
+  [/\b\d(?:\.\d)?\s*(?:★|⭐|stars?\b|out of 5\b|\/\s?5\b)/i, 'star rating'],
+  [
+    /\b(?:\d[\d,]*\s*\+|over\s+\d[\d,]*|more than\s+\d[\d,]*|\d[\d,]*\s*lakh)\s*(?:happy |satisfied |delighted )?(?:families|customers|clients|users|riders|rides|trips|bookings|drivers|people)\b/i,
+    'customer volume',
+  ],
+  [/\b\d{1,3}\s*%\s*(?:satisfaction|satisfied|happy|on[- ]time|success)/i, 'satisfaction rate'],
+  [
+    /(?:\bno\.?\s*1\b|#1\b|\bnumber one\b|top[- ]rated|highest[- ]rated|most trusted|market leader)/i,
+    'superlative ranking',
+  ],
+];
+
+/** Structured-data properties that must never come back. See lib/schema.ts. */
+const FORBIDDEN_MARKUP = ['aggregateRating', '"@type":"Review"'];
 
 /* Titles and descriptions are measured after decoding entities. React escapes
    `&` as `&amp;` in the markup, but Google counts the character a person sees —
@@ -108,6 +150,22 @@ for (const file of pages) {
   // These must not appear anywhere at all, script payloads included.
   for (const token of FORBIDDEN_ANYWHERE) {
     if (html.includes(token)) issues.push(`contains "${token}"`);
+  }
+
+  /* What a person actually reads, as one run of plain text. See the comment on
+     UNSUBSTANTIATED for why the claim guard cannot run on markup. */
+  const readable = visible
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ');
+
+  for (const [pattern, kind] of UNSUBSTANTIATED) {
+    const hit = readable.match(pattern);
+    if (hit) issues.push(`unprovable ${kind}: "${hit[0].trim()}" — see UNSUBSTANTIATED in scripts/audit.mjs`);
+  }
+  for (const token of FORBIDDEN_MARKUP) {
+    if (html.includes(token)) issues.push(`self-serving review markup "${token}" is back — see lib/schema.ts`);
   }
 
   // Every JSON-LD block must actually parse.
