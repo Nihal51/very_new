@@ -13,15 +13,17 @@
  * ONE-TIME SETUP — get your key file:
  *   1. Firebase console -> gear icon -> Project settings -> "Service accounts"
  *   2. Press "Generate new private key" -> Generate key. A .json file downloads.
- *   3. Rename it to  serviceAccount.json  and put it in this project folder.
- *      It is already git-ignored. Treat it like a password: it grants full access
- *      to the project. Never commit it, never email it, never paste it in chat.
+ *   3. Rename it to  serviceAccount.json  and put it in  <your home>/.drivebuddy/
+ *      NOT in the project folder: this repo is public, and Google automatically
+ *      disables any key it finds published, so a committed key dies within minutes.
+ *      Treat it like a password. Never commit it, never email it, never paste it in chat.
  *
  * After that, any time you want the latest leads:  npm run leads
  */
 
 import { createSign } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -30,6 +32,15 @@ import ExcelJS from 'exceljs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = path.join(ROOT, 'exports');
 const SCOPE = 'https://www.googleapis.com/auth/datastore';
+
+/**
+ * The key lives OUTSIDE the repo, in your home folder. That is deliberate: this
+ * repo is public, and a key stored inside the project folder can be published by
+ * one careless drag-and-drop or web upload — .gitignore does not protect against
+ * uploading through github.com. Google disables keys it finds in public repos, so
+ * a published key stops working anyway. Keeping it here makes that impossible.
+ */
+const KEY_FILE = path.join(homedir(), '.drivebuddy', 'serviceAccount.json');
 
 /** India has no daylight saving, so a fixed +5:30 is exact all year. */
 const IST_OFFSET_MIN = 330;
@@ -112,17 +123,24 @@ function readablePreferredTime(raw) {
 const SETUP_HELP = `
 Could not find your service-account key.
 
-  1. Firebase console -> gear icon -> Project settings -> "Service accounts"
-  2. Press "Generate new private key" -> Generate key
+  1. Open  console.firebase.google.com  -> gear icon -> Project settings
+  2. "Service accounts" tab -> "Generate new private key" -> Generate key
   3. Rename the downloaded file to  serviceAccount.json
-  4. Put it in:  ${ROOT}
+  4. Put it in:  ${path.dirname(KEY_FILE)}
 
-It is git-ignored, so it stays on your machine. Then run  npm run leads  again.
+Do NOT put it in the project folder and do NOT upload it to GitHub — this repo is
+public, and Google automatically disables any key it finds published, so the key
+would stop working within minutes.
+
+Then run  npm run leads  again.
 `;
 
 async function loadServiceAccount() {
   const candidates = [
     process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    KEY_FILE,
+    // Older location, still honoured so an existing setup keeps working — but it
+    // sits inside the repo, so loadServiceAccount warns when a key is found here.
     path.join(ROOT, 'serviceAccount.json'),
     path.join(ROOT, 'service-account.json'),
   ].filter(Boolean);
@@ -131,6 +149,12 @@ async function loadServiceAccount() {
     try {
       const parsed = JSON.parse(await readFile(file, 'utf8'));
       if (parsed.client_email && parsed.private_key && parsed.project_id) {
+        if (path.resolve(file).startsWith(ROOT + path.sep)) {
+          console.warn(
+            `\n!  Your key is inside the project folder, which is a public repo.\n` +
+              `   Move it to  ${KEY_FILE}  so it cannot be published by accident.\n`,
+          );
+        }
         return { ...parsed, _file: file };
       }
       throw new Error(
@@ -182,12 +206,14 @@ export async function getAccessToken(sa) {
         `  account  ${sa.client_email}\n\n` +
         (revoked
           ? 'This key is no longer active on Google\'s side — it was deleted or disabled.\n' +
-            'Get a fresh one from the FIREBASE console, which is the one place a working key\n' +
-            'has come from before:\n' +
+            'The usual cause is the key being published: Google scans public repos and\n' +
+            'disables any key it finds, so a key committed to GitHub dies within minutes.\n\n' +
+            'Get a fresh one:\n' +
             '  console.firebase.google.com -> gear -> Project settings -> Service accounts\n' +
             '  -> "Generate new private key"\n' +
-            'Save it as serviceAccount.json here, and do not delete anything in the console.'
-          : 'Generate a new key and replace serviceAccount.json.'),
+            `Save it as  ${KEY_FILE}\n` +
+            'Do not put it in the project folder and do not upload it to GitHub.'
+          : 'Generate a new key and replace your serviceAccount.json.'),
     );
   }
   return body.access_token;
