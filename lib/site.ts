@@ -47,9 +47,11 @@ export const site = {
  * Uncomment and replace the examples once the accounts exist.
  */
 export const socialProfiles: string[] = [
-  // 'https://www.instagram.com/your_handle',
+  'https://www.instagram.com/the_drivebuddy/',
+  // Add the Google Business Profile share link here too, once you have it — it is
+  // the strongest of the lot. Profile → Share → copy link, looks like
+  // https://g.page/xxxxx or https://maps.app.goo.gl/xxxxx
   // 'https://www.facebook.com/your_page',
-  // 'https://g.page/your-google-business',
 ];
 
 /**
