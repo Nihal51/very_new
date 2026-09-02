@@ -39,6 +39,16 @@ What the rules do:
 You read your leads in the [Firebase console](https://console.firebase.google.com/project/drive-buddy-acc4c/firestore),
 which bypasses these rules — as does any backend using the Admin SDK.
 
+**To check the rules are actually live**, ask Firestore for a booking the way a
+stranger with the public API key would. Run this from the project folder:
+
+```bash
+node -e "const k=require('fs').readFileSync('.env.production','utf8').match(/API_KEY=(.*)/)[1].trim();fetch(\`https://firestore.googleapis.com/v1/projects/drive-buddy-acc4c/databases/(default)/documents/bookings?pageSize=1&key=\${k}\`).then(r=>r.json()).then(j=>console.log(j.error?'BLOCKED — rules are live ('+j.error.status+')':'*** EXPOSED — deploy firestore.rules now ***'))"
+```
+
+`BLOCKED — rules are live (PERMISSION_DENIED)` is the answer you want. Verified
+on 2 Sep 2026 for both `bookings` and `drivers`.
+
 **Also recommended: turn on App Check.** In the Firebase console →
 _App Check_ → register the web app with reCAPTCHA v3 and enforce it for
 Firestore. The rules validate the *shape* of a write; App Check validates that
@@ -346,11 +356,16 @@ and focus moved to the confirmation panel after a successful submit.
 - **Have `/privacy` and `/terms` reviewed by a lawyer.** Both pages carry a
   visible notice saying so. They describe accurately what the site does, but
   the liability, insurance and DPDP Act wording needs a professional eye.
-- **Verify the aggregate rating.** `lib/site.ts` declares 4.9 from 187 reviews
-  in the LocalBusiness structured data, carried over from the old site. Google
-  requires review markup to reflect genuine, collectable reviews — if that
-  number is not real, remove `rating` from `site` and the `aggregateRating`
-  block from `lib/schema.ts`.
+- **Verify the visible rating claim.** The homepage hero shows "4.9 from 187
+  reviews" and the stats strip shows "4.9★", both from `site.rating` in
+  [`lib/site.ts`](lib/site.ts), carried over from the old site. The *structured
+  data* no longer publishes it — see the comment in
+  [`lib/schema.ts`](lib/schema.ts) for why that would have been all risk and no
+  benefit — but the visible text is still a factual claim about the business. If
+  187 is not a real, countable number, change the copy in
+  [`components/sections/HomeHero.tsx`](components/sections/HomeHero.tsx) and the
+  `stats` array in [`lib/content.ts`](lib/content.ts) to something you can stand
+  behind. Real stars come from the Google Business Profile.
 - **Submit `sitemap.xml` to Google Search Console** once the domain is live, and
   claim the Google Business Profile for each city. Step-by-step, with every field
   written out ready to paste: [`docs/google-business-profile.md`](docs/google-business-profile.md).

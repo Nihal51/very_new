@@ -4,7 +4,7 @@
  */
 
 import { site, socialProfiles } from './site';
-import { cities, faqs, plans, services, testimonials } from './content';
+import { cities, faqs, plans, services } from './content';
 
 /* Concatenated rather than `new URL(path, site.url)`: an absolute pathname
    resets the base's own path, so on a sub-path deployment the "/" in "/og.png"
@@ -107,19 +107,18 @@ export function localBusinessSchema() {
         closes: '23:59',
       },
     ],
-    aggregateRating: {
-      '@type': 'AggregateRating',
-      ratingValue: String(site.rating.value),
-      reviewCount: String(site.rating.count),
-      bestRating: '5',
-      worstRating: '1',
-    },
-    review: testimonials.map((t) => ({
-      '@type': 'Review',
-      reviewRating: { '@type': 'Rating', ratingValue: '5', bestRating: '5' },
-      author: { '@type': 'Person', name: t.name },
-      reviewBody: t.quote,
-    })),
+    /* No `aggregateRating` and no `review` here, deliberately — do not add them
+       back. Google's review-snippet guidelines say that when "the entity that's
+       being reviewed controls the reviews about itself", its LocalBusiness pages
+       are "ineligible for star review feature", and that "ratings must be sourced
+       directly from users". Ratings we publish about ourselves therefore earn no
+       stars at all, while the same guidelines (updated 24 July 2026) forbid fake
+       or undisclosed incentivised reviews in markup on pain of a manual action —
+       which makes Google ignore *every* other piece of structured data on the
+       page. All downside, no upside. Real stars come from the Google Business
+       Profile instead: see docs/google-business-profile.md. The testimonials stay
+       visible on the page as ordinary copy; they are just not marked up as
+       machine-readable reviews. */
     makesOffer: services.map((s) => ({
       '@type': 'Offer',
       itemOffered: { '@type': 'Service', name: s.title, description: s.short },
