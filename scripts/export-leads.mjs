@@ -406,6 +406,9 @@ async function main() {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
     console.error(`\n${err.message}\n`);
-    process.exit(1);
+    // Set the code rather than calling process.exit(): exiting while stderr is
+    // still flushing trips a libuv assertion on Windows, which buries the
+    // message we just printed under a C stack trace.
+    process.exitCode = 1;
   });
 }
