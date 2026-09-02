@@ -102,6 +102,33 @@ Then <http://localhost:3000>.
 | `npm run build` | Type-checks, builds, and writes the static site to `out/` |
 | `npm run lint` | `tsc --noEmit` — type errors only, no build |
 | `npm run og` | Regenerates `public/og.png` (the social preview card) |
+| `npm run leads` | Downloads every booking and driver application to an Excel file — see below |
+| `npm test` | Runs the script tests |
+
+## Seeing your leads in Excel
+
+`firestore.rules` denies *all* reads from the browser on purpose, so a leaked
+web API key can never be used to dump your customers' names, mobile numbers and
+addresses. To read the leads yourself, run this on your own computer:
+
+```bash
+npm run leads
+```
+
+It writes `exports/drivebuddy-leads_<date>.xlsx` with three sheets — **Summary**
+(totals by city, service and day), **Bookings** and **Driver applications** —
+newest first, with the received date *and* time in IST.
+
+**One-time setup.** The script needs a service-account key:
+
+1. [Firebase console](https://console.firebase.google.com/) → gear icon → **Project settings** → **Service accounts**
+2. **Generate new private key** → **Generate key**. A `.json` file downloads.
+3. Rename it to `serviceAccount.json` and put it in this project folder.
+
+That file **is** a real secret — unlike the `NEXT_PUBLIC_FIREBASE_*` values, it
+grants full read/write access to the whole project. It is already git-ignored;
+never commit it, email it, or paste it into a chat. The `exports/` folder is
+git-ignored too, because those spreadsheets contain real customer PII.
 
 ## Deploying from GitHub (free, on your own domain)
 

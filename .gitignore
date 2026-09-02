@@ -31,6 +31,16 @@ pnpm-debug.log*
 .firebase/
 firebase-debug.log*
 firestore-debug.log*
+# Admin service-account key — this one IS a real secret: it grants full
+# read/write access to the whole Firebase project. Never commit or email it.
+serviceAccount.json
+service-account*.json
+*-firebase-adminsdk-*.json
+
+# Exported leads — real customer names, mobile numbers and home addresses.
+exports/
+*.xlsx
+*.csv
 
 # editors
 .vscode/

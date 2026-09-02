@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "tsc --noEmit",
     "og": "node scripts/og.mjs",
+    "leads": "node scripts/export-leads.mjs",
     "audit": "node scripts/audit.mjs",
+    "test": "node --test \"scripts/*.test.mjs\"",
     "check": "tsc --noEmit && next build && node scripts/audit.mjs"
   },
   "dependencies": {
@@ -22,6 +24,7 @@
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.4",
+    "exceljs": "^4.4.0",
     "sharp": "^0.35.3",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3"
