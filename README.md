@@ -102,33 +102,101 @@ Then <http://localhost:3000>.
 | `npm run build` | Type-checks, builds, and writes the static site to `out/` |
 | `npm run lint` | `tsc --noEmit` — type errors only, no build |
 | `npm run og` | Regenerates `public/og.png` (the social preview card) |
+| `npm run inbox` | Opens a live screen of your bookings and driver applications — see below |
 | `npm run leads` | Downloads every booking and driver application to an Excel file — see below |
 | `npm test` | Runs the script tests |
 
-## Seeing your leads in Excel
+## Seeing your leads
 
-`firestore.rules` denies *all* reads from the browser on purpose, so a leaked
-web API key can never be used to dump your customers' names, mobile numbers and
-addresses. To read the leads yourself, run this on your own computer:
+Two ways in, sharing one service-account key. Both read Firestore from **your own
+machine**: `firestore.rules` denies every read from the browser on purpose, so a
+leaked web API key can never be used to dump your customers' names, mobile
+numbers and addresses. Neither of these changes that, and neither adds a login
+page to the public site for anyone to attack.
+
+### `npm run inbox` — the live screen
+
+```bash
+npm run inbox
+```
+
+Opens a page in your browser listing every booking and every driver application,
+newest first, with a **NEW** badge on anything you have not looked at yet and an
+unread count on each tab. It refreshes itself every 15 seconds, so a booking made
+while the page is open appears on its own — with a beep and a desktop
+notification. Each row expands to the full details, with **Call** and **WhatsApp**
+buttons that open with a message already written.
+
+It also keeps `exports/drivebuddy-leads-latest.xlsx` current in the background, so
+the spreadsheet is always up to date without running anything else.
+
+How it is locked down, since it is holding customer PII:
+
+- Listens on `127.0.0.1` only. Nothing on your wifi or the internet can reach it.
+- Every request must carry a random key generated fresh at startup; the link stops
+  working when you stop the server.
+- The `Host` header is checked against an allow-list, which blocks DNS rebinding —
+  the attack where a website you visit makes *your* browser read localhost on its
+  behalf. Cross-site requests are refused and no CORS headers are ever sent.
+- Customer text is inserted as text, never as HTML, so a name or note containing
+  markup cannot execute.
+- It never writes to Firestore. Read-only by construction.
+
+**WhatsApp alerts (optional).** By default the alert is the browser's own desktop
+notification, which needs the page open. To get a WhatsApp message instead, create
+`~/.drivebuddy/notify.json` (Windows: `C:\Users\<you>\.drivebuddy\notify.json`):
+
+```json
+{
+  "channel": "callmebot",
+  "phone": "+919111473929",
+  "apikey": "your-callmebot-key",
+  "includeDetails": false
+}
+```
+
+Get the API key by messaging `+34 644 51 95 23` on WhatsApp with
+`I allow callmebot to send me messages`. It is free and needs no Firebase plan
+change. `includeDetails` is `false` on purpose: the alert travels through someone
+else's server, so it says *what* arrived and from which city, not the customer's
+name and number. Set it to `true` only if you accept that.
+
+For a first-party alternative, `"channel": "cloudapi"` with `phoneNumberId`,
+`accessToken` and `to` uses the official WhatsApp Cloud API, and
+`"channel": "webhook"` with a `url` POSTs JSON anywhere you like.
+
+### `npm run leads` — the spreadsheet
 
 ```bash
 npm run leads
 ```
 
-It writes `exports/drivebuddy-leads_<date>.xlsx` with three sheets — **Summary**
+Writes `exports/drivebuddy-leads_<date>.xlsx` with three sheets — **Summary**
 (totals by city, service and day), **Bookings** and **Driver applications** —
-newest first, with the received date *and* time in IST.
+newest first, with the received date *and* time in IST. Use this when you want to
+sort, filter, count or keep a record.
 
-**One-time setup.** The script needs a service-account key:
+### One-time setup (both scripts)
+
+They need a service-account key:
 
 1. [Firebase console](https://console.firebase.google.com/) → gear icon → **Project settings** → **Service accounts**
 2. **Generate new private key** → **Generate key**. A `.json` file downloads.
-3. Rename it to `serviceAccount.json` and put it in this project folder.
+3. Rename it to `serviceAccount.json` and put it in `~/.drivebuddy/`
+   (Windows: `C:\Users\<you>\.drivebuddy\`) — **not** in this project folder.
 
 That file **is** a real secret — unlike the `NEXT_PUBLIC_FIREBASE_*` values, it
-grants full read/write access to the whole project. It is already git-ignored;
-never commit it, email it, or paste it into a chat. The `exports/` folder is
-git-ignored too, because those spreadsheets contain real customer PII.
+grants full read/write access to the whole project. Never commit it, email it, or
+paste it into a chat.
+
+It lives outside the repo for a specific reason: **this repository is public, and
+`.gitignore` does not protect against a file uploaded through the github.com web
+UI.** Google scans public repositories and disables any service-account key it
+finds, usually within minutes, so a published key stops working anyway — the
+symptom is `invalid_grant: Invalid JWT Signature` on a key that is only minutes
+old. Keeping the key in your home folder makes that mistake impossible. The
+`exports/` folder is git-ignored too, because those spreadsheets contain real
+customer PII.
 
 ## Deploying from GitHub (free, on your own domain)
 

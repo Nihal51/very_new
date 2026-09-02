@@ -15,7 +15,7 @@ import { after, before, describe, it } from 'node:test';
 
 import ExcelJS from 'exceljs';
 
-import { buildWorkbook, getAccessToken } from './export-leads.mjs';
+import { buildWorkbook, getAccessToken, normaliseBooking, normaliseDriver } from './export-leads.mjs';
 
 /* 2026-08-28T13:53:11Z is 28 Aug 2026, 7:23 pm IST — a Friday. */
 const BOOKINGS = [
@@ -124,6 +124,65 @@ describe('workbook', () => {
     assert.ok(text.includes('Booking requests'));
     assert.ok(text.includes('Raipur'));
     assert.ok(text.includes('28 Aug 2026'));
+  });
+});
+
+describe('normalising two generations of form data', () => {
+  /**
+   * The live `bookings` collection holds rows from an older version of the form.
+   * Those rows store the *finished* package label instead of a key, call the
+   * wall-clock field `datetime` instead of `preferredTime`, and carry a
+   * `destination` where the current form has a `city`. Real examples from the
+   * project's own Firestore, so a lead from May cannot render as a row of blanks.
+   */
+  const LEGACY = {
+    id: 'Xdv9j0gXKh10Hk0iGDC0',
+    name: 'ninu',
+    phone: '9893302783',
+    datetime: '2026-04-29T13:16',
+    destination: 'Bhilai',
+    notes: '',
+    package: '1 Hour — ₹300',
+    pickup: 'raipur',
+    status: 'new',
+    _created: new Date('2026-04-29T02:43:05Z'),
+  };
+
+  it('keeps a legacy package label that is already human-readable', () => {
+    const row = normaliseBooking(LEGACY);
+    assert.equal(row.service, '1 Hour — ₹300');
+    assert.equal(row.name, 'ninu');
+    assert.equal(row.pickup, 'raipur');
+  });
+
+  it('reads the old `datetime` field when `preferredTime` is absent', () => {
+    assert.equal(normaliseBooking(LEGACY).preferred, '29 Apr 2026, 1:16 pm');
+  });
+
+  it('carries a legacy destination into the notes rather than dropping it', () => {
+    assert.equal(normaliseBooking({ ...LEGACY, notes: 'call first' }).notes,
+      'call first · Drop: Bhilai');
+    assert.equal(normaliseBooking(LEGACY).notes, 'Drop: Bhilai');
+  });
+
+  it('never yields undefined for a field the sheet has a column for', () => {
+    const row = normaliseBooking({ id: 'bare', _created: new Date('2026-01-01T00:00:00Z') });
+    for (const [key, value] of Object.entries(row)) {
+      assert.notEqual(value, undefined, `${key} is undefined`);
+    }
+    assert.equal(row.preferred, 'As soon as possible');
+    assert.equal(row.city, '');
+  });
+
+  it('expands the current form codes and leaves a numeric year numeric', () => {
+    const row = normaliseDriver(DRIVERS[0]);
+    assert.equal(row.licence, 'Commercial + LMV');
+    assert.equal(row.years, 9);
+    assert.equal(row.phone, '9998887770');
+  });
+
+  it('keeps a mobile number stored as a number as a string', () => {
+    assert.equal(normaliseBooking({ ...LEGACY, phone: 9893302783 }).phone, '9893302783');
   });
 });
 
