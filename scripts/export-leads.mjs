@@ -135,7 +135,7 @@ would stop working within minutes.
 Then run  npm run leads  again.
 `;
 
-async function loadServiceAccount() {
+export async function loadServiceAccount() {
   const candidates = [
     process.env.GOOGLE_APPLICATION_CREDENTIALS,
     KEY_FILE,
@@ -222,7 +222,7 @@ export async function getAccessToken(sa) {
 /* -------------------------------------------------------------------- fetch */
 
 /** Page through a whole collection. Newest first; sorted here so no Firestore index is needed. */
-async function listCollection(projectId, token, collectionName) {
+export async function listCollection(projectId, token, collectionName) {
   const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${collectionName}`;
   const rows = [];
   let pageToken;
@@ -251,6 +251,50 @@ async function listCollection(projectId, token, collectionName) {
   } while (pageToken);
 
   return rows.sort((a, b) => b._created - a._created);
+}
+
+/* ---------------------------------------------------------------- normalise */
+
+/**
+ * Flatten one raw Firestore booking into the shape the sheets and the inbox both
+ * render. Two form versions have written to this collection: the current one
+ * stores `package` as a key, `preferredTime` for the wall-clock string and a
+ * separate `city`; the previous site stored the finished package *label*, called
+ * the same time field `datetime`, and had a `destination` instead of a city. Both
+ * are mapped here so an old lead is never shown as a row of blanks.
+ */
+export function normaliseBooking(raw) {
+  const notes = [raw.notes, raw.destination ? `Drop: ${raw.destination}` : '']
+    .filter(Boolean)
+    .join(' · ');
+
+  return {
+    id: raw.id,
+    created: raw._created,
+    name: raw.name ?? '',
+    // Kept as a string so Excel and the browser both show a leading zero if present.
+    phone: raw.phone ? String(raw.phone) : '',
+    city: raw.city ?? '',
+    service: SERVICE_LABELS[raw.package] ?? raw.package ?? '',
+    pickup: raw.pickup ?? '',
+    preferred: readablePreferredTime(raw.preferredTime ?? raw.datetime),
+    notes,
+    status: raw.status ?? '',
+  };
+}
+
+export function normaliseDriver(raw) {
+  return {
+    id: raw.id,
+    created: raw._created,
+    name: raw.name ?? '',
+    phone: raw.phone ? String(raw.phone) : '',
+    city: raw.city ?? '',
+    years: raw.experienceYears ?? '',
+    licence: LICENCE_LABELS[raw.licence] ?? raw.licence ?? '',
+    about: raw.about ?? '',
+    status: raw.status ?? '',
+  };
 }
 
 /* ----------------------------------------------------------------- workbook */
@@ -292,16 +336,16 @@ function addBookingsSheet(workbook, bookings) {
   bookings.forEach((b, i) => {
     sheet.addRow({
       n: i + 1,
-      received: toIstWallClock(b._created),
-      day: dayName.format(b._created),
-      name: b.name ?? '',
-      phone: b.phone ? `${b.phone}` : '',
-      city: b.city ?? '',
-      service: SERVICE_LABELS[b.package] ?? b.package ?? '',
-      pickup: b.pickup ?? '',
-      preferred: readablePreferredTime(b.preferredTime),
+      received: toIstWallClock(b.created),
+      day: dayName.format(b.created),
+      name: b.name,
+      phone: b.phone,
+      city: b.city,
+      service: b.service,
+      pickup: b.pickup,
+      preferred: b.preferred,
       notes: b.notes || '—',
-      status: b.status ?? '',
+      status: b.status,
       id: b.id,
     });
   });
@@ -332,15 +376,15 @@ function addDriversSheet(workbook, drivers) {
   drivers.forEach((d, i) => {
     sheet.addRow({
       n: i + 1,
-      received: toIstWallClock(d._created),
-      day: dayName.format(d._created),
-      name: d.name ?? '',
-      phone: d.phone ? `${d.phone}` : '',
-      city: d.city ?? '',
-      years: d.experienceYears ?? '',
-      licence: LICENCE_LABELS[d.licence] ?? d.licence ?? '',
+      received: toIstWallClock(d.created),
+      day: dayName.format(d.created),
+      name: d.name,
+      phone: d.phone,
+      city: d.city,
+      years: d.years,
+      licence: d.licence,
       about: d.about || '—',
-      status: d.status ?? '',
+      status: d.status,
       id: d.id,
     });
   });
@@ -384,8 +428,8 @@ function addSummarySheet(workbook, bookings, drivers) {
     sheet.addRow([]);
   };
 
-  const newest = bookings[0]?._created;
-  const oldest = bookings.at(-1)?._created;
+  const newest = bookings[0]?.created;
+  const oldest = bookings.at(-1)?.created;
   const dayStamp = (d) => (d ? dayKey.format(d) : '—');
 
   block('Totals', [
@@ -400,17 +444,20 @@ function addSummarySheet(workbook, bookings, drivers) {
   );
   block(
     'Bookings by service',
-    tally(bookings, (b) => SERVICE_LABELS[b.package] ?? b.package),
+    tally(bookings, (b) => b.service),
   );
   block(
     'Bookings by day (IST)',
-    tally(bookings, (b) => dayKey.format(b._created)).slice(0, 21),
+    tally(bookings, (b) => dayKey.format(b.created)).slice(0, 21),
   );
   return sheet;
 }
 
 /** Exported for scripts/export-leads.test.mjs — pure, no network. */
-export function buildWorkbook(bookings, drivers) {
+export function buildWorkbook(rawBookings, rawDrivers) {
+  const bookings = rawBookings.map(normaliseBooking);
+  const drivers = rawDrivers.map(normaliseDriver);
+
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'DriveBuddy';
   workbook.created = new Date();
@@ -424,7 +471,11 @@ export function buildWorkbook(bookings, drivers) {
 
 async function main() {
   const sa = await loadServiceAccount();
-  console.log(`key    ${path.basename(sa._file)}  (project ${sa.project_id})`);
+  // The full path, not just the basename: three of the four candidate locations are
+  // all called serviceAccount.json, so a bare filename cannot tell you which key
+  // was actually loaded. Printing the key id too makes a stale file obvious at once.
+  console.log(`key    ${sa._file}`);
+  console.log(`       id ${sa.private_key_id ?? '(unknown)'}  project ${sa.project_id}`);
 
   const token = await getAccessToken(sa);
   const [bookings, drivers] = await Promise.all([
