@@ -160,9 +160,23 @@ for (const file of pages) {
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ');
 
+  /* Claims also hide in attributes, where stripping tags cannot see them. A row
+     of five star SVGs carrying aria-label="Rated 5 out of 5" asserts a rating to
+     every screen reader and to Google while rendering as wordless decoration —
+     which is exactly how three invented 5-star testimonials survived the first
+     pass of this guard. Scan the attributes a human or a crawler consumes. */
+  const attributes = [...visible.matchAll(/\b(?:aria-label|alt|title|content)="([^"]*)"/g)]
+    .map((m) => m[1])
+    .join('  |  ');
+
   for (const [pattern, kind] of UNSUBSTANTIATED) {
-    const hit = readable.match(pattern);
-    if (hit) issues.push(`unprovable ${kind}: "${hit[0].trim()}" — see UNSUBSTANTIATED in scripts/audit.mjs`);
+    const inText = readable.match(pattern);
+    const inAttr = attributes.match(pattern);
+    const hit = inText || inAttr;
+    if (hit)
+      issues.push(
+        `unprovable ${kind}${inText ? '' : ' (in an attribute)'}: "${hit[0].trim()}" — see UNSUBSTANTIATED in scripts/audit.mjs`,
+      );
   }
   for (const token of FORBIDDEN_MARKUP) {
     if (html.includes(token)) issues.push(`self-serving review markup "${token}" is back — see lib/schema.ts`);
