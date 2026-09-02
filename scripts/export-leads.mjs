@@ -172,9 +172,22 @@ export async function getAccessToken(sa) {
 
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.access_token) {
+    const detail = body.error_description || body.error || '';
+    // "Invalid JWT Signature" means the maths was fine but Google has no matching
+    // public key on file — i.e. this key has been deleted or disabled, not mistyped.
+    const revoked = /signature/i.test(detail);
     throw new Error(
-      `Google rejected the key (HTTP ${res.status}). ${body.error_description || body.error || ''}\n` +
-        'If the key was deleted in the console, generate a new one and replace serviceAccount.json.',
+      `Google rejected the key (HTTP ${res.status}). ${detail}\n` +
+        `  key id   ${sa.private_key_id ?? '(unknown)'}\n` +
+        `  account  ${sa.client_email}\n\n` +
+        (revoked
+          ? 'This key is no longer active on Google\'s side — it was deleted or disabled.\n' +
+            'Get a fresh one from the FIREBASE console, which is the one place a working key\n' +
+            'has come from before:\n' +
+            '  console.firebase.google.com -> gear -> Project settings -> Service accounts\n' +
+            '  -> "Generate new private key"\n' +
+            'Save it as serviceAccount.json here, and do not delete anything in the console.'
+          : 'Generate a new key and replace serviceAccount.json.'),
     );
   }
   return body.access_token;
