@@ -33,9 +33,10 @@ export const site = {
   priceRange: '₹300–₹1500',
   rating: { value: 4.9, count: 187 },
   foundingYear: '2024',
-  /** The other spelling people type ("drive buddy", two words). Fed into JSON-LD
-      so Google links both spellings of the name to this one official site. */
-  alternateName: ['Drive Buddy'],
+  /** The other spellings people type, and the one the Google Business Profile is
+      registered under ("The Drive Buddy"). Fed into JSON-LD so every spelling of
+      the name resolves to this one official site. */
+  alternateName: ['Drive Buddy', 'The Drive Buddy'],
 } as const;
 
 /**
@@ -48,9 +49,10 @@ export const site = {
  */
 export const socialProfiles: string[] = [
   'https://www.instagram.com/the_drivebuddy/',
-  // Add the Google Business Profile share link here too, once you have it — it is
-  // the strongest of the lot. Profile → Share → copy link, looks like
-  // https://g.page/xxxxx or https://maps.app.goo.gl/xxxxx
+  /* The Google Business Profile, via the share link Maps generates. This is the
+     strongest entry in this list: it is what ties the website to the map listing
+     so Google treats them as one business instead of two. */
+  'https://maps.app.goo.gl/5yJuHkFUZXmYgVhJ6',
   // 'https://www.facebook.com/your_page',
 ];
 
