@@ -26,6 +26,22 @@ const FORBIDDEN = ['lorem ipsum', 'TODO', 'undefined', 'NaN', '[object Object]']
     undeployed Cloudflare Worker and the blocking Google Fonts request. */
 const FORBIDDEN_ANYWHERE = ['YOUR-WORKER', 'workers.dev', 'fonts.googleapis.com'];
 
+/* Titles and descriptions are measured after decoding entities. React escapes
+   `&` as `&amp;` in the markup, but Google counts the character a person sees —
+   so measuring the raw HTML charges five characters for one ampersand and fails
+   a title that actually fits. */
+function decode(s) {
+  return s
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#x27;', "'")
+    .replaceAll('&#39;', "'")
+    .replaceAll('&apos;', "'")
+    .replaceAll('&nbsp;', ' ');
+}
+
 function walk(dir) {
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -58,8 +74,8 @@ for (const file of pages) {
      so scanning raw HTML for placeholder tokens gives false positives. */
   const visible = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '');
 
-  const title = first(/<title>([^<]*)<\/title>/);
-  const desc = first(/<meta name="description" content="([^"]*)"/);
+  const title = decode(first(/<title>([^<]*)<\/title>/));
+  const desc = decode(first(/<meta name="description" content="([^"]*)"/));
   const canonical = first(/<link rel="canonical" href="([^"]*)"/);
   const ogImage = first(/<meta property="og:image" content="([^"]*)"/);
   const ogTitle = first(/<meta property="og:title" content="([^"]*)"/);

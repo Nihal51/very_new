@@ -14,8 +14,12 @@ import { site } from '@/lib/site';
 
 const trail = [{ name: 'Cities', path: '/cities/' }];
 
+/* Deliberately NOT titled "driver service in Chhattisgarh" — the home page owns
+   that query. This one is the city picker, so it targets the comparison intent
+   ("which cities do they cover?") and hands the per-city queries down to
+   /cities/<city>/. */
 export const metadata: Metadata = pageMeta({
-  title: 'Driver on Hire Across Chhattisgarh',
+  title: 'Cities We Serve — Raipur, Bhilai, Durg & Bilaspur',
   description:
     'DriveBuddy provides verified drivers in Raipur, Bhilai, Durg and Bilaspur — 24 hours a day, with a 30-minute arrival guarantee. See coverage area by city.',
   path: '/cities/',

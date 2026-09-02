@@ -30,7 +30,7 @@ const jakarta = Plus_Jakarta_Sans({
 export const metadata: Metadata = {
   metadataBase: new URL(site.url),
   title: {
-    default: `${site.name} — Verified Drivers On Demand in Raipur, Bhilai, Durg & Bilaspur`,
+    default: `Driver Service in ${site.region} — 24/7 · ${site.name}`,
     template: `%s · ${site.name}`,
   },
   description: site.description,
@@ -39,6 +39,7 @@ export const metadata: Metadata = {
   creator: site.legalName,
   publisher: site.legalName,
   keywords: [
+    'driver service Chhattisgarh',
     'driver on call',
     'driver on demand',
     'hire driver Raipur',
@@ -77,7 +78,13 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-IN" className={`${inter.variable} ${jakarta.variable}`}>
+    /* data-scroll-behavior tells Next the smooth scroll in globals.css is
+       intentional, so it doesn't warn and doesn't force auto on route changes. */
+    <html
+      lang="en-IN"
+      data-scroll-behavior="smooth"
+      className={`${inter.variable} ${jakarta.variable}`}
+    >
       <body>
         <a href="#main" className="sr-only-focusable bg-accent text-ink top-3 left-3 z-50 rounded-xl px-4 py-2.5 text-sm font-semibold shadow-md">
           Skip to content

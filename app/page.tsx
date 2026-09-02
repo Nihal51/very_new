@@ -17,14 +17,19 @@ import { Container, Section } from '@/components/ui/Section';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { ArrowRightIcon } from '@/components/icons';
 import { faqs, stats } from '@/lib/content';
-import { faqSchema } from '@/lib/schema';
+import { driverServiceSchema, faqSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { site } from '@/lib/site';
 
+/* The home page is the one that has to win "driver service in Chhattisgarh":
+   it carries the most internal links and the most content, so it targets the
+   state-level query head-on. The city queries ("driver in Raipur") belong to
+   /cities/<city>/ and the job queries to /drivers/ — one page per intent, so
+   they never compete with each other for the same result. */
 export const metadata: Metadata = pageMeta({
-  title: `${site.name} — Hire a Driver in Raipur, Bhilai, Durg & Bilaspur`,
+  title: `Driver Service in ${site.region} — 24/7 in 30 Min · ${site.name}`,
   description:
-    'Hire a verified, sober driver by the hour, full day or outstation. 30-min arrival, 24/7, from ₹300 in Raipur, Bhilai, Durg and Bilaspur.',
+    `${site.name} provides verified, sober drivers on call across ${site.region} — Raipur, Bhilai, Durg and Bilaspur. At your door in 30 minutes, 24/7, from ₹300 an hour.`,
   path: '/',
 });
 
@@ -127,7 +132,7 @@ export default function HomePage() {
         tone="subtle"
         id="cities"
         eyebrow="Service area"
-        title="We come to you"
+        title={`Driver service across ${site.region}`}
         lede="Four cities, verified drivers in each, around the clock."
       >
         <CitiesGrid />
@@ -141,6 +146,10 @@ export default function HomePage() {
       </Section>
 
       <ClosingCTA />
+
+      {/* What we sell and where — the entity a "driver service in <state>" query
+          resolves against. The business entity itself is in the root layout. */}
+      <JsonLd data={driverServiceSchema()} />
 
       {/* The five questions shown above, marked up for the FAQ rich result. */}
       <JsonLd data={faqSchema(faqs.slice(0, 5))} />

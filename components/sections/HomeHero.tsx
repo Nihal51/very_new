@@ -41,15 +41,22 @@ export function HomeHero() {
             </span>
           </div>
 
-          <h1 id="hero-heading" className="text-display-xl mt-6">
-            Your car.{' '}
-            <span className="text-accent">Our driver.</span>
+          {/* Two lines in one H1: the slogan carries the brand and stays visually
+              dominant, the second line names the thing we sell and where — which
+              is what a "driver service in Chhattisgarh" search is looking for.
+              The lede below deliberately no longer repeats the city list. */}
+          <h1 id="hero-heading" className="mt-6">
+            <span className="text-display-xl block">
+              Your car. <span className="text-accent">Our driver.</span>
+            </span>
+            <span className="text-lede mt-4 block font-semibold text-white/85">
+              Driver service in {site.region} — Raipur, Bhilai, Durg &amp; Bilaspur
+            </span>
           </h1>
 
           <p className="text-lede mt-5 max-w-xl text-white/70">
             Police-verified, breath-tested, professionally trained drivers at your doorstep in
-            about 30 minutes — across Raipur, Bhilai, Durg and Bilaspur. You keep your own car;
-            we take the wheel.
+            about 30 minutes, 24 hours a day. You keep your own car; we take the wheel.
           </p>
 
           <div className="mt-9 flex flex-col gap-3 sm:flex-row">

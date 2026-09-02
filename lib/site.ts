@@ -22,7 +22,7 @@ export const site = {
   url: canonicalOrigin,
   tagline: 'Premium Driver Services',
   description:
-    "Verified, sober, professional drivers at your doorstep in 30 minutes. DriveBuddy serves Raipur, Bhilai, Durg and Bilaspur, 24 hours a day.",
+    'Driver service in Chhattisgarh: verified, sober, professional drivers at your doorstep in 30 minutes. DriveBuddy serves Raipur, Bhilai, Durg and Bilaspur, 24/7.',
   locale: 'en_IN',
   region: 'Chhattisgarh',
   country: 'IN',

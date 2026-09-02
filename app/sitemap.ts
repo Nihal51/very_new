@@ -12,7 +12,10 @@ export const dynamic = 'force-static';
 
 type Entry = MetadataRoute.Sitemap[number];
 
-const LAST_MODIFIED = new Date('2026-08-28T00:00:00.000Z');
+/* Build time, not a hardcoded date. `force-static` evaluates this once during
+   `next build`, so every deploy stamps the day it actually shipped instead of
+   slowly drifting into a lie about when the content last changed. */
+const LAST_MODIFIED = new Date();
 
 const CORE: ReadonlyArray<Pick<Entry, 'url' | 'changeFrequency' | 'priority'>> = [
   { url: '/', changeFrequency: 'weekly', priority: 1 },

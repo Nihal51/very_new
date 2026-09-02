@@ -6,12 +6,42 @@
 import { site, socialProfiles } from './site';
 import { cities, faqs, plans, services, testimonials } from './content';
 
-const abs = (path = '/') => new URL(path, site.url).toString();
+/* Concatenated rather than `new URL(path, site.url)`: an absolute pathname
+   resets the base's own path, so on a sub-path deployment the "/" in "/og.png"
+   would silently drop the prefix and every @id would point at a 404. */
+const abs = (path = '/') => `${site.url}${path}`;
 
 const ORG_ID = `${site.url}/#business`;
 
 /** Registered business location = the HQ city (Raipur, first in the list). */
 const HQ_GEO = cities[0]?.geo ?? { lat: 21.2514, lng: 81.6296 };
+
+/**
+ * The whole state, as a schema.org place. Listed alongside the individual cities
+ * in `areaServed` so a state-level query ("driver service in Chhattisgarh") has
+ * something to match: four City nodes do not, on their own, tell Google the
+ * business serves the administrative area that contains them.
+ */
+const STATE_AREA = {
+  '@type': 'State',
+  name: site.region,
+  containedInPlace: { '@type': 'Country', name: 'India' },
+} as const;
+
+/** Cities plus the state that contains them — the full service area. */
+const SERVICE_AREA = [
+  STATE_AREA,
+  ...cities.map((c) => ({
+    '@type': 'City' as const,
+    name: c.name,
+    geo: {
+      '@type': 'GeoCoordinates' as const,
+      latitude: String(c.geo.lat),
+      longitude: String(c.geo.lng),
+    },
+    containedInPlace: STATE_AREA,
+  })),
+];
 
 /** LocalBusiness — the anchor entity every other node points at. */
 export function localBusinessSchema() {
@@ -60,16 +90,7 @@ export function localBusinessSchema() {
       latitude: String(HQ_GEO.lat),
       longitude: String(HQ_GEO.lng),
     },
-    areaServed: cities.map((c) => ({
-      '@type': 'City',
-      name: c.name,
-      geo: {
-        '@type': 'GeoCoordinates',
-        latitude: String(c.geo.lat),
-        longitude: String(c.geo.lng),
-      },
-      containedInPlace: { '@type': 'AdministrativeArea', name: site.region },
-    })),
+    areaServed: SERVICE_AREA,
     openingHoursSpecification: [
       {
         '@type': 'OpeningHoursSpecification',
@@ -126,6 +147,71 @@ export function websiteSchema() {
   };
 }
 
+/**
+ * The offering itself, as one entity: "driver service, provided in Chhattisgarh".
+ *
+ * The LocalBusiness node says who we are and where we are; this says what we
+ * sell and where we sell it. Search engines resolve a query like "driver service
+ * in Chhattisgarh" against the *service* — its serviceType and its areaServed —
+ * so without this node the site only ever answers "driver in <city>". Emitted on
+ * the home page, which is the page that targets the state-level query.
+ */
+export function driverServiceSchema() {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    '@id': `${site.url}/#driver-service`,
+    name: `Driver service in ${site.region}`,
+    serviceType: 'Driver service',
+    alternateName: [
+      'Driver on call',
+      'Driver on demand',
+      'Call driver',
+      'Acting driver',
+      'Chauffeur service',
+    ],
+    description: site.description,
+    url: abs('/'),
+    image: abs('/og.png'),
+    provider: { '@id': ORG_ID },
+    areaServed: SERVICE_AREA,
+    availableChannel: {
+      '@type': 'ServiceChannel',
+      serviceUrl: abs('/book/'),
+      servicePhone: { '@type': 'ContactPoint', telephone: `+91${site.phone}` },
+      availableLanguage: ['en', 'hi'],
+    },
+    audience: { '@type': 'Audience', audienceType: 'Car owners' },
+    /* The individual offerings, so the one Service node covers every variant a
+       searcher might name instead of the generic term. */
+    hasOfferCatalog: {
+      '@type': 'OfferCatalog',
+      name: `${site.name} driver services`,
+      itemListElement: services.map((s) => ({
+        '@type': 'Offer',
+        itemOffered: {
+          '@type': 'Service',
+          '@id': `${abs('/services/')}#${s.slug}`,
+          name: s.title,
+          description: s.short,
+        },
+      })),
+    },
+    offers: {
+      '@type': 'Offer',
+      priceCurrency: 'INR',
+      priceSpecification: {
+        '@type': 'PriceSpecification',
+        minPrice: '300',
+        maxPrice: '1500',
+        priceCurrency: 'INR',
+      },
+      availability: 'https://schema.org/InStock',
+      areaServed: SERVICE_AREA,
+    },
+  };
+}
+
 /** One Service node per offering, on /services. */
 export function servicesSchema() {
   return {
@@ -137,7 +223,7 @@ export function servicesSchema() {
       description: s.body,
       serviceType: s.title,
       provider: { '@id': ORG_ID },
-      areaServed: cities.map((c) => ({ '@type': 'City', name: c.name })),
+      areaServed: SERVICE_AREA,
       audience: { '@type': 'Audience', audienceType: 'Car owners' },
     })),
   };
@@ -156,7 +242,7 @@ export function serviceSchema(slug: string) {
     serviceType: service.title,
     url: abs(`/services/${service.slug}/`),
     provider: { '@id': ORG_ID },
-    areaServed: cities.map((c) => ({ '@type': 'City', name: c.name })),
+    areaServed: SERVICE_AREA,
     audience: { '@type': 'Audience', audienceType: 'Car owners' },
   };
 }
@@ -176,7 +262,7 @@ export function pricingSchema() {
       priceCurrency: 'INR',
       price: p.price.replace(/[₹,]/g, ''),
       availability: 'https://schema.org/InStock',
-      areaServed: cities.map((c) => ({ '@type': 'City', name: c.name })),
+      areaServed: SERVICE_AREA,
     })),
   };
 }
@@ -228,7 +314,7 @@ export function citySchema(slug: string) {
         latitude: String(city.geo.lat),
         longitude: String(city.geo.lng),
       },
-      containedInPlace: { '@type': 'AdministrativeArea', name: site.region },
+      containedInPlace: STATE_AREA,
     },
     openingHoursSpecification: [
       {
