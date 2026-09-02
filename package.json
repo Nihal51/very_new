@@ -11,6 +11,7 @@
     "leads": "node scripts/export-leads.mjs",
     "inbox": "node scripts/inbox.mjs",
     "audit": "node scripts/audit.mjs",
+    "indexnow": "node scripts/indexnow.mjs",
     "test": "node --test \"scripts/*.test.mjs\"",
     "check": "tsc --noEmit && next build && node scripts/audit.mjs"
   },
