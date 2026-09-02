@@ -352,7 +352,8 @@ and focus moved to the confirmation panel after a successful submit.
   number is not real, remove `rating` from `site` and the `aggregateRating`
   block from `lib/schema.ts`.
 - **Submit `sitemap.xml` to Google Search Console** once the domain is live, and
-  claim the Google Business Profile for each city.
+  claim the Google Business Profile for each city. Step-by-step, with every field
+  written out ready to paste: [`docs/google-business-profile.md`](docs/google-business-profile.md).
 
 ### Cleaning up the old site
 
