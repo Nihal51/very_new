@@ -52,7 +52,7 @@ export const settings = {
                   Leave it '' and the review button uses the profile link. */
   google: {
     profile: 'https://maps.app.goo.gl/5yJuHkFUZXmYgVhJ6',
-    writeReview: '',
+    writeReview: 'https://search.google.com/local/writereview?placeid=ChIJs-jfFPrdKDoRHsazUysqIks',
   },
 
   /* ---------------------------------------------------- driver charges -----
