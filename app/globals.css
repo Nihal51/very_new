@@ -285,13 +285,15 @@
 @utility container-page {
   width: 100%;
   margin-inline: auto;
-  max-width: 80rem;
+  /* 90rem (1440px) rather than 80rem: on the 1366–1536px laptops most visitors
+     use, the narrower cap left ~170px of empty band on each side. */
+  max-width: 90rem;
   padding-inline: 1.25rem;
   @media (width >= 40rem) {
     padding-inline: 2rem;
   }
   @media (width >= 64rem) {
-    padding-inline: 2.5rem;
+    padding-inline: 3rem;
   }
 }
 
