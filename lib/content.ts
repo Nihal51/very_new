@@ -43,14 +43,99 @@ export type Service = {
     whatsapp: string;
   };
   /**
-   * A published price range, for services that have one. Feeds the Offer in the
-   * service's JSON-LD and /llms.txt, so the number a search engine or an assistant
-   * quotes is the one on the page. Figures confirmed by the owner — do not estimate.
+   * Fixed-price plans the customer chooses between (the monthly driver's Basic and
+   * Premium). When set, the landing page shows the plan cards and comparison table
+   * in place of the quote section, and the JSON-LD carries one Offer per plan.
    */
-  priceRange?: { min: number; max: number; per: 'month' };
+  tiers?: readonly MonthlyPlan[];
   /** Questions specific to this service — shown first on its page and in its FAQPage markup. */
   faqs?: Faq[];
 };
+
+/* ------------------------------------------------------- monthly plans */
+
+/**
+ * Monthly driver plans. Every figure and promise here was set by the owner on
+ * 7 Oct 2026 — change them only on the owner's word, and keep the Hindi copy in
+ * lib/content-hi.ts in step.
+ */
+export const monthlyTerms = {
+  hoursPerDay: 9,
+  overtimePerHour: 100,
+  daysOffPerMonth: 4,
+  standInPerDay: 900,
+} as const;
+
+export type MonthlyPlan = {
+  id: 'basic' | 'premium';
+  name: string;
+  /** As displayed, e.g. "₹16,000–17,000". */
+  price: string;
+  /** For the JSON-LD Offer. */
+  min: number;
+  max: number;
+  /** One-time joining fee, or null when there is none. */
+  joiningFee: string | null;
+  blurb: string;
+  recommended?: boolean;
+  highlights: string[];
+  /** Value stored by the booking form; must match firestore.rules. */
+  packageValue: string;
+  whatsapp: string;
+};
+
+const planWhatsapp = (plan: string) =>
+  `Hi DriveBuddy, I want a monthly driver on the ${plan} plan.\nCity:\nDaily timing (9 hours, e.g. 9 AM – 6 PM):\nWeekly off day:\nStart date:`;
+
+export const monthlyPlans: readonly MonthlyPlan[] = [
+  {
+    id: 'basic',
+    name: 'Basic',
+    price: '₹16,000–17,000',
+    min: 16000,
+    max: 17000,
+    joiningFee: 'One-time joining fee: 25% of one month (₹4,000–4,250)',
+    blurb: 'A verified driver at the lowest monthly price, with a replacement guarantee for the first month.',
+    highlights: [
+      `A verified driver, ${monthlyTerms.hoursPerDay} hours a day`,
+      'New driver within 1 day if yours quits in the first month',
+      `Stand-in driver on leave days: ₹${monthlyTerms.standInPerDay} a day`,
+      'Police-verified, with 5+ years of experience',
+    ],
+    packageValue: 'monthly-basic',
+    whatsapp: planWhatsapp('Basic'),
+  },
+  {
+    id: 'premium',
+    name: 'Premium',
+    price: '₹20,000',
+    min: 20000,
+    max: 20000,
+    joiningFee: null,
+    blurb: 'Never be left without a driver: a free stand-in on leave days, and a new driver within a day if yours ever leaves.',
+    recommended: true,
+    highlights: [
+      `A verified driver, ${monthlyTerms.hoursPerDay} hours a day`,
+      'Free stand-in driver whenever yours takes leave',
+      'New verified driver within 1 day if yours quits — any time',
+      'No joining fee',
+    ],
+    packageValue: 'monthly-premium',
+    whatsapp: planWhatsapp('Premium'),
+  },
+];
+
+/** Row-by-row comparison shown under the plan cards. */
+export const monthlyComparison: readonly { label: string; basic: string; premium: string }[] = [
+  { label: 'Monthly charge', basic: '₹16,000–17,000', premium: '₹20,000' },
+  { label: 'Joining fee (one time)', basic: '25% of one month (₹4,000–4,250)', premium: 'None' },
+  { label: 'Working hours', basic: `${monthlyTerms.hoursPerDay} hours a day`, premium: `${monthlyTerms.hoursPerDay} hours a day` },
+  { label: 'Extra hours', basic: `₹${monthlyTerms.overtimePerHour} an hour`, premium: `₹${monthlyTerms.overtimePerHour} an hour` },
+  { label: 'Weekly off', basic: `${monthlyTerms.daysOffPerMonth} days a month`, premium: `${monthlyTerms.daysOffPerMonth} days a month` },
+  { label: 'Driver takes leave', basic: `Stand-in driver, ₹${monthlyTerms.standInPerDay} a day`, premium: 'Stand-in driver, free' },
+  { label: 'Driver quits in the first month', basic: 'New driver within 1 day, free', premium: 'New driver within 1 day, free' },
+  { label: 'Driver quits after the first month', basic: 'Not included', premium: 'New driver within 1 day, free' },
+];
 
 export const services: Service[] = [
   {
@@ -129,40 +214,33 @@ export const services: Service[] = [
     slug: 'monthly-driver',
     icon: 'calendar',
     title: 'Monthly Driver',
-    short: 'A regular verified driver for your own car — ₹16,000 to ₹20,000 a month.',
-    body: 'A dedicated driver for your own car on a monthly arrangement — the office commute, school runs, parents’ appointments and weekend errands, with the same person behind the wheel day after day. You agree the hours and days up front, and the driver is verified exactly like every other DriveBuddy driver before they start.',
+    short: 'A regular verified driver for your own car — Basic or Premium plan, from ₹16,000 a month.',
+    body: 'A dedicated driver for your own car on a monthly plan — the office commute, school runs, parents’ appointments and weekend errands, with the same person behind the wheel day after day. Nine hours a day, four days off a month, and every driver verified exactly like every other DriveBuddy driver before they start.',
     heading: 'Monthly and permanent driver for your car',
     metaTitle: 'Monthly Driver on Hire — Permanent Car Driver',
     metaDescription:
-      'Monthly or permanent driver for your own car in Raipur, Bhilai, Durg and Bilaspur — ₹16,000 to ₹20,000 a month. Police-verified, sober, 5+ years experience.',
+      'Monthly driver for your own car in Raipur, Bhilai, Durg and Bilaspur. Basic plan ₹16,000–17,000, Premium ₹20,000 with free stand-in drivers. 9 hours a day.',
     badge: 'Monthly plan',
     extra: true,
     includes: [
       'A regular driver for your daily routine',
-      'Hours and days agreed before the first day',
+      '9 hours a day, 4 days off a month',
       'Police-verified, with 5+ years of experience',
       'Comfortable with manual and automatic',
     ],
-    priceRange: { min: 16000, max: 20000, per: 'month' },
-    quote: {
-      title: '₹16,000 to ₹20,000 a month',
-      body: 'That is the range for local duty — driving within your city. Where your plan falls depends mainly on the driver’s age and experience. Tell us your routine on the phone and you get one fixed monthly figure before the driver starts.',
-      factors: [
-        'The driver’s age and experience',
-        'Your daily hours and days off, agreed up front',
-        'Outstation trips, charged separately',
-      ],
-      whatsapp:
-        'Hi DriveBuddy, I need a monthly driver.\nCity:\nDaily hours (e.g. 9 AM – 6 PM):\nDays per week:\nStart date:',
-    },
+    tiers: monthlyPlans,
     faqs: [
       {
-        q: 'Can I hire a permanent driver through DriveBuddy?',
-        a: 'Yes. A monthly plan gives you a regular driver for your own car on the hours and days you choose. Call 9111473929 with your routine and we will quote a fixed monthly price.',
+        q: 'How much does a monthly driver cost?',
+        a: 'The Basic plan is ₹16,000–17,000 a month plus a one-time joining fee of 25% of one month. The Premium plan is ₹20,000 a month with no joining fee. Both give you a verified driver for 9 hours a day with 4 days off a month; extra hours are ₹100 an hour.',
       },
       {
-        q: 'How much does a monthly driver cost?',
-        a: '₹16,000 to ₹20,000 a month for local duty, depending mainly on the driver’s age and experience. Outstation trips are charged separately. You get one fixed monthly figure before the driver starts.',
+        q: 'What is the difference between the Basic and Premium plans?',
+        a: 'What happens when your driver is away. On Premium, a stand-in driver comes free whenever your driver takes leave, and if your driver quits at any time we send a new verified driver within 1 day; there is no joining fee. On Basic, a stand-in costs ₹900 a day, and the free replacement within 1 day applies only if the driver quits in the first month.',
+      },
+      {
+        q: 'Can I hire a permanent driver through DriveBuddy?',
+        a: 'Yes — that is what the monthly plans are for: the same verified driver for your own car, 9 hours a day. Call 9111473929 or message us on WhatsApp with your city, timing and start date.',
       },
     ],
   },
@@ -339,8 +417,8 @@ export const extraRates = [
   },
   {
     label: 'Monthly driver',
-    detail: 'Per month, local duty — by driver experience',
-    price: '₹16,000–20,000',
+    detail: 'Basic ₹16,000–17,000 · Premium ₹20,000 a month',
+    price: 'from ₹16,000',
   },
   {
     label: 'Wedding & event drivers',
@@ -359,7 +437,8 @@ export const bookingPackages = [
   { value: 'outstation', label: 'Outstation Trip — ₹1200–1500' },
   { value: 'night-driver', label: 'Night Driver, 8 PM – 6 AM — from ₹500' },
   { value: 'medical-emergency', label: 'Hospital / Emergency — priority' },
-  { value: 'monthly-driver', label: 'Monthly Driver — ₹16,000–20,000 a month' },
+  { value: 'monthly-basic', label: 'Monthly Driver, Basic plan — ₹16,000–17,000 a month' },
+  { value: 'monthly-premium', label: 'Monthly Driver, Premium plan — ₹20,000 a month' },
   { value: 'wedding-event', label: 'Wedding / Event Drivers — quoted on call' },
   { value: 'one-way-drop', label: 'One-Way Car Drop — quoted on call' },
 ] as const;
@@ -588,7 +667,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'How much does it cost to hire a driver?',
-    a: 'DriveBuddy charges ₹300 for one hour, ₹600 for three hours, ₹1000–1200 for a local full day of eight hours and ₹1200–1500 for an outstation trip; the night driver (8 PM to 6 AM) starts from ₹500. A monthly driver costs ₹16,000–20,000 a month for local duty; wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel.',
+    a: 'DriveBuddy charges ₹300 for one hour, ₹600 for three hours, ₹1000–1200 for a local full day of eight hours and ₹1200–1500 for an outstation trip; the night driver (8 PM to 6 AM) starts from ₹500. A monthly driver is ₹16,000–17,000 a month on the Basic plan or ₹20,000 on Premium; wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel.',
   },
   {
     q: 'How quickly will a driver arrive?',
@@ -624,7 +703,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can I hire a monthly or permanent driver?',
-    a: 'Yes. A monthly plan gives you a regular, verified driver for your own car on the hours and days you choose, for ₹16,000 to ₹20,000 a month for local duty depending on the driver’s age and experience. Call 9111473929 with your routine and we quote one fixed monthly price.',
+    a: 'Yes. Choose the Basic plan at ₹16,000–17,000 a month (plus a one-time joining fee of 25% of one month) or Premium at ₹20,000 a month, which adds free stand-in drivers and a new driver within 1 day if yours quits. Both cover 9 hours a day with 4 days off a month.',
   },
   {
     q: 'Do you provide drivers for weddings and events?',

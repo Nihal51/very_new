@@ -1,4 +1,12 @@
-import { cities, faqs, plans, services } from '@/lib/content';
+import {
+  cities,
+  faqs,
+  monthlyComparison,
+  monthlyPlans,
+  monthlyTerms,
+  plans,
+  services,
+} from '@/lib/content';
 import { cityHi } from '@/lib/content-hi';
 import { formatPhone, site } from '@/lib/site';
 
@@ -34,14 +42,16 @@ function body(): string {
     '',
     ...plans.map((p) => `- ${p.name}: ${p.price} ${p.unit}`),
     '- Night driver, 8 PM to 6 AM: from ₹500',
-    ...services
-      .filter((s) => s.priceRange)
-      .map(
-        (s) =>
-          `- ${s.title}: ₹${s.priceRange!.min.toLocaleString('en-IN')}–${s.priceRange!.max.toLocaleString('en-IN')} per ${s.priceRange!.per} (local duty)`,
-      ),
+    ...monthlyPlans.map(
+      (p) =>
+        `- Monthly driver, ${p.name} plan: ${p.price} a month${p.joiningFee ? ` + ${p.joiningFee.toLowerCase()}` : ', no joining fee'}`,
+    ),
+    `- Monthly driver, both plans: ${monthlyTerms.hoursPerDay} hours a day, ${monthlyTerms.daysOffPerMonth} days off a month, ₹${monthlyTerms.overtimePerHour} per extra hour; outstation trips extra`,
+    ...monthlyComparison
+      .filter((r) => r.basic !== r.premium && r.label !== 'Monthly charge' && !r.label.startsWith('Joining'))
+      .map((r) => `- Monthly driver, ${r.label.toLowerCase()}: Basic — ${r.basic}; Premium — ${r.premium}`),
     `- ${services
-      .filter((s) => s.quote && !s.priceRange)
+      .filter((s) => s.quote)
       .map((s) => s.title)
       .join(', ')}: quoted on the call`,
     '',

@@ -63,7 +63,13 @@ export function ServicesGrid({
               detailed && group === 'core' ? '' : ' mt-auto'
             }`}
           >
-            {service.quote ? 'How it works and pricing' : detailed ? 'Full details and pricing' : "What's included"}
+            {service.tiers
+              ? 'Compare plans and pricing'
+              : service.quote
+                ? 'How it works and pricing'
+                : detailed
+                  ? 'Full details and pricing'
+                  : "What's included"}
             <ArrowRightIcon className="size-4" />
           </Link>
         </Card>

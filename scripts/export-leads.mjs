@@ -53,7 +53,8 @@ const SERVICE_LABELS = {
   outstation: 'Outstation Trip — ₹1200–1500',
   'night-driver': 'Night Driver, 8 PM – 6 AM — from ₹500',
   'medical-emergency': 'Hospital / Emergency — priority',
-  'monthly-driver': 'Monthly Driver — ₹16,000–20,000 a month',
+  'monthly-basic': 'Monthly Driver, Basic plan — ₹16,000–17,000 a month',
+  'monthly-premium': 'Monthly Driver, Premium plan — ₹20,000 a month',
   'wedding-event': 'Wedding / Event Drivers — quoted on call',
   'one-way-drop': 'One-Way Car Drop — quoted on call',
 };

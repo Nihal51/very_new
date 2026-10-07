@@ -90,7 +90,8 @@ service cloud.firestore {
           'outstation',
           'night-driver',
           'medical-emergency',
-          'monthly-driver',
+          'monthly-basic',
+          'monthly-premium',
           'wedding-event',
           'one-way-drop'
         ]

@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { JsonLd } from '@/components/JsonLd';
 import { ClosingCTA } from '@/components/sections/ClosingCTA';
 import { PageHero } from '@/components/sections/PageHero';
+import { MonthlyPlans } from '@/components/sections/MonthlyPlans';
 import { PricingCards } from '@/components/sections/PricingCards';
 import { Accordion } from '@/components/ui/Accordion';
 import { ButtonAnchor, ButtonLink } from '@/components/ui/Button';
@@ -67,6 +68,7 @@ export default async function ServicePage({ params }: Props) {
     ...faqs.filter((f) => needles.some((n) => f.q.includes(n))),
   ];
   const quote = service.quote;
+  const tiers = service.tiers;
 
   return (
     <>
@@ -81,9 +83,15 @@ export default async function ServicePage({ params }: Props) {
               <PhoneIcon className="size-5" />
               <span className="tabular">{formatPhone(site.phone)}</span>
             </ButtonAnchor>
-            <ButtonLink href="/book/" variant="outline" size="lg">
-              {quote ? 'Ask for a quote' : 'Book this service'}
-            </ButtonLink>
+            {tiers ? (
+              <ButtonLink href="#plans" variant="outline" size="lg">
+                Compare plans
+              </ButtonLink>
+            ) : (
+              <ButtonLink href="/book/" variant="outline" size="lg">
+                {quote ? 'Ask for a quote' : 'Book this service'}
+              </ButtonLink>
+            )}
           </>
         }
       />
@@ -99,7 +107,17 @@ export default async function ServicePage({ params }: Props) {
         </ul>
       </Section>
 
-      {quote ? (
+      {tiers ? (
+        <Section
+          tone="subtle"
+          id="plans"
+          eyebrow="Plans"
+          title="Choose your monthly plan"
+          lede="Both plans give you the same verified driver. Premium adds cover for the days your driver is away: a free stand-in on leave days, and a new driver within a day if yours ever leaves."
+        >
+          <MonthlyPlans />
+        </Section>
+      ) : quote ? (
         /* Quote-priced services are not sold at the hourly rates, so showing the
            hourly cards here would quote the wrong product. */
         <Section tone="subtle" id="pricing" eyebrow="Pricing" title={quote.title} lede={quote.body}>
@@ -119,7 +137,7 @@ export default async function ServicePage({ params }: Props) {
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <ButtonAnchor href={telHref}>
               <PhoneIcon className="size-5" />
-              {service.priceRange ? 'Call for your exact price' : 'Call for a quote'}
+              Call for a quote
             </ButtonAnchor>
             <ButtonAnchor
               href={waHref(quote.whatsapp)}
@@ -175,7 +193,12 @@ export default async function ServicePage({ params }: Props) {
         </Section>
       )}
 
-      {quote ? (
+      {tiers ? (
+        <ClosingCTA
+          title="Start your monthly driver plan"
+          lede="Call or WhatsApp with your city, daily timing and start date — we match a police-verified driver and confirm your plan."
+        />
+      ) : quote ? (
         <ClosingCTA
           title={`Get a fixed price for a ${service.title.toLowerCase()}`}
           lede="Call now or send your details — we come back with one fixed figure and a police-verified, sober driver."
