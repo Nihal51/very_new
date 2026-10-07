@@ -5,6 +5,7 @@ import { cities, services } from '@/lib/content';
 import { formatPhone, mailHref, site, telHref, telHrefAlt, waHref } from '@/lib/site';
 
 const company = [
+  { href: '/about/', label: 'About us' },
   { href: '/services/', label: 'All services' },
   { href: '/pricing/', label: 'Pricing' },
   { href: '/book/', label: 'Book a driver' },

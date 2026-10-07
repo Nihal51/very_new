@@ -39,6 +39,11 @@ export const site = {
      customer total reappears in the rendered text. Real ratings live on the Google
      Business Profile, where real customers put them. */
   foundingYear: '2024',
+  /** Named on /about and as `founder` in the LocalBusiness JSON-LD. A business with a
+      named, real person behind it is one search engines and AI assistants can vouch
+      for; an anonymous one is not. Confirmed by the owner on 7 Oct 2026. */
+  founder: 'Nihal Chandrakar',
+  foundingCity: 'Raipur',
   /** The other spellings people type, and the one the Google Business Profile is
       registered under ("The Drive Buddy"). Fed into JSON-LD so every spelling of
       the name resolves to this one official site. */

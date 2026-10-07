@@ -12,6 +12,7 @@ import { cities, faqs, plans, services } from './content';
 const abs = (path = '/') => `${site.url}${path}`;
 
 const ORG_ID = `${site.url}/#business`;
+const FOUNDER_ID = `${site.url}/about/#founder`;
 
 /** Registered business location = the HQ city (Raipur, first in the list). */
 const HQ_GEO = cities[0]?.geo ?? { lat: 21.2514, lng: 81.6296 };
@@ -78,6 +79,12 @@ export function localBusinessSchema() {
     currenciesAccepted: 'INR',
     paymentAccepted: 'Cash, UPI, Bank transfer',
     foundingDate: site.foundingYear,
+    foundingLocation: {
+      '@type': 'City',
+      name: site.foundingCity,
+      containedInPlace: STATE_AREA,
+    },
+    founder: { '@id': FOUNDER_ID },
     slogan: 'Your car. Our driver.',
     address: {
       '@type': 'PostalAddress',
@@ -329,6 +336,37 @@ export function citySchema(slug: string) {
         ],
         opens: '00:00',
         closes: '23:59',
+      },
+    ],
+  };
+}
+
+/**
+ * /about as an AboutPage about the business, with the founder as a Person. The
+ * LocalBusiness node points at the same Person by @id, so every page that carries
+ * the business also says who runs it.
+ */
+export function aboutSchema() {
+  return {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'AboutPage',
+        '@id': `${abs('/about/')}#page`,
+        url: abs('/about/'),
+        name: `About ${site.name}`,
+        inLanguage: 'en-IN',
+        isPartOf: { '@id': `${site.url}/#website` },
+        about: { '@id': ORG_ID },
+        mainEntity: { '@id': ORG_ID },
+      },
+      {
+        '@type': 'Person',
+        '@id': FOUNDER_ID,
+        name: site.founder,
+        jobTitle: 'Founder',
+        worksFor: { '@id': ORG_ID },
+        homeLocation: { '@type': 'City', name: site.foundingCity, containedInPlace: STATE_AREA },
       },
     ],
   };
