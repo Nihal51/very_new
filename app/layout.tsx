@@ -27,6 +27,16 @@ const jakarta = Plus_Jakarta_Sans({
   weight: ['600', '700'],
 });
 
+function siteVerification(): Metadata['verification'] {
+  const google = process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION;
+  const bing = process.env.NEXT_PUBLIC_BING_SITE_VERIFICATION;
+  if (!google && !bing) return undefined;
+  return {
+    ...(google && { google }),
+    ...(bing && { other: { 'msvalidate.01': bing } }),
+  };
+}
+
 export const metadata: Metadata = {
   metadataBase: new URL(site.url),
   title: {
@@ -60,9 +70,13 @@ export const metadata: Metadata = {
   // (Add property → HTML tag → the content="..." value) into
   // NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION in .env.production, then redeploy.
   // Left unset, no tag is emitted — so this is safe to ship as-is.
-  verification: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION
-    ? { google: process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION }
-    : undefined,
+  //
+  // Bing Webmaster Tools works the same way (Add site → HTML Meta Tag → the
+  // content="..." value) via NEXT_PUBLIC_BING_SITE_VERIFICATION. Bing matters more
+  // than its search share suggests: ChatGPT search, Copilot and DuckDuckGo all draw
+  // on its index. Easier still: Bing can import the site straight from Search
+  // Console with no tag at all — the variable is here for when that is not an option.
+  verification: siteVerification(),
   icons: {
     icon: [{ url: asset('/assets/logo.png'), type: 'image/png' }],
     apple: [{ url: asset('/assets/logo.png') }],

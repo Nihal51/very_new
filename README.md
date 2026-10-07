@@ -284,6 +284,9 @@ app/                    routes — one folder per page, App Router
   layout.tsx            fonts, metadata defaults, header/footer, site-wide JSON-LD
   page.tsx              home
   cities/[city]/        the four SEO city pages, generated from lib/content.ts
+  hi/                   Hindi home page and Hindi city pages (copy in lib/content-hi.ts)
+  about/                who runs DriveBuddy — founder, facts, services
+  llms.txt/             → /llms.txt, generated from lib/content.ts
   sitemap.ts            → /sitemap.xml
   robots.ts             → /robots.txt
   globals.css           the entire design system (Tailwind v4 @theme tokens)
@@ -376,10 +379,40 @@ and focus moved to the confirmation panel after a successful submit.
 
 ---
 
+## Getting found on Google and ChatGPT
+
+The site does its part: every page is crawlable static HTML with its own title,
+description, canonical, and structured data; there are English *and* Hindi
+pages for the home page and each city (`/hi/`), an About page that names the
+founder, and an FAQ written so each answer can be quoted on its own. `robots.txt`
+lets every crawler in — including Bingbot and `OAI-SearchBot`, the crawler
+ChatGPT search uses — and `/llms.txt` lists the facts in plain text.
+
+What decides the ranking from here is mostly off the site:
+
+1. **Google Business Profile** — the map results ("driver near me") come from
+   it, not from the website. Setup pack: [`docs/google-business-profile.md`](docs/google-business-profile.md).
+2. **Real Google reviews**, steadily. `npm run inbox` has an *Ask for review*
+   button for exactly this.
+3. **Bing Webmaster Tools** — <https://www.bing.com/webmasters> → *Import from
+   Google Search Console* (no code needed), then submit `sitemap.xml`. ChatGPT
+   search, Copilot and DuckDuckGo all lean on Bing's index; a site Bing does not
+   know is a site ChatGPT rarely cites. Run `npm run indexnow` after each deploy.
+   Also claim **Bing Places for Business** with the same name, phone and city.
+4. **Listings elsewhere, identical everywhere** — Justdial, Sulekha, IndiaMART,
+   a Facebook page, Apple Business Connect. Same name ("DriveBuddy"), same phone
+   (91114 73929), same website. AI assistants answering "best driver service in
+   Raipur" draw on exactly these pages. Add each profile URL to
+   `socialProfiles` in [`lib/site.ts`](lib/site.ts) so the structured data links them.
+5. **Mentions** — a local news story, a college or hospital listing, a wedding
+   planner's vendor page. One real link from a Raipur site outweighs a hundred
+   directory links.
+
 ## Things left for you
 
-- **Set the real domain** in `lib/site.ts` (see above).
-- **Deploy `firestore.rules`** (see above). This one matters.
+- **Deploy `firestore.rules`** (see above). This one matters — and it must be
+  redeployed after any change to the booking packages.
+- **Do the off-site steps** in *Getting found on Google and ChatGPT* above.
 - **Have `/privacy` and `/terms` reviewed by a lawyer.** Both pages carry a
   visible notice saying so. They describe accurately what the site does, but
   the liability, insurance and DPDP Act wording needs a professional eye.

@@ -545,7 +545,19 @@ export const testimonials = [
 
 export type Faq = { q: string; a: string };
 
+/* Ordered by what people ask first. The early questions are also the ones people
+   put to Google and AI assistants word for word — "what is a driver on call",
+   "how much does a driver cost" — so each answer opens with the direct answer in
+   one sentence that still makes sense quoted on its own. */
 export const faqs: Faq[] = [
+  {
+    q: 'What is a driver on call service?',
+    a: 'A driver on call — also called a call driver or acting driver — is a professional driver who comes to you and drives your own car, for an hour, a day or longer. DriveBuddy provides verified drivers on call across Raipur, Bhilai, Durg and Bilaspur in Chhattisgarh, 24 hours a day.',
+  },
+  {
+    q: 'How much does it cost to hire a driver?',
+    a: 'DriveBuddy charges ₹300 for one hour, ₹600 for three hours, ₹1000–1200 for a local full day of eight hours and ₹1200–1500 for an outstation trip; the night driver (8 PM to 6 AM) starts from ₹500. Monthly drivers, wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel.',
+  },
   {
     q: 'How quickly will a driver arrive?',
     a: 'We guarantee a driver at your location within 30 minutes anywhere in Raipur, Bhilai, Durg or Bilaspur. In practice it is usually 15 to 20 minutes, depending on traffic and the time of day.',
@@ -577,6 +589,22 @@ export const faqs: Faq[] = [
   {
     q: 'Do I need to provide the car?',
     a: 'Yes. DriveBuddy provides the driver, not the vehicle. You keep your own car, your own insurance and your own comfort — we simply supply someone trustworthy to drive it.',
+  },
+  {
+    q: 'Can I hire a monthly or permanent driver?',
+    a: 'Yes. A monthly plan gives you a regular, verified driver for your own car on the hours and days you choose. Call 9111473929 with your routine and we quote one fixed monthly price.',
+  },
+  {
+    q: 'Do you provide drivers for weddings and events?',
+    a: 'Yes — for the baraat and family cars, guest pickups from the station and airport, and drops after a late function. Tell us the date, the number of cars and the timings, and we quote the whole event.',
+  },
+  {
+    q: 'Can a driver take my car to another city one way?',
+    a: 'Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back. The price we quote covers the driver’s return.',
+  },
+  {
+    q: 'Do you serve places outside Raipur, Bhilai, Durg and Bilaspur?',
+    a: 'Pickups are in these four cities. Outstation trips and one-way car drops start from any of them and can go anywhere in Chhattisgarh and beyond — call 9111473929 for a quote on the full journey.',
   },
   {
     q: 'How does the online booking form work?',

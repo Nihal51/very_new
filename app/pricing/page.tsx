@@ -36,9 +36,9 @@ const notIncluded = [
   'Overnight stay costs on outstation trips',
 ];
 
-/** The three pricing-specific questions, reused from the main FAQ set. */
+/** The pricing-specific questions, reused from the main FAQ set. */
 const pricingFaqs = faqs.filter((f) =>
-  ['Local and Outstation', 'extend my booking', 'payment methods'].some((needle) =>
+  ['cost to hire', 'Local and Outstation', 'extend my booking', 'payment methods'].some((needle) =>
     f.q.includes(needle),
   ),
 );
