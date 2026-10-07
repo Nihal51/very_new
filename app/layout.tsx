@@ -6,6 +6,7 @@ import { Footer } from '@/components/Footer';
 import { Header } from '@/components/Header';
 import { JsonLd } from '@/components/JsonLd';
 import { MobileCTABar } from '@/components/MobileCTABar';
+import { NoticeBar } from '@/components/NoticeBar';
 import { localBusinessSchema, websiteSchema } from '@/lib/schema';
 import { asset, site } from '@/lib/site';
 
@@ -103,6 +104,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <a href="#main" className="sr-only-focusable bg-accent text-ink top-3 left-3 z-50 rounded-xl px-4 py-2.5 text-sm font-semibold shadow-md">
           Skip to content
         </a>
+
+        <NoticeBar />
 
         <Header />
 

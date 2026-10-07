@@ -13,6 +13,13 @@
  */
 
 import { cities, plans, services, type Faq } from './content';
+import { priceText, settings } from './settings';
+
+/* Like lib/content.ts, no price or phone number is typed here — they come from
+   site-settings.ts, so the Hindi pages can never fall out of step with English. */
+const phone = settings.contact.phone;
+const m = settings.monthly;
+const chhutti = (n: number) => (n === 1 ? 'छुट्टी' : 'छुट्टियाँ');
 
 /* ------------------------------------------------------------------ cities */
 
@@ -155,7 +162,7 @@ export const servicesHi: Record<string, { title: string; short: string }> = {
   },
   'night-safety-driver': {
     title: 'रात का सुरक्षित ड्राइवर',
-    short: 'रात 8 से सुबह 6 बजे तक, ₹500 से — महिलाओं, परिवारों और देर से लौटने वालों के लिए।',
+    short: `रात 8 से सुबह 6 बजे तक, ${priceText.nightFrom} से — महिलाओं, परिवारों और देर से लौटने वालों के लिए।`,
   },
   'airport-outstation': {
     title: 'एयरपोर्ट और आउटस्टेशन',
@@ -163,7 +170,7 @@ export const servicesHi: Record<string, { title: string; short: string }> = {
   },
   'monthly-driver': {
     title: 'मंथली ड्राइवर',
-    short: 'महीने भर के लिए नियमित, वेरिफ़ाइड ड्राइवर — बेसिक या प्रीमियम प्लान, ₹16,000 से।',
+    short: `महीने भर के लिए नियमित, वेरिफ़ाइड ड्राइवर — बेसिक या प्रीमियम प्लान, ${priceText.basicFrom} से।`,
   },
   'wedding-event-driver': {
     title: 'शादी और इवेंट ड्राइवर',
@@ -200,9 +207,13 @@ export const pricesHi: { name: string; price: string; unit: string }[] = [
     if (!hi) throw new Error(`lib/content-hi.ts: no Hindi name for plan "${p.id}"`);
     return { name: hi.name, price: p.price, unit: hi.unit };
   }),
-  { name: 'रात का ड्राइवर (रात 8 – सुबह 6)', price: '₹500 से', unit: 'प्रति रात' },
-  { name: 'मंथली ड्राइवर — बेसिक प्लान', price: '₹16,000–17,000', unit: 'प्रति माह + एक बार जॉइनिंग फ़ीस' },
-  { name: 'मंथली ड्राइवर — प्रीमियम प्लान', price: '₹20,000', unit: 'प्रति माह, कोई जॉइनिंग फ़ीस नहीं' },
+  { name: 'रात का ड्राइवर (रात 8 – सुबह 6)', price: `${priceText.nightFrom} से`, unit: 'प्रति रात' },
+  {
+    name: 'मंथली ड्राइवर — बेसिक प्लान',
+    price: priceText.basic,
+    unit: m.joiningFeePercent > 0 ? 'प्रति माह + एक बार जॉइनिंग फ़ीस' : 'प्रति माह',
+  },
+  { name: 'मंथली ड्राइवर — प्रीमियम प्लान', price: priceText.premium, unit: 'प्रति माह, कोई जॉइनिंग फ़ीस नहीं' },
   { name: 'शादी / इवेंट और वन-वे ड्रॉप', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
 ];
 
@@ -236,12 +247,12 @@ const arrival: Faq = {
 
 const night: Faq = {
   q: 'क्या रात में भी ड्राइवर मिलता है?',
-  a: 'हाँ। DriveBuddy 24 घंटे, सातों दिन चलता है। रात 8 बजे से सुबह 6 बजे तक की नाइट ड्राइवर सेवा ₹500 से शुरू होती है — अकेले सफ़र करने वाली महिलाएँ, परिवार और देर तक ऑफ़िस में रुकने वाले इसे सबसे ज़्यादा बुक करते हैं।',
+  a: `हाँ। DriveBuddy 24 घंटे, सातों दिन चलता है। रात 8 बजे से सुबह 6 बजे तक की नाइट ड्राइवर सेवा ${priceText.nightFrom} से शुरू होती है — अकेले सफ़र करने वाली महिलाएँ, परिवार और देर तक ऑफ़िस में रुकने वाले इसे सबसे ज़्यादा बुक करते हैं।`,
 };
 
 const price: Faq = {
   q: 'ड्राइवर का चार्ज कितना है?',
-  a: '1 घंटे के ₹300, 3 घंटे के ₹600, शहर में पूरे दिन (8 घंटे) के ₹1000–1200 और आउटस्टेशन ट्रिप के ₹1200–1500। मंथली ड्राइवर बेसिक प्लान में ₹16,000–17,000 और प्रीमियम में ₹20,000 प्रति माह। यह सिर्फ़ ड्राइवर का चार्ज है — गाड़ी और ईंधन आपका। कोई सर्ज प्राइसिंग या छुपा चार्ज नहीं।',
+  a: `1 घंटे के ${priceText.oneHour}, 3 घंटे के ${priceText.threeHours}, शहर में पूरे दिन (8 घंटे) के ${priceText.fullDay} और आउटस्टेशन ट्रिप के ${priceText.outstation}। मंथली ड्राइवर बेसिक प्लान में ${priceText.basic} और प्रीमियम में ${priceText.premium} प्रति माह। यह सिर्फ़ ड्राइवर का चार्ज है — गाड़ी और ईंधन आपका। कोई सर्ज प्राइसिंग या छुपा चार्ज नहीं।`,
 };
 
 const car: Faq = {
@@ -256,7 +267,7 @@ const verified: Faq = {
 
 const monthly: Faq = {
   q: 'क्या महीने भर के लिए ड्राइवर मिल सकता है?',
-  a: 'हाँ, दो प्लान हैं। बेसिक: ₹16,000–17,000 प्रति माह और एक बार की जॉइनिंग फ़ीस (एक महीने का 25%)। प्रीमियम: ₹20,000 प्रति माह, कोई जॉइनिंग फ़ीस नहीं — ड्राइवर छुट्टी पर हो तो दूसरा ड्राइवर मुफ़्त, और ड्राइवर कभी भी काम छोड़े तो 1 दिन में नया वेरिफ़ाइड ड्राइवर। दोनों में रोज़ 9 घंटे, महीने में 4 छुट्टियाँ, और ज़्यादा घंटों के ₹100 प्रति घंटा।',
+  a: `हाँ, दो प्लान हैं। बेसिक: ${priceText.basic} प्रति माह${m.joiningFeePercent > 0 ? ` और एक बार की जॉइनिंग फ़ीस (एक महीने का ${priceText.joiningFeePercent})` : ''}। प्रीमियम: ${priceText.premium} प्रति माह, कोई जॉइनिंग फ़ीस नहीं — ड्राइवर छुट्टी पर हो तो दूसरा ड्राइवर मुफ़्त, और ड्राइवर कभी भी काम छोड़े तो ${m.replacementDays} दिन में नया वेरिफ़ाइड ड्राइवर। दोनों में रोज़ ${m.hoursPerDay} घंटे, महीने में ${m.daysOffPerMonth} ${chhutti(m.daysOffPerMonth)}, और ज़्यादा घंटों के ${priceText.extraHour} प्रति घंटा।`,
 };
 
 const payment: Faq = {
@@ -266,7 +277,7 @@ const payment: Faq = {
 
 const howToBook: Faq = {
   q: 'ड्राइवर कैसे बुक करें?',
-  a: 'सबसे तेज़ तरीका है 9111473929 पर कॉल करना। आप WhatsApp पर पिकअप की जगह और समय भी भेज सकते हैं, या वेबसाइट पर ऑनलाइन फ़ॉर्म भर सकते हैं — हम कुछ ही मिनट में कॉल करके ड्राइवर और समय पक्का करते हैं।',
+  a: `सबसे तेज़ तरीका है ${phone} पर कॉल करना। आप WhatsApp पर पिकअप की जगह और समय भी भेज सकते हैं, या वेबसाइट पर ऑनलाइन फ़ॉर्म भर सकते हैं — हम कुछ ही मिनट में कॉल करके ड्राइवर और समय पक्का करते हैं।`,
 };
 
 export const faqsHi: Faq[] = [arrival, night, price, car, verified, monthly, payment, howToBook];

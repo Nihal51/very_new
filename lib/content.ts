@@ -5,6 +5,15 @@
  */
 
 import type { IconName } from '@/components/icons';
+import { priceText, settings } from './settings';
+
+/* Prices, phone numbers and monthly-plan terms are NOT typed in this file: they come
+   from site-settings.ts through `priceText` / `settings`, so changing a price there
+   changes every sentence below. `scripts/check-prices.mjs` fails the build if a
+   ₹ figure is typed here by hand. */
+const phone = settings.contact.phone;
+const m = settings.monthly;
+const day = (n: number) => (n === 1 ? 'day' : 'days');
 
 /* ---------------------------------------------------------------- services */
 
@@ -59,11 +68,13 @@ export type Service = {
  * 7 Oct 2026 — change them only on the owner's word, and keep the Hindi copy in
  * lib/content-hi.ts in step.
  */
+/** The monthly plans' shared terms, as set in site-settings.ts. */
 export const monthlyTerms = {
-  hoursPerDay: 9,
-  overtimePerHour: 100,
-  daysOffPerMonth: 4,
-  standInPerDay: 900,
+  hoursPerDay: m.hoursPerDay,
+  daysOffPerMonth: m.daysOffPerMonth,
+  overtime: priceText.extraHour,
+  standIn: priceText.standIn,
+  replacement: priceText.replacement,
 } as const;
 
 export type MonthlyPlan = {
@@ -85,21 +96,24 @@ export type MonthlyPlan = {
 };
 
 const planWhatsapp = (plan: string) =>
-  `Hi DriveBuddy, I want a monthly driver on the ${plan} plan.\nCity:\nDaily timing (9 hours, e.g. 9 AM – 6 PM):\nWeekly off day:\nStart date:`;
+  `Hi DriveBuddy, I want a monthly driver on the ${plan} plan.\nCity:\nDaily timing (${m.hoursPerDay} hours, e.g. 9 AM – 6 PM):\nWeekly off day:\nStart date:`;
+
+const joiningFeeShort =
+  m.joiningFeePercent > 0 ? `${priceText.joiningFeePercent} of one month (${priceText.joiningFee})` : null;
 
 export const monthlyPlans: readonly MonthlyPlan[] = [
   {
     id: 'basic',
     name: 'Basic',
-    price: '₹16,000–17,000',
-    min: 16000,
-    max: 17000,
-    joiningFee: 'One-time joining fee: 25% of one month (₹4,000–4,250)',
+    price: priceText.basic,
+    min: m.basic.from,
+    max: m.basic.to,
+    joiningFee: joiningFeeShort && `One-time joining fee: ${joiningFeeShort}`,
     blurb: 'A verified driver at the lowest monthly price, with a replacement guarantee for the first month.',
     highlights: [
-      `A verified driver, ${monthlyTerms.hoursPerDay} hours a day`,
-      'New driver within 1 day if yours quits in the first month',
-      `Stand-in driver on leave days: ₹${monthlyTerms.standInPerDay} a day`,
+      `A verified driver, ${m.hoursPerDay} hours a day`,
+      `New driver ${priceText.replacement} if yours quits in the first month`,
+      `Stand-in driver on leave days: ${priceText.standIn} a day`,
       'Police-verified, with 5+ years of experience',
     ],
     packageValue: 'monthly-basic',
@@ -108,16 +122,16 @@ export const monthlyPlans: readonly MonthlyPlan[] = [
   {
     id: 'premium',
     name: 'Premium',
-    price: '₹20,000',
-    min: 20000,
-    max: 20000,
+    price: priceText.premium,
+    min: m.premium,
+    max: m.premium,
     joiningFee: null,
-    blurb: 'Never be left without a driver: a free stand-in on leave days, and a new driver within a day if yours ever leaves.',
+    blurb: `Never be left without a driver: a free stand-in on leave days, and a new driver ${priceText.replacement} if yours ever leaves.`,
     recommended: true,
     highlights: [
-      `A verified driver, ${monthlyTerms.hoursPerDay} hours a day`,
+      `A verified driver, ${m.hoursPerDay} hours a day`,
       'Free stand-in driver whenever yours takes leave',
-      'New verified driver within 1 day if yours quits — any time',
+      `New verified driver ${priceText.replacement} if yours quits — any time`,
       'No joining fee',
     ],
     packageValue: 'monthly-premium',
@@ -127,14 +141,22 @@ export const monthlyPlans: readonly MonthlyPlan[] = [
 
 /** Row-by-row comparison shown under the plan cards. */
 export const monthlyComparison: readonly { label: string; basic: string; premium: string }[] = [
-  { label: 'Monthly charge', basic: '₹16,000–17,000', premium: '₹20,000' },
-  { label: 'Joining fee (one time)', basic: '25% of one month (₹4,000–4,250)', premium: 'None' },
-  { label: 'Working hours', basic: `${monthlyTerms.hoursPerDay} hours a day`, premium: `${monthlyTerms.hoursPerDay} hours a day` },
-  { label: 'Extra hours', basic: `₹${monthlyTerms.overtimePerHour} an hour`, premium: `₹${monthlyTerms.overtimePerHour} an hour` },
-  { label: 'Weekly off', basic: `${monthlyTerms.daysOffPerMonth} days a month`, premium: `${monthlyTerms.daysOffPerMonth} days a month` },
-  { label: 'Driver takes leave', basic: `Stand-in driver, ₹${monthlyTerms.standInPerDay} a day`, premium: 'Stand-in driver, free' },
-  { label: 'Driver quits in the first month', basic: 'New driver within 1 day, free', premium: 'New driver within 1 day, free' },
-  { label: 'Driver quits after the first month', basic: 'Not included', premium: 'New driver within 1 day, free' },
+  { label: 'Monthly charge', basic: priceText.basic, premium: priceText.premium },
+  { label: 'Joining fee (one time)', basic: joiningFeeShort ?? 'None', premium: 'None' },
+  { label: 'Working hours', basic: `${m.hoursPerDay} hours a day`, premium: `${m.hoursPerDay} hours a day` },
+  { label: 'Extra hours', basic: `${priceText.extraHour} an hour`, premium: `${priceText.extraHour} an hour` },
+  {
+    label: 'Weekly off',
+    basic: `${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} a month`,
+    premium: `${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} a month`,
+  },
+  { label: 'Driver takes leave', basic: `Stand-in driver, ${priceText.standIn} a day`, premium: 'Stand-in driver, free' },
+  {
+    label: 'Driver quits in the first month',
+    basic: `New driver ${priceText.replacement}, free`,
+    premium: `New driver ${priceText.replacement}, free`,
+  },
+  { label: 'Driver quits after the first month', basic: 'Not included', premium: `New driver ${priceText.replacement}, free` },
 ];
 
 export const services: Service[] = [
@@ -147,7 +169,7 @@ export const services: Service[] = [
     heading: 'Personal driver for your own car',
     metaTitle: 'Personal Driver on Hire, Hourly or Full Day',
     metaDescription:
-      'Hire a personal driver for your own car in Raipur, Bhilai, Durg and Bilaspur — hourly, half-day or full day. Police-verified, sober, from ₹300.',
+      `Hire a personal driver for your own car in Raipur, Bhilai, Durg and Bilaspur — hourly, half-day or full day. Police-verified, sober, from ${priceText.oneHour}.`,
     badge: 'Most booked',
     includes: [
       'Hourly, half-day or full-day booking',
@@ -179,14 +201,14 @@ export const services: Service[] = [
     icon: 'moon',
     title: 'Night Safety Driver',
     short: 'Verified late-night travel for women, families and office returns.',
-    body: 'A dedicated night shift from 8 PM to 6 AM, starting from ₹500. Every night driver is police-verified and breath-tested before the shift starts, so a late finish at the office never has to mean an unsafe ride home.',
+    body: `A dedicated night shift from 8 PM to 6 AM, starting from ${priceText.nightFrom}. Every night driver is police-verified and breath-tested before the shift starts, so a late finish at the office never has to mean an unsafe ride home.`,
     heading: 'Night driver service, 8 PM to 6 AM',
     metaTitle: 'Night Driver Service, 8 PM to 6 AM',
     metaDescription:
-      'Book a verified night driver from 8 PM to 6 AM in Raipur, Bhilai, Durg and Bilaspur — a safe ride home for women, families and late shifts, from ₹500.',
+      `Book a verified night driver from 8 PM to 6 AM in Raipur, Bhilai, Durg and Bilaspur — a safe ride home for women, families and late shifts, from ${priceText.nightFrom}.`,
     badge: 'Popular choice',
     includes: [
-      'From ₹500 for the 8 PM – 6 AM window',
+      `From ${priceText.nightFrom} for the 8 PM – 6 AM window`,
       'Breathalyser check before every shift',
       'Driver details shared before arrival',
       'Preferred by women travelling alone',
@@ -214,17 +236,17 @@ export const services: Service[] = [
     slug: 'monthly-driver',
     icon: 'calendar',
     title: 'Monthly Driver',
-    short: 'A regular verified driver for your own car — Basic or Premium plan, from ₹16,000 a month.',
-    body: 'A dedicated driver for your own car on a monthly plan — the office commute, school runs, parents’ appointments and weekend errands, with the same person behind the wheel day after day. Nine hours a day, four days off a month, and every driver verified exactly like every other DriveBuddy driver before they start.',
+    short: `A regular verified driver for your own car — Basic or Premium plan, from ${priceText.basicFrom} a month.`,
+    body: `A dedicated driver for your own car on a monthly plan — the office commute, school runs, parents’ appointments and weekend errands, with the same person behind the wheel day after day. ${m.hoursPerDay} hours a day, ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month, and every driver verified exactly like every other DriveBuddy driver before they start.`,
     heading: 'Monthly and permanent driver for your car',
     metaTitle: 'Monthly Driver on Hire — Permanent Car Driver',
     metaDescription:
-      'Monthly driver for your own car in Raipur, Bhilai, Durg and Bilaspur. Basic plan ₹16,000–17,000, Premium ₹20,000 with free stand-in drivers. 9 hours a day.',
+      `Monthly driver for your own car in Raipur, Bhilai, Durg and Bilaspur. Basic plan ${priceText.basic}, Premium ${priceText.premium} with free stand-in drivers. ${m.hoursPerDay} hours a day.`,
     badge: 'Monthly plan',
     extra: true,
     includes: [
       'A regular driver for your daily routine',
-      '9 hours a day, 4 days off a month',
+      `${m.hoursPerDay} hours a day, ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month`,
       'Police-verified, with 5+ years of experience',
       'Comfortable with manual and automatic',
     ],
@@ -232,15 +254,15 @@ export const services: Service[] = [
     faqs: [
       {
         q: 'How much does a monthly driver cost?',
-        a: 'The Basic plan is ₹16,000–17,000 a month plus a one-time joining fee of 25% of one month. The Premium plan is ₹20,000 a month with no joining fee. Both give you a verified driver for 9 hours a day with 4 days off a month; extra hours are ₹100 an hour.',
+        a: `The Basic plan is ${priceText.basic} a month${m.joiningFeePercent > 0 ? ` plus a one-time joining fee of ${priceText.joiningFeePercent} of one month` : ''}. The Premium plan is ${priceText.premium} a month with no joining fee. Both give you a verified driver for ${m.hoursPerDay} hours a day with ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month; extra hours are ${priceText.extraHour} an hour.`,
       },
       {
         q: 'What is the difference between the Basic and Premium plans?',
-        a: 'What happens when your driver is away. On Premium, a stand-in driver comes free whenever your driver takes leave, and if your driver quits at any time we send a new verified driver within 1 day; there is no joining fee. On Basic, a stand-in costs ₹900 a day, and the free replacement within 1 day applies only if the driver quits in the first month.',
+        a: `What happens when your driver is away. On Premium, a stand-in driver comes free whenever your driver takes leave, and if your driver quits at any time we send a new verified driver ${priceText.replacement}; there is no joining fee. On Basic, a stand-in costs ${priceText.standIn} a day, and the free replacement ${priceText.replacement} applies only if the driver quits in the first month.`,
       },
       {
         q: 'Can I hire a permanent driver through DriveBuddy?',
-        a: 'Yes — that is what the monthly plans are for: the same verified driver for your own car, 9 hours a day. Call 9111473929 or message us on WhatsApp with your city, timing and start date.',
+        a: `Yes — that is what the monthly plans are for: the same verified driver for your own car, ${m.hoursPerDay} hours a day. Call ${phone} or message us on WhatsApp with your city, timing and start date.`,
       },
     ],
   },
@@ -317,7 +339,7 @@ export const services: Service[] = [
     faqs: [
       {
         q: 'Can a driver take my car to another city without me?',
-        a: 'Yes. With a one-way car drop, a verified driver delivers your car to the address you give and then returns on their own. Call 9111473929 with the pickup, the destination and the date for a quote.',
+        a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and then returns on their own. Call ${phone} with the pickup, the destination and the date for a quote.`,
       },
       {
         q: 'Is the driver’s return journey included in the price?',
@@ -334,7 +356,11 @@ export type Plan = {
   eyebrow: string;
   name: string;
   blurb: string;
+  /** As displayed — from site-settings.ts. */
   price: string;
+  /** The same price as numbers, for the JSON-LD Offer. */
+  min: number;
+  max: number;
   unit: string;
   featured?: boolean;
   features: string[];
@@ -346,7 +372,9 @@ export const plans: Plan[] = [
     eyebrow: 'Starter',
     name: '1 Hour',
     blurb: 'Quick trips, short errands and pickups.',
-    price: '₹300',
+    price: priceText.oneHour,
+    min: settings.prices.oneHour,
+    max: settings.prices.oneHour,
     unit: 'per booking',
     features: [
       'Up to 1 hour of driving',
@@ -360,7 +388,9 @@ export const plans: Plan[] = [
     eyebrow: 'Most popular',
     name: '3 Hours',
     blurb: 'Best value for daily use and outings.',
-    price: '₹600',
+    price: priceText.threeHours,
+    min: settings.prices.threeHours,
+    max: settings.prices.threeHours,
     unit: 'per booking',
     featured: true,
     features: [
@@ -376,7 +406,9 @@ export const plans: Plan[] = [
     eyebrow: 'Full day',
     name: 'Local Full Day',
     blurb: 'All-day local errands and city trips.',
-    price: '₹1000–1200',
+    price: priceText.fullDay,
+    min: settings.prices.fullDay.from,
+    max: settings.prices.fullDay.to,
     unit: 'per day',
     features: [
       '8 hours of dedicated driving',
@@ -391,7 +423,9 @@ export const plans: Plan[] = [
     eyebrow: 'Outstation',
     name: 'Outstation Trip',
     blurb: 'Long-distance journeys beyond the city.',
-    price: '₹1200–1500',
+    price: priceText.outstation,
+    min: settings.prices.outstation.from,
+    max: settings.prices.outstation.to,
     unit: 'per trip',
     features: [
       'Long-distance highway driving',
@@ -408,7 +442,7 @@ export const extraRates = [
   {
     label: 'Night driver',
     detail: '8 PM – 6 AM',
-    price: 'from ₹500',
+    price: `from ${priceText.nightFrom}`,
   },
   {
     label: 'Hospital / emergency',
@@ -417,8 +451,8 @@ export const extraRates = [
   },
   {
     label: 'Monthly driver',
-    detail: 'Basic ₹16,000–17,000 · Premium ₹20,000 a month',
-    price: 'from ₹16,000',
+    detail: `Basic ${priceText.basic} · Premium ${priceText.premium} a month`,
+    price: `from ${priceText.basicFrom}`,
   },
   {
     label: 'Wedding & event drivers',
@@ -431,14 +465,17 @@ export const extraRates = [
 
 /** Options shown in the booking form's package select. Values are stored in Firestore. */
 export const bookingPackages = [
-  { value: '1-hour-300', label: '1 Hour — ₹300' },
-  { value: '3-hours-600', label: '3 Hours — ₹600 (most popular)' },
-  { value: 'local-full-day', label: 'Local Full Day, 8 hrs — ₹1000–1200' },
-  { value: 'outstation', label: 'Outstation Trip — ₹1200–1500' },
-  { value: 'night-driver', label: 'Night Driver, 8 PM – 6 AM — from ₹500' },
+  /* The values are stored ids that firestore.rules checks — they never change, even
+     when a price does ('1-hour-300' stays '1-hour-300'). Only the labels follow
+     site-settings.ts. */
+  { value: '1-hour-300', label: `1 Hour — ${priceText.oneHour}` },
+  { value: '3-hours-600', label: `3 Hours — ${priceText.threeHours} (most popular)` },
+  { value: 'local-full-day', label: `Local Full Day, 8 hrs — ${priceText.fullDay}` },
+  { value: 'outstation', label: `Outstation Trip — ${priceText.outstation}` },
+  { value: 'night-driver', label: `Night Driver, 8 PM – 6 AM — from ${priceText.nightFrom}` },
   { value: 'medical-emergency', label: 'Hospital / Emergency — priority' },
-  { value: 'monthly-basic', label: 'Monthly Driver, Basic plan — ₹16,000–17,000 a month' },
-  { value: 'monthly-premium', label: 'Monthly Driver, Premium plan — ₹20,000 a month' },
+  { value: 'monthly-basic', label: `Monthly Driver, Basic plan — ${priceText.basic} a month` },
+  { value: 'monthly-premium', label: `Monthly Driver, Premium plan — ${priceText.premium} a month` },
   { value: 'wedding-event', label: 'Wedding / Event Drivers — quoted on call' },
   { value: 'one-way-drop', label: 'One-Way Car Drop — quoted on call' },
 ] as const;
@@ -481,7 +518,7 @@ export const stats = [
   { value: '30 min', label: 'Arrival target' },
   { value: '24/7', label: 'Always available' },
   { value: '4 cities', label: 'Raipur, Bhilai, Durg & Bilaspur' },
-  { value: '₹300', label: 'Starting rate, one hour' },
+  { value: priceText.oneHour, label: 'Starting rate, one hour' },
 ];
 
 /* ------------------------------------------------------------------ cities */
@@ -667,7 +704,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'How much does it cost to hire a driver?',
-    a: 'DriveBuddy charges ₹300 for one hour, ₹600 for three hours, ₹1000–1200 for a local full day of eight hours and ₹1200–1500 for an outstation trip; the night driver (8 PM to 6 AM) starts from ₹500. A monthly driver is ₹16,000–17,000 a month on the Basic plan or ₹20,000 on Premium; wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel.',
+    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstation} for an outstation trip; the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel.`,
   },
   {
     q: 'How quickly will a driver arrive?',
@@ -675,11 +712,11 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Is the service available at night?',
-    a: 'Yes. DriveBuddy operates 24 hours a day, 7 days a week. Our dedicated night safety driver service runs from 8 PM to 6 AM, starting from ₹500, and is widely used by women travelling alone, families and late-finishing office staff.',
+    a: `Yes. DriveBuddy operates 24 hours a day, 7 days a week. Our dedicated night safety driver service runs from 8 PM to 6 AM, starting from ${priceText.nightFrom}, and is widely used by women travelling alone, families and late-finishing office staff.`,
   },
   {
     q: 'What is the difference between Local and Outstation?',
-    a: 'Local Full Day (₹1000–1200) covers eight hours of driving inside city limits. Outstation (₹1200–1500) is for journeys beyond the city, on highways, and can include an overnight halt. Call us on 9111473929 for a precise quote on long trips.',
+    a: `Local Full Day (${priceText.fullDay}) covers eight hours of driving inside city limits. Outstation (${priceText.outstation}) is for journeys beyond the city, on highways, and can include an overnight halt. Call us on ${phone} for a precise quote on long trips.`,
   },
   {
     q: 'What if I need to extend my booking?',
@@ -695,7 +732,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can I book for a hospital emergency?',
-    a: 'Yes, and these get absolute priority. For an emergency, call 9111473929 directly rather than using the form — that routes straight to instant dispatch.',
+    a: `Yes, and these get absolute priority. For an emergency, call ${phone} directly rather than using the form — that routes straight to instant dispatch.`,
   },
   {
     q: 'Do I need to provide the car?',
@@ -703,7 +740,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can I hire a monthly or permanent driver?',
-    a: 'Yes. Choose the Basic plan at ₹16,000–17,000 a month (plus a one-time joining fee of 25% of one month) or Premium at ₹20,000 a month, which adds free stand-in drivers and a new driver within 1 day if yours quits. Both cover 9 hours a day with 4 days off a month.',
+    a: `Yes. Choose the Basic plan at ${priceText.basic} a month${m.joiningFeePercent > 0 ? ` (plus a one-time joining fee of ${priceText.joiningFeePercent} of one month)` : ''} or Premium at ${priceText.premium} a month, which adds free stand-in drivers and a new driver ${priceText.replacement} if yours quits. Both cover ${m.hoursPerDay} hours a day with ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month.`,
   },
   {
     q: 'Do you provide drivers for weddings and events?',
@@ -715,7 +752,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Do you serve places outside Raipur, Bhilai, Durg and Bilaspur?',
-    a: 'Pickups are in these four cities. Outstation trips and one-way car drops start from any of them and can go anywhere in Chhattisgarh and beyond — call 9111473929 for a quote on the full journey.',
+    a: `Pickups are in these four cities. Outstation trips and one-way car drops start from any of them and can go anywhere in Chhattisgarh and beyond — call ${phone} for a quote on the full journey.`,
   },
   {
     q: 'How does the online booking form work?',

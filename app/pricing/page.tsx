@@ -12,13 +12,14 @@ import { CheckIcon, CloseIcon } from '@/components/icons';
 import { faqs } from '@/lib/content';
 import { breadcrumbSchema, faqSchema, pricingSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
+import { priceText } from '@/lib/settings';
 
 const trail = [{ name: 'Pricing', path: '/pricing/' }];
 
 export const metadata: Metadata = pageMeta({
   title: 'Driver Charges & Hourly Rates in Chhattisgarh',
   description:
-    'Driver charges from ₹300 an hour, ₹600 for 3 hours, ₹1000–1200 a full day, ₹1200–1500 outstation, from ₹500 at night. No surge, no hidden fees.',
+    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.outstation} outstation, from ${priceText.nightFrom} at night. No surge, no hidden fees.`,
   path: '/pricing/',
 });
 

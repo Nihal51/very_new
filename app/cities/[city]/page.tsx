@@ -18,6 +18,7 @@ import { cities, faqs, getCity } from '@/lib/content';
 import { cityHi } from '@/lib/content-hi';
 import { breadcrumbSchema, citySchema, faqSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
+import { priceText } from '@/lib/settings';
 import { formatPhone, site, telHref } from '@/lib/site';
 
 /** Only these four slugs exist. Anything else 404s rather than rendering a shell. */
@@ -36,7 +37,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
   return pageMeta({
     title: `Driver on Hire in ${city.name} — Hourly, Full Day, 24/7`,
-    description: `Hire a police-verified driver in ${city.name} — hourly, full day or night. 30-min arrival, 24/7, from ₹300. Serving ${city.areas[0]} and more.`,
+    description: `Hire a police-verified driver in ${city.name} — hourly, full day or night. 30-min arrival, 24/7, from ${priceText.startingFrom}. Serving ${city.areas[0]} and more.`,
     path: `/cities/${city.slug}/`,
     languages: { en: `/cities/${city.slug}/`, hi: `/hi/cities/${city.slug}/` },
     ogImageAlt: `${site.name} — verified drivers in ${city.name}`,

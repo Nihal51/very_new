@@ -3,6 +3,7 @@
  * data is reviewable in one place, and every page emits a consistent graph.
  */
 
+import { priceBounds } from './settings';
 import { site, socialProfiles } from './site';
 import { cities, faqs, plans, services } from './content';
 
@@ -208,8 +209,8 @@ export function driverServiceSchema() {
       priceCurrency: 'INR',
       priceSpecification: {
         '@type': 'PriceSpecification',
-        minPrice: '300',
-        maxPrice: '1500',
+        minPrice: String(priceBounds.min),
+        maxPrice: String(priceBounds.max),
         priceCurrency: 'INR',
       },
       availability: 'https://schema.org/InStock',
@@ -285,7 +286,18 @@ export function pricingSchema() {
       name: p.name,
       description: p.blurb,
       priceCurrency: 'INR',
-      price: p.price.replace(/[₹,]/g, ''),
+      /* A fixed price is `price`; a range (Local Full Day, Outstation) is a
+         PriceSpecification with min and max — a "1000–1200" string is not a price. */
+      ...(p.min === p.max
+        ? { price: p.min }
+        : {
+            priceSpecification: {
+              '@type': 'PriceSpecification',
+              minPrice: p.min,
+              maxPrice: p.max,
+              priceCurrency: 'INR',
+            },
+          }),
       availability: 'https://schema.org/InStock',
       areaServed: SERVICE_AREA,
     })),

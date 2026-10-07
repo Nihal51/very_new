@@ -101,7 +101,7 @@ export function MonthlyPlans() {
       <ul className="text-fg-muted mt-6 flex max-w-3xl flex-col gap-2 text-sm">
         <li>
           Both plans: {monthlyTerms.hoursPerDay} hours a day, {monthlyTerms.daysOffPerMonth} days off
-          a month, and ₹{monthlyTerms.overtimePerHour} for every extra hour.
+          a month, and {monthlyTerms.overtime} for every extra hour.
         </li>
         <li>Plans cover driving within your city; outstation trips are charged separately.</li>
         <li>The driver&apos;s charge only — you provide the car and fuel, as with every booking.</li>

@@ -45,18 +45,23 @@ const KEY_FILE = path.join(homedir(), '.drivebuddy', 'serviceAccount.json');
 /** India has no daylight saving, so a fixed +5:30 is exact all year. */
 const IST_OFFSET_MIN = 330;
 
-/** Mirrors `bookingPackages` in lib/content.ts — keep the two in step. */
+/**
+ * The package each stored booking value stands for — the values in
+ * `bookingPackages` (lib/content.ts) and firestore.rules. Names only, no prices:
+ * a sheet of past bookings must not restate today's price against a booking
+ * made at an older one, and prices now live in site-settings.ts alone.
+ */
 const SERVICE_LABELS = {
-  '1-hour-300': '1 Hour — ₹300',
-  '3-hours-600': '3 Hours — ₹600',
-  'local-full-day': 'Local Full Day, 8 hrs — ₹1000–1200',
-  outstation: 'Outstation Trip — ₹1200–1500',
-  'night-driver': 'Night Driver, 8 PM – 6 AM — from ₹500',
-  'medical-emergency': 'Hospital / Emergency — priority',
-  'monthly-basic': 'Monthly Driver, Basic plan — ₹16,000–17,000 a month',
-  'monthly-premium': 'Monthly Driver, Premium plan — ₹20,000 a month',
-  'wedding-event': 'Wedding / Event Drivers — quoted on call',
-  'one-way-drop': 'One-Way Car Drop — quoted on call',
+  '1-hour-300': '1 Hour',
+  '3-hours-600': '3 Hours',
+  'local-full-day': 'Local Full Day (8 hrs)',
+  outstation: 'Outstation Trip',
+  'night-driver': 'Night Driver (8 PM – 6 AM)',
+  'medical-emergency': 'Hospital / Emergency',
+  'monthly-basic': 'Monthly Driver — Basic plan',
+  'monthly-premium': 'Monthly Driver — Premium plan',
+  'wedding-event': 'Wedding / Event Drivers',
+  'one-way-drop': 'One-Way Car Drop',
 };
 
 /** Mirrors the licence values accepted by firestore.rules for /drivers. */

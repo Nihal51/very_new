@@ -17,6 +17,7 @@ import {
 } from '@/components/icons';
 import { breadcrumbSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
+import { priceText } from '@/lib/settings';
 import { formatPhone, mailHref, site, telHref, telHrefAlt, waHref } from '@/lib/site';
 
 const trail = [{ name: 'Book a driver', path: '/book/' }];
@@ -24,7 +25,7 @@ const trail = [{ name: 'Book a driver', path: '/book/' }];
 export const metadata: Metadata = pageMeta({
   title: 'Book a Verified Driver — 30-Minute Arrival',
   description:
-    'Book a police-verified driver for your own car in Raipur, Bhilai, Durg or Bilaspur. We call you back within minutes. 24 hours, from ₹300.',
+    `Book a police-verified driver for your own car in Raipur, Bhilai, Durg or Bilaspur. We call you back within minutes. 24 hours, from ${priceText.startingFrom}.`,
   path: '/book/',
 });
 

@@ -8,6 +8,7 @@ import {
   services,
 } from '@/lib/content';
 import { cityHi } from '@/lib/content-hi';
+import { priceText } from '@/lib/settings';
 import { formatPhone, site } from '@/lib/site';
 
 /**
@@ -41,12 +42,12 @@ function body(): string {
     '## Prices (driver only; customer provides the car and fuel)',
     '',
     ...plans.map((p) => `- ${p.name}: ${p.price} ${p.unit}`),
-    '- Night driver, 8 PM to 6 AM: from ₹500',
+    `- Night driver, 8 PM to 6 AM: from ${priceText.nightFrom}`,
     ...monthlyPlans.map(
       (p) =>
         `- Monthly driver, ${p.name} plan: ${p.price} a month${p.joiningFee ? ` + ${p.joiningFee.toLowerCase()}` : ', no joining fee'}`,
     ),
-    `- Monthly driver, both plans: ${monthlyTerms.hoursPerDay} hours a day, ${monthlyTerms.daysOffPerMonth} days off a month, ₹${monthlyTerms.overtimePerHour} per extra hour; outstation trips extra`,
+    `- Monthly driver, both plans: ${monthlyTerms.hoursPerDay} hours a day, ${monthlyTerms.daysOffPerMonth} days off a month, ${monthlyTerms.overtime} per extra hour; outstation trips extra`,
     ...monthlyComparison
       .filter((r) => r.basic !== r.premium && r.label !== 'Monthly charge' && !r.label.startsWith('Joining'))
       .map((r) => `- Monthly driver, ${r.label.toLowerCase()}: Basic — ${r.basic}; Premium — ${r.premium}`),

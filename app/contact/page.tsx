@@ -11,6 +11,7 @@ import { ClockIcon, MailIcon, MapPinIcon, PhoneIcon, WhatsappIcon } from '@/comp
 import { cities } from '@/lib/content';
 import { breadcrumbSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
+import { priceText } from '@/lib/settings';
 import { formatPhone, mailHref, site, telHref, telHrefAlt, waHref } from '@/lib/site';
 
 const trail = [{ name: 'Contact', path: '/contact/' }];
@@ -101,7 +102,8 @@ export default function ContactPage() {
                 </h2>
                 <p className="tabular text-display-sm font-display mt-3">24 / 7</p>
                 <p className="text-fg-muted mt-2 text-sm">
-                  Every day of the year. Night driver bookings run 8 PM to 6 AM, starting from ₹500.
+                  Every day of the year. Night driver bookings run 8 PM to 6 AM, starting from{' '}
+                  {priceText.nightFrom}.
                 </p>
               </Card>
 

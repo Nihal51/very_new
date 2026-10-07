@@ -8,6 +8,8 @@
  * robots.txt, Open Graph and every JSON-LD `@id` all derive from it.
  */
 
+import { priceBounds, rupees, settings } from './settings';
+
 /* Trailing slashes are stripped so `${site.url}/book/` can never double up.
    `||` rather than `??` on purpose: hosts and CI commonly pass an unset
    variable through as an empty string, which must fall back too.
@@ -26,11 +28,12 @@ export const site = {
   locale: 'en_IN',
   region: 'Chhattisgarh',
   country: 'IN',
-  phone: '9111473929',
-  phoneAlt: '9893302783',
-  whatsapp: '919111473929',
-  email: 'drivebuddyind@gmail.com',
-  priceRange: '₹300–₹1500',
+  /* Contact details and prices are edited in site-settings.ts, not here. */
+  phone: settings.contact.phone,
+  phoneAlt: settings.contact.phoneAlt,
+  whatsapp: `91${settings.contact.whatsapp}`,
+  email: settings.contact.email,
+  priceRange: `${rupees(priceBounds.min)}–${rupees(priceBounds.max)}`,
   /* No `rating` field. One used to live here — `{ value: 4.9, count: 187 }` — and fed
      a line in the home hero reading "4.9 from 187 reviews". The owner confirmed on
      2 Sep 2026 that the figure was invented, so both are gone. Deleting the field

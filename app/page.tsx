@@ -19,6 +19,7 @@ import { ArrowRightIcon } from '@/components/icons';
 import { faqs, services, stats } from '@/lib/content';
 import { driverServiceSchema, faqSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
+import { priceText } from '@/lib/settings';
 import { site } from '@/lib/site';
 
 /* The home page is the one that has to win "driver service in Chhattisgarh":
@@ -29,7 +30,7 @@ import { site } from '@/lib/site';
 export const metadata: Metadata = pageMeta({
   title: `Driver Service in ${site.region} — 24/7 in 30 Min · ${site.name}`,
   description:
-    `${site.name} provides verified, sober drivers on call across ${site.region} — Raipur, Bhilai, Durg and Bilaspur. At your door in 30 minutes, 24/7, from ₹300 an hour.`,
+    `${site.name} provides verified, sober drivers on call across ${site.region} — Raipur, Bhilai, Durg and Bilaspur. At your door in 30 minutes, 24/7, from ${priceText.oneHour} an hour.`,
   path: '/',
   languages: { en: '/', hi: '/hi/' },
 });

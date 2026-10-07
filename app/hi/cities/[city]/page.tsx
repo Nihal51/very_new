@@ -19,6 +19,7 @@ import { cities, getCity } from '@/lib/content';
 import { cityFaqsHi, cityHi } from '@/lib/content-hi';
 import { breadcrumbSchema, citySchema, faqSchema, hindiPageSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
+import { priceText } from '@/lib/settings';
 import { site } from '@/lib/site';
 
 export function generateStaticParams() {
@@ -35,7 +36,7 @@ const HOME = { name: 'होम', path: '/hi/' };
    title asks it back. The description carries the city's own typical wait. */
 const titleFor = (name: string) => `${name} में ड्राइवर चाहिए? 24/7, 30 मिनट में`;
 const descriptionFor = (name: string, wait: string) =>
-  `${name} में अपनी कार के लिए पुलिस-वेरिफ़ाइड ड्राइवर — घंटे, पूरे दिन या रात के लिए। आमतौर पर ${wait} में, 24/7, ₹300 से।`;
+  `${name} में अपनी कार के लिए पुलिस-वेरिफ़ाइड ड्राइवर — घंटे, पूरे दिन या रात के लिए। आमतौर पर ${wait} में, 24/7, ${priceText.startingFrom} से।`;
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { city: slug } = await params;

@@ -101,7 +101,7 @@ describe('workbook', () => {
     const row = wb.getWorksheet('Bookings').getRow(2);
     assert.equal(row.getCell(4).value, 'Ramesh Sahu');
     assert.equal(row.getCell(5).value, '9876543210');
-    assert.equal(row.getCell(7).value, '3 Hours — ₹600');
+    assert.equal(row.getCell(7).value, '3 Hours');
   });
 
   it('renders the customer-requested time, and says so when there is none', () => {

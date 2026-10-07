@@ -17,13 +17,14 @@ import { CertificateIcon, ClockIcon, NoAlcoholIcon, ShieldIcon } from '@/compone
 import { cityListHi, faqsHi } from '@/lib/content-hi';
 import { faqSchema, hindiPageSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
+import { priceText } from '@/lib/settings';
 import { site } from '@/lib/site';
 
 /* The Hindi home page targets the Hindi form of the state-level query —
    "छत्तीसगढ़ में ड्राइवर सेवा" — the way the English home page targets
    "driver service in Chhattisgarh". The city queries belong to /hi/cities/<city>/. */
 const TITLE = 'छत्तीसगढ़ में ड्राइवर सेवा — 24/7, 30 मिनट में';
-const DESCRIPTION = `${cityListHi} में आपकी अपनी कार के लिए पुलिस-वेरिफ़ाइड, नशामुक्त ड्राइवर। 24 घंटे, लगभग 30 मिनट में, ₹300 से।`;
+const DESCRIPTION = `${cityListHi} में आपकी अपनी कार के लिए पुलिस-वेरिफ़ाइड, नशामुक्त ड्राइवर। 24 घंटे, लगभग 30 मिनट में, ${priceText.startingFrom} से।`;
 
 export const metadata: Metadata = pageMeta({
   title: TITLE,

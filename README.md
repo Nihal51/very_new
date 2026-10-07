@@ -97,6 +97,37 @@ so a staging deploy can point at a separate Firebase project.
 
 ---
 
+## Changing prices, phone numbers or the notice bar
+
+Everything you are likely to change from week to week is in one short file at
+the top of the repo: [`site-settings.ts`](site-settings.ts).
+
+| Setting | What it changes |
+| --- | --- |
+| `notice` | A one-line message across the top of every page. `show: true` turns it on |
+| `contact` | Both phone numbers, the WhatsApp number and the email, everywhere they appear |
+| `prices` | Hourly, 3-hour, full-day, outstation and night rates |
+| `monthly` | The Basic and Premium plans: prices, joining fee %, hours, extra-hour rate, days off, stand-in rate, replacement time |
+
+Change a number there and every page follows — English and Hindi pages, the
+booking form, the FAQ answers, the monthly plan table, the structured data and
+`/llms.txt`. No other file needs touching.
+
+**From a browser (no laptop needed):** open `site-settings.ts` on github.com →
+pencil icon → change the value → **Commit changes**. The site redeploys in about
+three minutes. Prices are plain numbers (`16000`, not `₹16,000`); words stay in
+quotes. If you edit on GitHub, run `git pull` on your laptop before working there.
+
+**A typo can't break the live site.** The deploy stops before publishing and the
+Actions tab shows why, in plain words — for example `contact.phone must be a
+10-digit mobile number` or `prices.fullDay: "from" (1300) is bigger than "to"
+(1200)`. Fix the line and commit again.
+
+To keep that one-file promise true, `npm run lint` (which the deploy runs) fails
+if a ₹ figure or a phone number is typed anywhere in `app/`, `components/` or
+`lib/`. In code, use `priceText` from [`lib/settings.ts`](lib/settings.ts) and
+`site.phone` from [`lib/site.ts`](lib/site.ts).
+
 ## Running it
 
 ```bash
@@ -110,7 +141,7 @@ Then <http://localhost:3000>.
 | --- | --- |
 | `npm run dev` | Dev server with hot reload |
 | `npm run build` | Type-checks, builds, and writes the static site to `out/` |
-| `npm run lint` | `tsc --noEmit` — type errors only, no build |
+| `npm run lint` | Type-check, plus the check that no price or phone number is typed outside `site-settings.ts` — no build |
 | `npm run og` | Regenerates `public/og.png` (the social preview card) |
 | `npm run inbox` | Opens a live screen of your bookings and driver applications — see below |
 | `npm run leads` | Downloads every booking and driver application to an Excel file — see below |
@@ -296,8 +327,10 @@ components/
   icons.tsx             28 hand-drawn SVG icons — no emoji, no icon font
   BookingForm.tsx       the main lead path
   DriverForm.tsx        driver recruitment
+site-settings.ts        prices, phone numbers, notice bar  ← the file you edit
 lib/
-  site.ts               company details + the domain  ← single source of truth
+  settings.ts           checks site-settings.ts, formats every price (priceText)
+  site.ts               company details + the domain
   content.ts            every word of marketing copy, typed
   schema.ts             JSON-LD builders
   seo.ts                per-page metadata builder
@@ -309,13 +342,15 @@ firestore.rules         ⚠️ deploy this
 
 ### Editing content
 
-Almost all copy lives in [`lib/content.ts`](lib/content.ts) — services, prices,
-FAQs, testimonials, city areas and landmarks, driver perks. Change it there and
+Almost all copy lives in [`lib/content.ts`](lib/content.ts) — services, FAQs,
+testimonials, city areas and landmarks, driver perks (prices come from
+`site-settings.ts`; see above). Change it there and
 every page that uses it updates, including the JSON-LD and the city pages.
 Adding a fifth city means adding one object to the `cities` array: the page, the
 sitemap entry, the nav listing and the structured data all follow.
 
-Phone numbers, email and the domain live in [`lib/site.ts`](lib/site.ts).
+Prices, phone numbers and email live in [`site-settings.ts`](site-settings.ts); the
+domain lives in [`CNAME`](CNAME).
 
 ### Claims the build will not let you make
 
