@@ -50,6 +50,9 @@ export function validateExperience(value: string): string | undefined {
   if (!v) return 'Enter how many years you have been driving.';
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return 'Enter your experience in years, for example 6.';
+  /* firestore.rules only accepts a whole number here (`experienceYears is int`),
+     so "5.5" would pass this check and then be refused on save. */
+  if (!Number.isInteger(n)) return 'Enter whole years only, for example 6.';
   if (n < 5) return 'We currently require a minimum of 5 years of driving experience.';
   if (n > 60) return 'Please enter a realistic number of years.';
   return undefined;
