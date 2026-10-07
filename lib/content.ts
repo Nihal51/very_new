@@ -327,6 +327,9 @@ export const bookingPackages = [
   { value: 'outstation', label: 'Outstation Trip — ₹1200–1500' },
   { value: 'night-driver', label: 'Night Driver, 8 PM – 6 AM — from ₹500' },
   { value: 'medical-emergency', label: 'Hospital / Emergency — priority' },
+  { value: 'monthly-driver', label: 'Monthly Driver — quoted on call' },
+  { value: 'wedding-event', label: 'Wedding / Event Drivers — quoted on call' },
+  { value: 'one-way-drop', label: 'One-Way Car Drop — quoted on call' },
 ] as const;
 
 /* ------------------------------------------------------------------ trust  */

@@ -89,7 +89,10 @@ service cloud.firestore {
           'local-full-day',
           'outstation',
           'night-driver',
-          'medical-emergency'
+          'medical-emergency',
+          'monthly-driver',
+          'wedding-event',
+          'one-way-drop'
         ]
         && isText(request.resource.data.pickup, 6, 300)
         && isOptionalText(request.resource.data.preferredTime, 40)

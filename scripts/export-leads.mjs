@@ -53,6 +53,9 @@ const SERVICE_LABELS = {
   outstation: 'Outstation Trip — ₹1200–1500',
   'night-driver': 'Night Driver, 8 PM – 6 AM — from ₹500',
   'medical-emergency': 'Hospital / Emergency — priority',
+  'monthly-driver': 'Monthly Driver — quoted on call',
+  'wedding-event': 'Wedding / Event Drivers — quoted on call',
+  'one-way-drop': 'One-Way Car Drop — quoted on call',
 };
 
 /** Mirrors the licence values accepted by firestore.rules for /drivers. */
