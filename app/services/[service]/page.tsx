@@ -14,7 +14,7 @@ import { breadcrumbSchema, faqSchema, serviceSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { formatPhone, site, telHref } from '@/lib/site';
 
-/** Only the four real service slugs render; everything else 404s. */
+/** Only real service slugs render; everything else 404s. */
 export function generateStaticParams() {
   return services.map((service) => ({ service: service.slug }));
 }
@@ -44,6 +44,9 @@ const FAQ_NEEDLES: Record<string, string[]> = {
   'medical-transport': ['hospital emergency', 'How quickly', 'drivers verified', 'provide the car'],
   'night-safety-driver': ['available at night', 'drivers verified', 'How quickly', 'payment methods'],
   'airport-outstation': ['Local and Outstation', 'How quickly', 'extend my booking', 'provide the car'],
+  'monthly-driver': ['drivers verified', 'provide the car', 'payment methods'],
+  'wedding-event-driver': ['drivers verified', 'available at night', 'payment methods'],
+  'one-way-car-drop': ['drivers verified', 'provide the car', 'payment methods'],
 };
 
 export default async function ServicePage({ params }: Props) {
@@ -57,7 +60,13 @@ export default async function ServicePage({ params }: Props) {
   ];
 
   const needles = FAQ_NEEDLES[service.slug] ?? [];
-  const serviceFaqs = faqs.filter((f) => needles.some((n) => f.q.includes(n)));
+  /* The service's own questions first — they are the ones a searcher on this page
+     is actually asking — then the general ones that apply to it. */
+  const serviceFaqs = [
+    ...(service.faqs ?? []),
+    ...faqs.filter((f) => needles.some((n) => f.q.includes(n))),
+  ];
+  const quote = service.quote;
 
   return (
     <>
@@ -73,7 +82,7 @@ export default async function ServicePage({ params }: Props) {
               <span className="tabular">{formatPhone(site.phone)}</span>
             </ButtonAnchor>
             <ButtonLink href="/book/" variant="outline" size="lg">
-              Book this service
+              {quote ? 'Ask for a quote' : 'Book this service'}
             </ButtonLink>
           </>
         }
@@ -90,20 +99,49 @@ export default async function ServicePage({ params }: Props) {
         </ul>
       </Section>
 
-      <Section
-        tone="subtle"
-        id="pricing"
-        eyebrow="Pricing"
-        title="What it costs"
-        lede="Fixed when you book — the driver's charge only, no surge and no hidden extras. You provide the vehicle and fuel."
-      >
-        <PricingCards compact />
-        <div className="mt-8">
-          <ButtonLink href="/pricing/" variant="outline">
-            Full price list and extras
-          </ButtonLink>
-        </div>
-      </Section>
+      {quote ? (
+        /* Quote-priced services are not sold at the hourly rates, so showing the
+           hourly cards here would quote the wrong product. */
+        <Section tone="subtle" id="pricing" eyebrow="Pricing" title={quote.title} lede={quote.body}>
+          <h3 className="font-display text-lg font-semibold">What the price depends on</h3>
+          <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+            {quote.factors.map((factor) => (
+              <li key={factor} className="flex gap-3 text-[0.9375rem]">
+                <CheckIcon className="text-success mt-0.5 size-5 shrink-0" />
+                <span className="text-fg-muted">{factor}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-fg-muted mt-6 max-w-2xl text-[0.9375rem]">
+            The driver&apos;s charge only — you provide the vehicle and fuel, as with every
+            DriveBuddy booking. No surge and no hidden extras once the price is agreed.
+          </p>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+            <ButtonAnchor href={telHref}>
+              <PhoneIcon className="size-5" />
+              Call for a quote
+            </ButtonAnchor>
+            <ButtonLink href="/book/" variant="outline">
+              Send your details
+            </ButtonLink>
+          </div>
+        </Section>
+      ) : (
+        <Section
+          tone="subtle"
+          id="pricing"
+          eyebrow="Pricing"
+          title="What it costs"
+          lede="Fixed when you book — the driver's charge only, no surge and no hidden extras. You provide the vehicle and fuel."
+        >
+          <PricingCards compact />
+          <div className="mt-8">
+            <ButtonLink href="/pricing/" variant="outline">
+              Full price list and extras
+            </ButtonLink>
+          </div>
+        </Section>
+      )}
 
       <Section
         id="cities"
@@ -131,10 +169,17 @@ export default async function ServicePage({ params }: Props) {
         </Section>
       )}
 
-      <ClosingCTA
-        title={`Book ${service.title.toLowerCase()} in about 30 minutes`}
-        lede="Call now or send your pickup details — a police-verified, sober driver reaches you fast, any time of day or night."
-      />
+      {quote ? (
+        <ClosingCTA
+          title={`Get a fixed price for a ${service.title.toLowerCase()}`}
+          lede="Call now or send your details — we come back with one fixed figure and a police-verified, sober driver."
+        />
+      ) : (
+        <ClosingCTA
+          title={`Book ${service.title.toLowerCase()} in about 30 minutes`}
+          lede="Call now or send your pickup details — a police-verified, sober driver reaches you fast, any time of day or night."
+        />
+      )}
 
       <JsonLd data={serviceSchema(service.slug)} />
       <JsonLd data={breadcrumbSchema(trail)} />

@@ -16,7 +16,7 @@ import { ButtonLink } from '@/components/ui/Button';
 import { Container, Section } from '@/components/ui/Section';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { ArrowRightIcon } from '@/components/icons';
-import { faqs, stats } from '@/lib/content';
+import { faqs, services, stats } from '@/lib/content';
 import { driverServiceSchema, faqSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { site } from '@/lib/site';
@@ -95,9 +95,24 @@ export default function HomePage() {
         id="services"
         eyebrow="What we do"
         title="A driver for every kind of journey"
-        lede="Four services, one standard of driver. Pick the one that matches your day."
+        lede="One standard of driver, whatever the booking. Pick the one that matches your day."
       >
         <ServicesGrid />
+        {/* The quote-priced services, as plain links: they get crawlable anchors with
+            their own names from the strongest page on the site without breaking the
+            two-by-two grid above. */}
+        <div className="border-border mt-6 rounded-2xl border p-5 sm:p-6">
+          <p className="text-eyebrow text-fg-subtle uppercase">Also available</p>
+          <ul className="mt-3 flex flex-col gap-x-8 gap-y-1 sm:flex-row sm:flex-wrap">
+            {services
+              .filter((s) => s.extra)
+              .map((s) => (
+                <li key={s.slug}>
+                  <MoreLink href={`/services/${s.slug}/`}>{s.title}</MoreLink>
+                </li>
+              ))}
+          </ul>
+        </div>
         <div className="mt-8">
           <MoreLink href="/services/">See what each service includes</MoreLink>
         </div>

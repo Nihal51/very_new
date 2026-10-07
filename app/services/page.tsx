@@ -16,9 +16,9 @@ import { formatPhone, site, telHref } from '@/lib/site';
 const trail = [{ name: 'Services', path: '/services/' }];
 
 export const metadata: Metadata = pageMeta({
-  title: 'Personal, Medical, Night & Airport Drivers',
+  title: 'Hourly, Monthly, Wedding & Outstation Drivers',
   description:
-    'Hire a driver by the hour or full day — personal, hospital, night-safety (8 PM–6 AM), airport and outstation trips. Verified, sober, trained.',
+    'Hire a driver by the hour, day or month — personal, hospital, night, airport, outstation, wedding and one-way car drops. Verified, sober drivers.',
   path: '/services/',
 });
 
@@ -28,7 +28,7 @@ export default function ServicesPage() {
       <PageHero
         eyebrow="Services"
         title="Driver services for every journey"
-        lede="One standard of driver — police verified, breath tested and trained — across four kinds of booking. You keep your own car; we supply someone you can trust to drive it."
+        lede="One standard of driver — police verified, breath tested and trained — for every kind of booking, by the hour, the day or the month. You keep your own car; we supply someone you can trust to drive it."
         trail={trail}
         actions={
           <>
@@ -45,6 +45,15 @@ export default function ServicesPage() {
 
       <Section id="all-services" title="What each service includes" headingLevel={2}>
         <ServicesGrid detailed />
+      </Section>
+
+      <Section
+        id="more-services"
+        eyebrow="Quoted to your plan"
+        title="Monthly, wedding and one-way drivers"
+        lede="Longer or one-off jobs that the hourly rates do not fit. Tell us the plan and we quote one fixed price before anything starts."
+      >
+        <ServicesGrid detailed group="extra" />
       </Section>
 
       <Section

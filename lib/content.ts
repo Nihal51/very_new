@@ -20,6 +20,20 @@ export type Service = {
   metaDescription: string;
   badge?: string;
   includes: string[];
+  /**
+   * The newer, quote-priced services. They get their own row on /services and a
+   * "Also available" strip on the home page instead of a full card, so the four
+   * hourly services keep the home page's two-by-two grid.
+   */
+  extra?: boolean;
+  /**
+   * Set for services that are not sold at the hourly rates: the landing page then
+   * shows how the quote is worked out instead of the hourly price cards, which
+   * would quote the wrong product.
+   */
+  quote?: { title: string; body: string; factors: string[] };
+  /** Questions specific to this service — shown first on its page and in its FAQPage markup. */
+  faqs?: Faq[];
 };
 
 export const services: Service[] = [
@@ -93,6 +107,122 @@ export const services: Service[] = [
       'Meet-and-greet at arrivals',
       'Highway-experienced drivers',
       'Night halts arranged on request',
+    ],
+  },
+  {
+    slug: 'monthly-driver',
+    icon: 'calendar',
+    title: 'Monthly Driver',
+    short: 'A regular verified driver for your own car, on a monthly plan.',
+    body: 'A dedicated driver for your own car on a monthly arrangement — the office commute, school runs, parents’ appointments and weekend errands, with the same person behind the wheel day after day. You agree the hours and days up front, and the driver is verified exactly like every other DriveBuddy driver before they start.',
+    heading: 'Monthly and permanent driver for your car',
+    metaTitle: 'Monthly Driver on Hire — Permanent Car Driver',
+    metaDescription:
+      'Hire a monthly or permanent driver for your own car in Raipur, Bhilai, Durg and Bilaspur. Police-verified, sober, 5+ years experience, on your schedule.',
+    badge: 'Monthly plan',
+    extra: true,
+    includes: [
+      'A regular driver for your daily routine',
+      'Hours and days agreed before the first day',
+      'Police-verified, with 5+ years of experience',
+      'Comfortable with manual and automatic',
+    ],
+    quote: {
+      title: 'Priced to your schedule',
+      body: 'A monthly plan is quoted on how much of the driver’s time you need. Tell us your routine on the phone and you get one fixed monthly figure before anything starts.',
+      factors: [
+        'Hours per day',
+        'Days per week',
+        'Early-morning or night duty',
+        'Regular outstation trips, if any',
+      ],
+    },
+    faqs: [
+      {
+        q: 'Can I hire a permanent driver through DriveBuddy?',
+        a: 'Yes. A monthly plan gives you a regular driver for your own car on the hours and days you choose. Call 9111473929 with your routine and we will quote a fixed monthly price.',
+      },
+      {
+        q: 'How is a monthly driver priced?',
+        a: 'On the hours per day and days per week you need, plus any night duty or regular outstation trips. You get one fixed monthly figure before the driver starts.',
+      },
+    ],
+  },
+  {
+    slug: 'wedding-event-driver',
+    icon: 'star',
+    title: 'Wedding & Event Driver',
+    short: 'Drivers for the baraat, guest pickups and late-night drops after the function.',
+    body: 'Weddings and family functions need more drivers than any family has. We supply verified, sober drivers for the baraat and family cars, guest pickups from the station and airport, and safe drops after a late function — so the people who would otherwise be driving can enjoy the day.',
+    heading: 'Drivers for weddings and family functions',
+    metaTitle: 'Wedding and Event Driver on Hire',
+    metaDescription:
+      'Hire verified, sober drivers for weddings, baraat cars, guest pickups and functions in Raipur, Bhilai, Durg and Bilaspur. One car or several.',
+    badge: 'Book ahead',
+    extra: true,
+    includes: [
+      'Drivers for the baraat and family cars',
+      'Guest pickups from the station and airport',
+      'Safe drops after a late function',
+      'Breath-tested before duty, zero alcohol',
+    ],
+    quote: {
+      title: 'Quoted for your event',
+      body: 'Every function is different, so we quote it as a whole once we know the plan. In the wedding season, book a few days ahead so we can hold enough drivers for every car.',
+      factors: [
+        'Number of cars that need a driver',
+        'Hours per driver',
+        'Late-night drops',
+        'Travel between venues or towns',
+      ],
+    },
+    faqs: [
+      {
+        q: 'Can I book drivers for a wedding?',
+        a: 'Yes. Tell us the date, how many cars need a driver and the timings — baraat, guest pickups, late-night drops — and we will quote the whole event and assign a verified driver to each car.',
+      },
+      {
+        q: 'How early should I book a wedding driver?',
+        a: 'As early as you can, especially in the wedding season. A few days’ notice lets us hold enough drivers for every car.',
+      },
+    ],
+  },
+  {
+    slug: 'one-way-car-drop',
+    icon: 'route',
+    title: 'One-Way Car Drop',
+    short: 'Our driver takes your car to another city, then makes their own way back.',
+    body: 'Need your car in another city without driving it there yourself? A verified driver delivers it — to a new posting, to family in another town, or to meet you at the end of a trip — and then makes their own way back. Ride along, or send the car on its own.',
+    heading: 'One-way car drop to another city',
+    metaTitle: 'One-Way Car Drop Driver, Outstation',
+    metaDescription:
+      'A verified driver takes your car one way to another city from Raipur, Bhilai, Durg or Bilaspur, then returns on their own. Ride along or send the car alone.',
+    badge: 'One way',
+    extra: true,
+    includes: [
+      'Your car driven to the city you need',
+      'Ride along, or send the car on its own',
+      'Highway-experienced drivers',
+      'The driver arranges their own way back',
+    ],
+    quote: {
+      title: 'Quoted per trip',
+      body: 'A one-way drop is priced on the distance and the driver’s journey back. You get the full figure on the call, before the driver sets off.',
+      factors: [
+        'Distance to the destination',
+        'The driver’s journey back',
+        'Day or night travel',
+      ],
+    },
+    faqs: [
+      {
+        q: 'Can a driver take my car to another city without me?',
+        a: 'Yes. With a one-way car drop, a verified driver delivers your car to the address you give and then returns on their own. Call 9111473929 with the pickup, the destination and the date for a quote.',
+      },
+      {
+        q: 'Is the driver’s return journey included in the price?',
+        a: 'Yes. The quote you get on the call covers the drive and the driver’s way back, so there is one figure and nothing extra to settle at the other end.',
+      },
     ],
   },
 ];

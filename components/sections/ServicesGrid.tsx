@@ -6,16 +6,31 @@ import { services } from '@/lib/content';
 
 /**
  * Service cards. `detailed` adds the full body copy and the includes list, used
- * on /services; the home page shows the short version.
+ * on /services; the home page shows the short version. `group` picks the four
+ * hourly services (the default) or the quote-priced extras.
  */
-export function ServicesGrid({ detailed = false }: { detailed?: boolean }) {
+export function ServicesGrid({
+  detailed = false,
+  group = 'core',
+}: {
+  detailed?: boolean;
+  group?: 'core' | 'extra';
+}) {
+  const shown = services.filter((s) => (group === 'extra' ? s.extra : !s.extra));
+  const columns =
+    group === 'extra'
+      ? 'grid gap-5 md:grid-cols-2 lg:grid-cols-3'
+      : detailed
+        ? 'grid gap-5 lg:grid-cols-2'
+        : 'grid gap-5 sm:grid-cols-2';
+
   return (
-    <div className={detailed ? 'grid gap-5 lg:grid-cols-2' : 'grid gap-5 sm:grid-cols-2'}>
-      {services.map((service) => (
+    <div className={columns}>
+      {shown.map((service) => (
         <Card
           key={service.slug}
           id={detailed ? service.slug : undefined}
-          className={detailed ? 'scroll-mt-28' : 'flex h-full flex-col'}
+          className={detailed && group === 'core' ? 'scroll-mt-28' : 'flex h-full flex-col scroll-mt-28'}
         >
           <div className="reveal">
             <div className="flex items-start justify-between gap-4">
@@ -31,7 +46,7 @@ export function ServicesGrid({ detailed = false }: { detailed?: boolean }) {
             </p>
 
             {detailed && (
-              <ul className="mt-5 grid gap-2.5 sm:grid-cols-2">
+              <ul className={`mt-5 grid gap-2.5${group === 'core' ? ' sm:grid-cols-2' : ''}`}>
                 {service.includes.map((item) => (
                   <li key={item} className="flex gap-2.5 text-sm">
                     <CheckIcon className="text-success mt-0.5 size-4 shrink-0" />
@@ -45,10 +60,10 @@ export function ServicesGrid({ detailed = false }: { detailed?: boolean }) {
           <Link
             href={`/services/${service.slug}/`}
             className={`text-accent-text ease-out-quart inline-flex min-h-11 items-end gap-1.5 rounded-lg pt-5 text-sm font-semibold transition-[gap] duration-150 hover:gap-2.5${
-              detailed ? '' : ' mt-auto'
+              detailed && group === 'core' ? '' : ' mt-auto'
             }`}
           >
-            {detailed ? 'Full details and pricing' : "What's included"}
+            {service.quote ? 'How it works and pricing' : detailed ? 'Full details and pricing' : "What's included"}
             <ArrowRightIcon className="size-4" />
           </Link>
         </Card>
