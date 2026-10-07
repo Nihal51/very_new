@@ -34,7 +34,16 @@ function body(): string {
     '',
     ...plans.map((p) => `- ${p.name}: ${p.price} ${p.unit}`),
     '- Night driver, 8 PM to 6 AM: from ₹500',
-    '- Monthly driver, wedding and event drivers, one-way car drop: quoted on the call',
+    ...services
+      .filter((s) => s.priceRange)
+      .map(
+        (s) =>
+          `- ${s.title}: ₹${s.priceRange!.min.toLocaleString('en-IN')}–${s.priceRange!.max.toLocaleString('en-IN')} per ${s.priceRange!.per} (local duty)`,
+      ),
+    `- ${services
+      .filter((s) => s.quote && !s.priceRange)
+      .map((s) => s.title)
+      .join(', ')}: quoted on the call`,
     '',
     '## Services',
     '',

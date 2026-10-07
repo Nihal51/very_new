@@ -32,6 +32,12 @@ export type Service = {
    * would quote the wrong product.
    */
   quote?: { title: string; body: string; factors: string[] };
+  /**
+   * A published price range, for services that have one. Feeds the Offer in the
+   * service's JSON-LD and /llms.txt, so the number a search engine or an assistant
+   * quotes is the one on the page. Figures confirmed by the owner — do not estimate.
+   */
+  priceRange?: { min: number; max: number; per: 'month' };
   /** Questions specific to this service — shown first on its page and in its FAQPage markup. */
   faqs?: Faq[];
 };
@@ -113,12 +119,12 @@ export const services: Service[] = [
     slug: 'monthly-driver',
     icon: 'calendar',
     title: 'Monthly Driver',
-    short: 'A regular verified driver for your own car, on a monthly plan.',
+    short: 'A regular verified driver for your own car — ₹16,000 to ₹20,000 a month.',
     body: 'A dedicated driver for your own car on a monthly arrangement — the office commute, school runs, parents’ appointments and weekend errands, with the same person behind the wheel day after day. You agree the hours and days up front, and the driver is verified exactly like every other DriveBuddy driver before they start.',
     heading: 'Monthly and permanent driver for your car',
     metaTitle: 'Monthly Driver on Hire — Permanent Car Driver',
     metaDescription:
-      'Hire a monthly or permanent driver for your own car in Raipur, Bhilai, Durg and Bilaspur. Police-verified, sober, 5+ years experience, on your schedule.',
+      'Monthly or permanent driver for your own car in Raipur, Bhilai, Durg and Bilaspur — ₹16,000 to ₹20,000 a month. Police-verified, sober, 5+ years experience.',
     badge: 'Monthly plan',
     extra: true,
     includes: [
@@ -127,14 +133,14 @@ export const services: Service[] = [
       'Police-verified, with 5+ years of experience',
       'Comfortable with manual and automatic',
     ],
+    priceRange: { min: 16000, max: 20000, per: 'month' },
     quote: {
-      title: 'Priced to your schedule',
-      body: 'A monthly plan is quoted on how much of the driver’s time you need. Tell us your routine on the phone and you get one fixed monthly figure before anything starts.',
+      title: '₹16,000 to ₹20,000 a month',
+      body: 'That is the range for local duty — driving within your city. Where your plan falls depends mainly on the driver’s age and experience. Tell us your routine on the phone and you get one fixed monthly figure before the driver starts.',
       factors: [
-        'Hours per day',
-        'Days per week',
-        'Early-morning or night duty',
-        'Regular outstation trips, if any',
+        'The driver’s age and experience',
+        'Your daily hours and days off, agreed up front',
+        'Outstation trips, charged separately',
       ],
     },
     faqs: [
@@ -143,8 +149,8 @@ export const services: Service[] = [
         a: 'Yes. A monthly plan gives you a regular driver for your own car on the hours and days you choose. Call 9111473929 with your routine and we will quote a fixed monthly price.',
       },
       {
-        q: 'How is a monthly driver priced?',
-        a: 'On the hours per day and days per week you need, plus any night duty or regular outstation trips. You get one fixed monthly figure before the driver starts.',
+        q: 'How much does a monthly driver cost?',
+        a: '₹16,000 to ₹20,000 a month for local duty, depending mainly on the driver’s age and experience. Outstation trips are charged separately. You get one fixed monthly figure before the driver starts.',
       },
     ],
   },
@@ -315,6 +321,16 @@ export const extraRates = [
     detail: 'Priority dispatch — call us directly',
     price: 'On call',
   },
+  {
+    label: 'Monthly driver',
+    detail: 'Per month, local duty — by driver experience',
+    price: '₹16,000–20,000',
+  },
+  {
+    label: 'Wedding & event drivers',
+    detail: 'Per event — by cars and hours',
+    price: 'On call',
+  },
 ];
 
 /* --------------------------------------------------------------- packages  */
@@ -327,7 +343,7 @@ export const bookingPackages = [
   { value: 'outstation', label: 'Outstation Trip — ₹1200–1500' },
   { value: 'night-driver', label: 'Night Driver, 8 PM – 6 AM — from ₹500' },
   { value: 'medical-emergency', label: 'Hospital / Emergency — priority' },
-  { value: 'monthly-driver', label: 'Monthly Driver — quoted on call' },
+  { value: 'monthly-driver', label: 'Monthly Driver — ₹16,000–20,000 a month' },
   { value: 'wedding-event', label: 'Wedding / Event Drivers — quoted on call' },
   { value: 'one-way-drop', label: 'One-Way Car Drop — quoted on call' },
 ] as const;
@@ -556,7 +572,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'How much does it cost to hire a driver?',
-    a: 'DriveBuddy charges ₹300 for one hour, ₹600 for three hours, ₹1000–1200 for a local full day of eight hours and ₹1200–1500 for an outstation trip; the night driver (8 PM to 6 AM) starts from ₹500. Monthly drivers, wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel.',
+    a: 'DriveBuddy charges ₹300 for one hour, ₹600 for three hours, ₹1000–1200 for a local full day of eight hours and ₹1200–1500 for an outstation trip; the night driver (8 PM to 6 AM) starts from ₹500. A monthly driver costs ₹16,000–20,000 a month for local duty; wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel.',
   },
   {
     q: 'How quickly will a driver arrive?',
@@ -592,7 +608,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can I hire a monthly or permanent driver?',
-    a: 'Yes. A monthly plan gives you a regular, verified driver for your own car on the hours and days you choose. Call 9111473929 with your routine and we quote one fixed monthly price.',
+    a: 'Yes. A monthly plan gives you a regular, verified driver for your own car on the hours and days you choose, for ₹16,000 to ₹20,000 a month for local duty depending on the driver’s age and experience. Call 9111473929 with your routine and we quote one fixed monthly price.',
   },
   {
     q: 'Do you provide drivers for weddings and events?',

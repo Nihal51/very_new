@@ -119,7 +119,7 @@ export default async function ServicePage({ params }: Props) {
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <ButtonAnchor href={telHref}>
               <PhoneIcon className="size-5" />
-              Call for a quote
+              {service.priceRange ? 'Call for your exact price' : 'Call for a quote'}
             </ButtonAnchor>
             <ButtonLink href="/book/" variant="outline">
               Send your details

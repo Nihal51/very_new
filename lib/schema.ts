@@ -231,7 +231,25 @@ export function servicesSchema() {
       provider: { '@id': ORG_ID },
       areaServed: SERVICE_AREA,
       audience: { '@type': 'Audience', audienceType: 'Car owners' },
+      ...(s.priceRange && { offers: rangeOffer(s.priceRange) }),
     })),
+  };
+}
+
+/** Offer for a service with a published price range, e.g. ₹16,000–20,000 a month. */
+function rangeOffer(range: NonNullable<(typeof services)[number]['priceRange']>) {
+  return {
+    '@type': 'Offer',
+    priceCurrency: 'INR',
+    priceSpecification: {
+      '@type': 'UnitPriceSpecification',
+      minPrice: range.min,
+      maxPrice: range.max,
+      priceCurrency: 'INR',
+      unitCode: 'MON',
+      unitText: range.per,
+    },
+    areaServed: SERVICE_AREA,
   };
 }
 
@@ -250,6 +268,7 @@ export function serviceSchema(slug: string) {
     provider: { '@id': ORG_ID },
     areaServed: SERVICE_AREA,
     audience: { '@type': 'Audience', audienceType: 'Car owners' },
+    ...(service.priceRange && { offers: rangeOffer(service.priceRange) }),
   };
 }
 
