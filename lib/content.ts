@@ -665,6 +665,10 @@ export function getCity(slug: string): City | undefined {
 
 /* ------------------------------------------------------------ testimonials */
 
+/* These customers gave their feedback in Hindi or simple English; the owner asked
+   (7 Oct 2026) for it to be written in plain, everyday English — the earlier
+   versions read like advertising copy. Same people, same facts, nothing added:
+   only the wording is simpler. The page says so under the cards. */
 export type Testimonial = {
   quote: string;
   /**
@@ -681,24 +685,24 @@ export type Testimonial = {
 export const testimonials: Testimonial[] = [
   {
     quote:
-      'The driver arrived in under 25 minutes. Polite, sober, and drove perfectly. My elderly mother felt completely safe the entire time — we will book again.',
-    highlight: 'Polite, sober, and drove perfectly.',
+      'The driver came in less than 25 minutes. He was polite, sober and drove very well. My mother is old, and she felt safe the whole time. We will book again.',
+    highlight: 'He was polite, sober and drove very well.',
     name: 'Ramesh Sahu',
     city: 'Raipur',
     initial: 'R',
   },
   {
     quote:
-      'Perfect for hospital visits with elderly parents. The driver waited patiently for three hours without a single complaint. Genuinely professional service.',
-    highlight: 'The driver waited patiently for three hours without a single complaint.',
+      'Very good for taking my old parents to the hospital. The driver waited 3 hours and did not complain even once. Very professional.',
+    highlight: 'The driver waited 3 hours and did not complain even once.',
     name: 'Anjali Mishra',
     city: 'Bhilai',
     initial: 'A',
   },
   {
     quote:
-      'The airport pickup was seamless. The driver tracked my flight and was waiting before I even reached arrivals. Family travel has never been this easy.',
-    highlight: 'The driver tracked my flight and was waiting before I even reached arrivals.',
+      'Airport pickup was smooth. The driver kept checking my flight time and was already waiting when I came out. Travelling with family was very easy.',
+    highlight: 'The driver kept checking my flight time and was already waiting when I came out.',
     name: 'Priya Khanna',
     city: 'Durg',
     initial: 'P',

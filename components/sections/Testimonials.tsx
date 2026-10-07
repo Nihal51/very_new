@@ -79,6 +79,10 @@ export function Testimonials() {
         ))}
       </ul>
 
+      <p className="text-fg-subtle mt-4 text-sm">
+        Customers shared these with us in their own words; we have written them in simple English.
+      </p>
+
       <div className="border-border bg-bg-subtle mt-8 flex flex-col gap-5 rounded-2xl border p-6 sm:p-7 lg:flex-row lg:items-center lg:justify-between">
         <div className="max-w-xl">
           <p className="font-display text-lg font-semibold">Booked a DriveBuddy driver?</p>
