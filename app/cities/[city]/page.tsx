@@ -36,8 +36,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!city) return {};
 
   return pageMeta({
-    title: `Driver on Hire in ${city.name} — Hourly, Full Day, 24/7`,
-    description: `Hire a police-verified driver in ${city.name} — hourly, full day or night. 30-min arrival, 24/7, from ${priceText.startingFrom}. Serving ${city.areas[0]} and more.`,
+    title: `Driver in ${city.name} — Hire a Verified Driver 24/7`,
+    description: `Need a driver near you in ${city.name}? A police-verified, sober driver for your own car — hourly, full day, monthly or night. About 30 min, 24/7, from ${priceText.startingFrom}.`,
     path: `/cities/${city.slug}/`,
     languages: { en: `/cities/${city.slug}/`, hi: `/hi/cities/${city.slug}/` },
     ogImageAlt: `${site.name} — verified drivers in ${city.name}`,
@@ -56,6 +56,14 @@ export default async function CityPage({ params }: Props) {
   const city = getCity(slug);
   if (!city) notFound();
 
+  const localFaqs = [
+    {
+      q: `How do I find a driver near me in ${city.name}?`,
+      a: `Call ${formatPhone(site.phone)} or fill in the form on this page. DriveBuddy sends the nearest police-verified driver to your address in ${city.name} — usually in about 30 minutes, at any hour. Areas we are booked in most: ${city.areas.slice(0, 6).join(', ')}.`,
+    },
+    ...cityFaqs,
+  ];
+
   const trail = [
     { name: 'Cities', path: '/cities/' },
     { name: city.name, path: `/cities/${city.slug}/` },
@@ -65,7 +73,7 @@ export default async function CityPage({ params }: Props) {
     <>
       <PageHero
         eyebrow={`${city.name} · ${city.badge}`}
-        title={`Drivers on call in ${city.name}`}
+        title={`Hire a driver in ${city.name}, 24/7`}
         lede={city.intro}
         trail={trail}
         actions={
@@ -192,7 +200,7 @@ export default async function CityPage({ params }: Props) {
       </Section>
 
       <Section id="faq" eyebrow="Questions" title={`Booking a driver in ${city.name}`}>
-        <Accordion items={cityFaqs} name="city-faq" defaultOpenFirst />
+        <Accordion items={localFaqs} name="city-faq" defaultOpenFirst />
         <div className="mt-8">
           <ButtonLink href="/faq/" variant="outline">
             All questions answered
@@ -206,7 +214,7 @@ export default async function CityPage({ params }: Props) {
       />
 
       <JsonLd data={citySchema(city.slug)} />
-      <JsonLd data={faqSchema(cityFaqs)} />
+      <JsonLd data={faqSchema(localFaqs)} />
       <JsonLd data={breadcrumbSchema(trail)} />
     </>
   );

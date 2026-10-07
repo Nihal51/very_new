@@ -28,7 +28,7 @@ import { site } from '@/lib/site';
    /cities/<city>/ and the job queries to /drivers/ — one page per intent, so
    they never compete with each other for the same result. */
 export const metadata: Metadata = pageMeta({
-  title: `Driver Service in ${site.region} — 24/7 in 30 Min · ${site.name}`,
+  title: `Driver in Raipur, Bhilai, Durg & Bilaspur — 24/7 · ${site.name}`,
   description:
     `${site.name} provides verified, sober drivers on call across ${site.region} — Raipur, Bhilai, Durg and Bilaspur. At your door in 30 minutes, 24/7, from ${priceText.oneHour} an hour.`,
   path: '/',
