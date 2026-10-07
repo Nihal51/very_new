@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/Badge';
 import { ButtonAnchor, ButtonLink } from '@/components/ui/Button';
 import { Container } from '@/components/ui/Section';
 import { HeroDispatch } from '@/components/sections/HeroDispatch';
+import { LanguageLink } from '@/components/hi/HindiBlocks';
 import {
   CertificateIcon,
   ClockIcon,
@@ -76,6 +77,8 @@ export function HomeHero() {
               </li>
             ))}
           </ul>
+
+          <LanguageLink href="/hi/" lang="hi" label="हिंदी में पढ़ें" className="mt-8 text-white/70" />
           </div>
 
           {/* Desktop only: the card fills the hero's right column from lg up.

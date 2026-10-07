@@ -5,13 +5,22 @@ import { cn } from '@/lib/cn';
 export type Crumb = { name: string; path: string };
 
 /** Visual breadcrumb. The matching BreadcrumbList JSON-LD is emitted by each page. */
-export function Breadcrumbs({ trail, className }: { trail: Crumb[]; className?: string }) {
+export function Breadcrumbs({
+  trail,
+  className,
+  home = { name: 'Home', path: '/' },
+}: {
+  trail: Crumb[];
+  className?: string;
+  /** The first crumb — the Hindi pages start from /hi/, not the English home. */
+  home?: Crumb;
+}) {
   return (
     <nav aria-label="Breadcrumb" className={className}>
       <ol className="text-fg-subtle flex flex-wrap items-center gap-1.5 text-sm">
         <li>
-          <Link href="/" className="hover:text-fg-muted rounded-lg">
-            Home
+          <Link href={home.path} className="hover:text-fg-muted rounded-lg">
+            {home.name}
           </Link>
         </li>
         {trail.map((crumb, i) => {
@@ -45,6 +54,7 @@ export function PageHero({
   title,
   lede,
   trail,
+  home,
   actions,
   children,
   className,
@@ -53,6 +63,7 @@ export function PageHero({
   title: string;
   lede?: string;
   trail?: Crumb[];
+  home?: Crumb;
   actions?: React.ReactNode;
   children?: React.ReactNode;
   className?: string;
@@ -60,7 +71,7 @@ export function PageHero({
   return (
     <div className={cn('border-border bg-bg-subtle border-b', className)}>
       <Container className="py-10 sm:py-14 lg:py-16">
-        {trail && <Breadcrumbs trail={trail} className="mb-6" />}
+        {trail && <Breadcrumbs trail={trail} home={home} className="mb-6" />}
         {eyebrow && <p className="text-eyebrow text-accent-text uppercase">{eyebrow}</p>}
         <h1 className={cn('text-display-lg max-w-4xl', eyebrow && 'mt-3')}>{title}</h1>
         {lede && <p className="text-lede text-fg-muted measure mt-4">{lede}</p>}

@@ -31,6 +31,7 @@ export const metadata: Metadata = pageMeta({
   description:
     `${site.name} provides verified, sober drivers on call across ${site.region} — Raipur, Bhilai, Durg and Bilaspur. At your door in 30 minutes, 24/7, from ₹300 an hour.`,
   path: '/',
+  languages: { en: '/', hi: '/hi/' },
 });
 
 /** Small text link with a trailing arrow — used to send readers to the full page. */

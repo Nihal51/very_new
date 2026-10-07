@@ -31,11 +31,17 @@ const CORE: ReadonlyArray<Pick<Entry, 'url' | 'changeFrequency' | 'priority'>> =
   { url: '/terms/', changeFrequency: 'yearly', priority: 0.3 },
 ];
 
+/** hreflang for an English/Hindi pair — the same block on both entries. */
+const pair = (en: string, hi: string): Entry['alternates'] => ({
+  languages: { 'en-IN': `${site.url}${en}`, 'hi-IN': `${site.url}${hi}` },
+});
+
 export default function sitemap(): MetadataRoute.Sitemap {
   const core: Entry[] = CORE.map((entry) => ({
     ...entry,
     url: `${site.url}${entry.url}`,
     lastModified: LAST_MODIFIED,
+    ...(entry.url === '/' && { alternates: pair('/', '/hi/') }),
   }));
 
   const cityPages: Entry[] = cities.map((city) => ({
@@ -43,6 +49,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     lastModified: LAST_MODIFIED,
     changeFrequency: 'weekly',
     priority: 0.9,
+    alternates: pair(`/cities/${city.slug}/`, `/hi/cities/${city.slug}/`),
   }));
 
   const servicePages: Entry[] = services.map((service) => ({
@@ -52,5 +59,26 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.8,
   }));
 
-  return [...core, ...cityPages, ...servicePages];
+  /* Hindi pages. Each pair carries the same hreflang block on both entries, as
+     Google requires; the pages repeat it in their own <head>. */
+  const hindiPages: Entry[] = [
+    {
+      url: `${site.url}/hi/`,
+      lastModified: LAST_MODIFIED,
+      changeFrequency: 'weekly',
+      priority: 0.9,
+      alternates: pair('/', '/hi/'),
+    },
+    ...cities.map(
+      (city): Entry => ({
+        url: `${site.url}/hi/cities/${city.slug}/`,
+        lastModified: LAST_MODIFIED,
+        changeFrequency: 'weekly',
+        priority: 0.8,
+        alternates: pair(`/cities/${city.slug}/`, `/hi/cities/${city.slug}/`),
+      }),
+    ),
+  ];
+
+  return [...core, ...cityPages, ...servicePages, ...hindiPages];
 }

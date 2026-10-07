@@ -11,12 +11,22 @@ export function pageMeta({
   path,
   ogImageAlt,
   noIndex = false,
+  languages,
+  locale = site.locale,
 }: {
   title: string;
   description: string;
   path: string;
   ogImageAlt?: string;
   noIndex?: boolean;
+  /**
+   * Paths of this page's English and Hindi versions, when it has both. Both pages
+   * of a pair must pass the same two paths: hreflang only counts when the pages
+   * point at each other. x-default goes to English.
+   */
+  languages?: { en: string; hi: string };
+  /** Open Graph locale — `hi_IN` on the Hindi pages. */
+  locale?: string;
 }): Metadata {
   /* Built by concatenation, not `new URL(path, site.url)`. An absolute pathname
      resets the base's own path, so on a sub-path deployment (GitHub Pages
@@ -32,12 +42,21 @@ export function pageMeta({
   return {
     title: resolvedTitle,
     description,
-    alternates: { canonical: url },
+    alternates: {
+      canonical: url,
+      ...(languages && {
+        languages: {
+          'en-IN': `${site.url}${languages.en}`,
+          'hi-IN': `${site.url}${languages.hi}`,
+          'x-default': `${site.url}${languages.en}`,
+        },
+      }),
+    },
     ...(noIndex && { robots: { index: false, follow: true } }),
     openGraph: {
       type: 'website',
       siteName: site.name,
-      locale: site.locale,
+      locale,
       url,
       // `title` here is the full string, not the template — social cards have no
       // room for the suffix the browser tab uses.

@@ -13,7 +13,9 @@ import { ButtonAnchor, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Container, Section } from '@/components/ui/Section';
 import { BuildingIcon, ClockIcon, PhoneIcon, RouteIcon } from '@/components/icons';
+import { LanguageLink } from '@/components/hi/HindiBlocks';
 import { cities, faqs, getCity } from '@/lib/content';
+import { cityHi } from '@/lib/content-hi';
 import { breadcrumbSchema, citySchema, faqSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { formatPhone, site, telHref } from '@/lib/site';
@@ -36,6 +38,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title: `Driver on Hire in ${city.name} — Hourly, Full Day, 24/7`,
     description: `Hire a police-verified driver in ${city.name} — hourly, full day or night. 30-min arrival, 24/7, from ₹300. Serving ${city.areas[0]} and more.`,
     path: `/cities/${city.slug}/`,
+    languages: { en: `/cities/${city.slug}/`, hi: `/hi/cities/${city.slug}/` },
     ogImageAlt: `${site.name} — verified drivers in ${city.name}`,
   });
 }
@@ -75,7 +78,14 @@ export default async function CityPage({ params }: Props) {
             </ButtonLink>
           </>
         }
-      />
+      >
+        <LanguageLink
+          href={`/hi/cities/${city.slug}/`}
+          lang="hi"
+          label={`${cityHi(city.slug).name} में ड्राइवर — हिंदी में`}
+          className="text-fg-muted mt-5"
+        />
+      </PageHero>
 
       <Section
         id="coverage"
@@ -166,7 +176,7 @@ export default async function CityPage({ params }: Props) {
         id="services"
         eyebrow="Services"
         title={`Every service available in ${city.name}`}
-        lede="The same four bookings, the same verified drivers, at the same rates as everywhere else we operate."
+        lede="The same verified drivers at the same rates as everywhere else we operate — by the hour, the day or the month."
       >
         <ServicesGrid />
       </Section>

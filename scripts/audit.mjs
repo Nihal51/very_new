@@ -95,6 +95,7 @@ function walk(dir) {
 }
 
 const pages = walk(OUT).sort();
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
 if (pages.length === 0) {
   console.error('No HTML found in out/ — run `npm run build` first.');
   process.exit(1);
@@ -142,6 +143,28 @@ for (const file of pages) {
     if (!ogTitle) issues.push('no og:title');
     if (twitter !== 'summary_large_image') issues.push(`twitter:card "${twitter}"`);
     if (jsonLd < 1) issues.push('no JSON-LD');
+
+    /* hreflang only counts when it is reciprocal: every page a page names as its
+       other-language version must exist and must name this page back. A one-way
+       annotation is silently ignored by Google, so check both ends. */
+    for (const [, lang, href] of html.matchAll(
+      /<link rel="alternate" hreflang="([^"]+)" href="([^"]+)"/gi,
+    )) {
+      if (lang === 'x-default' || href === canonical) continue;
+      const target = path.join(OUT, new URL(href).pathname.replace(BASE_PATH, ''), 'index.html');
+      let other = '';
+      try {
+        other = readFileSync(target, 'utf8');
+      } catch {
+        issues.push(`hreflang ${lang} → ${href} does not exist`);
+        continue;
+      }
+      // x-default does not count as the link back — it points at English everywhere.
+      const back = [...other.matchAll(/<link rel="alternate" hreflang="([^"]+)" href="([^"]+)"/gi)]
+        .filter((m) => m[1] !== 'x-default')
+        .map((m) => m[2]);
+      if (!back.includes(canonical)) issues.push(`hreflang ${lang} → ${href} does not link back`);
+    }
   }
 
   for (const token of FORBIDDEN) {

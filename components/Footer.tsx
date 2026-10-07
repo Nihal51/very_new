@@ -136,6 +136,16 @@ export function Footer() {
                 Service area
               </Link>
             </li>
+            <li>
+              <Link
+                href="/hi/"
+                hrefLang="hi-IN"
+                lang="hi"
+                className="text-xs text-white/45 hover:text-white/80"
+              >
+                हिंदी
+              </Link>
+            </li>
           </ul>
         </div>
       </div>

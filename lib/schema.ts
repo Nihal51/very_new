@@ -148,7 +148,7 @@ export function websiteSchema() {
     name: site.name,
     alternateName: site.alternateName,
     url: abs('/'),
-    inLanguage: 'en-IN',
+    inLanguage: ['en-IN', 'hi-IN'],
     publisher: { '@id': ORG_ID },
   };
 }
@@ -372,12 +372,35 @@ export function aboutSchema() {
   };
 }
 
+/**
+ * A Hindi page as a WebPage in hi-IN about the same business. `translationOfWork`
+ * would be wrong (these are written pages, not translations of one work), so the
+ * English counterpart is tied in through the hreflang links instead.
+ */
+export function hindiPageSchema({ path, name, description }: { path: string; name: string; description: string }) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'WebPage',
+    '@id': `${abs(path)}#page`,
+    url: abs(path),
+    name,
+    description,
+    inLanguage: 'hi-IN',
+    isPartOf: { '@id': `${site.url}/#website` },
+    about: { '@id': ORG_ID },
+    publisher: { '@id': ORG_ID },
+  };
+}
+
 /** BreadcrumbList for every page below the root. */
-export function breadcrumbSchema(trail: readonly { name: string; path: string }[]) {
+export function breadcrumbSchema(
+  trail: readonly { name: string; path: string }[],
+  home: { name: string; path: string } = { name: 'Home', path: '/' },
+) {
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',
-    itemListElement: [{ name: 'Home', path: '/' }, ...trail].map((item, i) => ({
+    itemListElement: [home, ...trail].map((item, i) => ({
       '@type': 'ListItem',
       position: i + 1,
       name: item.name,
