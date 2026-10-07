@@ -144,9 +144,9 @@ export default function HomePage() {
 
       <Section
         id="reviews"
-        eyebrow="In their words"
+        eyebrow="Customer feedback"
         title="What families say about us"
-        lede={`Customers in ${reviewCities} on their DriveBuddy driver.`}
+        lede={`Real feedback from families in ${reviewCities}.`}
       >
         <Testimonials />
       </Section>

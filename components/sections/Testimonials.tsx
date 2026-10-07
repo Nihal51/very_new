@@ -83,8 +83,7 @@ export function Testimonials() {
         <div className="max-w-xl">
           <p className="font-display text-lg font-semibold">Booked a DriveBuddy driver?</p>
           <p className="text-fg-muted mt-1 text-[0.9375rem]">
-            Tell other families how it went. A few honest words on Google help the next family
-            choose with confidence — and help us get better.
+            Share your experience on Google. It helps other families find a driver they can trust.
           </p>
         </div>
         <div className="flex flex-col gap-3 sm:flex-row lg:shrink-0">
