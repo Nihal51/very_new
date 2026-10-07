@@ -31,7 +31,17 @@ export type Service = {
    * shows how the quote is worked out instead of the hourly price cards, which
    * would quote the wrong product.
    */
-  quote?: { title: string; body: string; factors: string[] };
+  quote?: {
+    title: string;
+    body: string;
+    factors: string[];
+    /**
+     * Pre-filled WhatsApp message with blanks for exactly what dispatch needs to
+     * price the job, so the first message already carries a quotable request
+     * instead of "hi, how much?".
+     */
+    whatsapp: string;
+  };
   /**
    * A published price range, for services that have one. Feeds the Offer in the
    * service's JSON-LD and /llms.txt, so the number a search engine or an assistant
@@ -142,6 +152,8 @@ export const services: Service[] = [
         'Your daily hours and days off, agreed up front',
         'Outstation trips, charged separately',
       ],
+      whatsapp:
+        'Hi DriveBuddy, I need a monthly driver.\nCity:\nDaily hours (e.g. 9 AM – 6 PM):\nDays per week:\nStart date:',
     },
     faqs: [
       {
@@ -181,6 +193,8 @@ export const services: Service[] = [
         'Late-night drops',
         'Travel between venues or towns',
       ],
+      whatsapp:
+        'Hi DriveBuddy, I need drivers for an event.\nEvent date(s):\nCity / venue:\nHow many cars need a driver:\nTimings (from – to):',
     },
     faqs: [
       {
@@ -219,6 +233,8 @@ export const services: Service[] = [
         'The driver’s journey back',
         'Day or night travel',
       ],
+      whatsapp:
+        'Hi DriveBuddy, I need a one-way car drop.\nFrom (city / area):\nTo (city / address):\nDate and time:\nCar model:',
     },
     faqs: [
       {

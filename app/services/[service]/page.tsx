@@ -8,11 +8,11 @@ import { PricingCards } from '@/components/sections/PricingCards';
 import { Accordion } from '@/components/ui/Accordion';
 import { ButtonAnchor, ButtonLink } from '@/components/ui/Button';
 import { Section } from '@/components/ui/Section';
-import { CheckIcon, PhoneIcon } from '@/components/icons';
+import { CheckIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
 import { cities, faqs, services } from '@/lib/content';
 import { breadcrumbSchema, faqSchema, serviceSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
-import { formatPhone, site, telHref } from '@/lib/site';
+import { formatPhone, site, telHref, waHref } from '@/lib/site';
 
 /** Only real service slugs render; everything else 404s. */
 export function generateStaticParams() {
@@ -121,9 +121,15 @@ export default async function ServicePage({ params }: Props) {
               <PhoneIcon className="size-5" />
               {service.priceRange ? 'Call for your exact price' : 'Call for a quote'}
             </ButtonAnchor>
-            <ButtonLink href="/book/" variant="outline">
-              Send your details
-            </ButtonLink>
+            <ButtonAnchor
+              href={waHref(quote.whatsapp)}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="outline"
+            >
+              <WhatsappIcon className="size-5" />
+              Get a quote on WhatsApp
+            </ButtonAnchor>
           </div>
         </Section>
       ) : (
