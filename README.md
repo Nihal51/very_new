@@ -106,6 +106,7 @@ the top of the repo: [`site-settings.ts`](site-settings.ts).
 | --- | --- |
 | `notice` | A one-line message across the top of every page. `show: true` turns it on |
 | `contact` | Both phone numbers, the WhatsApp number and the email, everywhere they appear |
+| `google` | Your Google Business Profile link and (optional) direct review link, used by the "Write a review on Google" button under the testimonials |
 | `prices` | Hourly, 3-hour, full-day, outstation and night rates |
 | `monthly` | The Basic and Premium plans: prices, joining fee %, hours, extra-hour rate, days off, stand-in rate, replacement time |
 

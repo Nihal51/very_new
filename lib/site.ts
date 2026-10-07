@@ -63,10 +63,10 @@ export const site = {
  */
 export const socialProfiles: string[] = [
   'https://www.instagram.com/the_drivebuddy/',
-  /* The Google Business Profile, via the share link Maps generates. This is the
-     strongest entry in this list: it is what ties the website to the map listing
-     so Google treats them as one business instead of two. */
-  'https://maps.app.goo.gl/5yJuHkFUZXmYgVhJ6',
+  /* The Google Business Profile, via the share link Maps generates (set in
+     site-settings.ts). This is the strongest entry in this list: it is what ties
+     the website to the map listing so Google treats them as one business. */
+  settings.google.profile,
   // 'https://www.facebook.com/your_page',
 ];
 
@@ -77,6 +77,10 @@ export const socialProfiles: string[] = [
  * so raw `public/` paths must go through here.
  */
 export const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
+/** Google Business Profile, and the link that opens its review box (falls back to the profile). */
+export const googleProfileHref = settings.google.profile;
+export const googleReviewHref = settings.google.writeReview.trim() || settings.google.profile;
 export const asset = (path: string) => `${basePath}${path}`;
 
 /** `tel:` href for the primary number, in E.164. */export const telHref = `tel:+91${site.phone}`;

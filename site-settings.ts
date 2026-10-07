@@ -45,6 +45,16 @@ export const settings = {
     email: 'drivebuddyind@gmail.com',
   },
 
+  /* --------------------------------------------------- Google reviews -----
+     profile:     your Google Business Profile link (Google Maps → Share → Copy link)
+     writeReview: optional — the "Get more reviews" link from your profile, which
+                  opens the review box directly (https://g.page/r/…/review).
+                  Leave it '' and the review button uses the profile link. */
+  google: {
+    profile: 'https://maps.app.goo.gl/5yJuHkFUZXmYgVhJ6',
+    writeReview: '',
+  },
+
   /* ---------------------------------------------------- driver charges -----
      In rupees. A from/to pair shows as a range, e.g. ₹1,000–1,200. */
   prices: {

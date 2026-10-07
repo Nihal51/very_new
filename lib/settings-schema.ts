@@ -17,6 +17,7 @@ type Range = { from: number; to: number };
 export type SiteSettings = {
   notice: { show: boolean; text: string };
   contact: { phone: string; phoneAlt: string; whatsapp: string; email: string };
+  google: { profile: string; writeReview: string };
   prices: {
     oneHour: number;
     threeHours: number;
@@ -59,6 +60,23 @@ export function checkSettings(s: SiteSettings): SiteSettings {
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.contact.email))
     problems.push(`contact.email does not look like an email address ("${s.contact.email}")`);
+
+  /* Only Google's own addresses: these links go out under the business's name to
+     customers who trust it, so a typo or a pasted tracking link must not be able to
+     send them somewhere else. */
+  const googleLink = (name: string, url: string) => {
+    try {
+      const u = new URL(url);
+      const ok =
+        u.protocol === 'https:' &&
+        ['maps.app.goo.gl', 'g.page', 'goo.gl', 'g.co', 'maps.google.com', 'www.google.com', 'google.com', 'search.google.com'].includes(u.hostname);
+      if (!ok) problems.push(`${name} must be an https link on a Google address (it is "${url}")`);
+    } catch {
+      problems.push(`${name} is not a web link ("${url}")`);
+    }
+  };
+  googleLink('google.profile', s.google.profile);
+  if (s.google.writeReview.trim()) googleLink('google.writeReview', s.google.writeReview);
 
   if (s.notice.show && !s.notice.text.trim()) problems.push('notice.show is true but notice.text is empty');
   if (s.notice.text.length > 160)

@@ -665,10 +665,24 @@ export function getCity(slug: string): City | undefined {
 
 /* ------------------------------------------------------------ testimonials */
 
-export const testimonials = [
+export type Testimonial = {
+  quote: string;
+  /**
+   * One sentence of the quote to set in bold — copied exactly from `quote`, never
+   * reworded. The check below fails the build if it is not word-for-word in it,
+   * so a customer's words can never be edited by changing the highlight.
+   */
+  highlight: string;
+  name: string;
+  city: string;
+  initial: string;
+};
+
+export const testimonials: Testimonial[] = [
   {
     quote:
       'The driver arrived in under 25 minutes. Polite, sober, and drove perfectly. My elderly mother felt completely safe the entire time — we will book again.',
+    highlight: 'Polite, sober, and drove perfectly.',
     name: 'Ramesh Sahu',
     city: 'Raipur',
     initial: 'R',
@@ -676,6 +690,7 @@ export const testimonials = [
   {
     quote:
       'Perfect for hospital visits with elderly parents. The driver waited patiently for three hours without a single complaint. Genuinely professional service.',
+    highlight: 'The driver waited patiently for three hours without a single complaint.',
     name: 'Anjali Mishra',
     city: 'Bhilai',
     initial: 'A',
@@ -683,11 +698,17 @@ export const testimonials = [
   {
     quote:
       'The airport pickup was seamless. The driver tracked my flight and was waiting before I even reached arrivals. Family travel has never been this easy.',
+    highlight: 'The driver tracked my flight and was waiting before I even reached arrivals.',
     name: 'Priya Khanna',
     city: 'Durg',
     initial: 'P',
   },
 ];
+
+for (const t of testimonials) {
+  if (!t.quote.includes(t.highlight))
+    throw new Error(`lib/content.ts: the highlight for ${t.name} is not word-for-word in their quote`);
+}
 
 /* ---------------------------------------------------------------------- faq */
 

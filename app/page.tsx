@@ -16,7 +16,7 @@ import { ButtonLink } from '@/components/ui/Button';
 import { Container, Section } from '@/components/ui/Section';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { ArrowRightIcon } from '@/components/icons';
-import { faqs, services, stats } from '@/lib/content';
+import { faqs, services, stats, testimonials } from '@/lib/content';
 import { driverServiceSchema, faqSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { priceText } from '@/lib/settings';
@@ -34,6 +34,12 @@ export const metadata: Metadata = pageMeta({
   path: '/',
   languages: { en: '/', hi: '/hi/' },
 });
+
+/** "Raipur, Bhilai and Durg" — the cities the quoted customers are actually from. */
+const reviewCities = (() => {
+  const names = [...new Set(testimonials.map((t) => t.city))];
+  return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? '');
+})();
 
 /** Small text link with a trailing arrow — used to send readers to the full page. */
 function MoreLink({ href, children }: { href: string; children: ReactNode }) {
@@ -138,9 +144,9 @@ export default function HomePage() {
 
       <Section
         id="reviews"
-        eyebrow="Happy clients"
+        eyebrow="In their words"
         title="What families say about us"
-        lede="Real reviews from customers across Chhattisgarh."
+        lede={`Customers in ${reviewCities} on their DriveBuddy driver.`}
       >
         <Testimonials />
       </Section>
