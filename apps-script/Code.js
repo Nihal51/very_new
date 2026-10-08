@@ -394,6 +394,8 @@ function fieldFilter_(path, op, value) {
 
 /* =============================================================== senders */
 
+var lastTelegramError_ = '';
+
 function sendTelegram_(msg) {
   var token = prop_('TELEGRAM_BOT_TOKEN');
   var chats = prop_('TELEGRAM_CHAT_ID').split(',').map(function (s) { return s.trim(); }).filter(String);
@@ -405,7 +407,10 @@ function sendTelegram_(msg) {
       payload: JSON.stringify({ chat_id: chatId, text: msg.text, parse_mode: 'HTML', reply_markup: msg.reply_markup, disable_web_page_preview: true }),
       muteHttpExceptions: true,
     });
-    if (res.getResponseCode() !== 200) console.error('Telegram ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 200));
+    if (res.getResponseCode() !== 200) {
+      lastTelegramError_ = res.getContentText().slice(0, 200);
+      console.error('Telegram ' + res.getResponseCode() + ': ' + lastTelegramError_);
+    }
     return res.getResponseCode() === 200;
   });
   return ok ? 'sent' : 'failed';
@@ -880,7 +885,9 @@ function setup() {
   console.log('✓ Sheet ready: Summary, Bookings, Drivers');
 
   // 6. Test
-  sendTelegram_({ text: '✅ DriveBuddy alerts are connected. New bookings will appear here within a minute.' });
+  if (sendTelegram_({ text: '✅ DriveBuddy alerts are connected. New bookings will appear here within a minute.' }) !== 'sent') {
+    throw new Error('Telegram did not deliver the test message (' + lastTelegramError_ + '). Open your bot in Telegram, press START, send "hi", then run Connect Telegram and start again.');
+  }
   sendEmail_({ subject: 'DriveBuddy alerts are connected', body: 'New bookings will be emailed here and added to the Bookings sheet.', htmlBody: 'New bookings will be emailed here and added to the <b>Bookings</b> sheet.' });
   console.log('✓ Test message sent. All done.');
 }
