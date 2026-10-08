@@ -7,6 +7,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Field, Input } from '@/components/ui/Field';
 import { authErrorMessage, confirmLoginCode, sendLoginCode, signInWithGoogle } from '@/lib/auth';
+import { settings } from '@/lib/settings';
 import { normalisePhone, validatePhone } from '@/lib/validate';
 
 /** The 'G' mark, drawn rather than loaded, so the button needs no third-party request. */
@@ -25,7 +26,9 @@ function GoogleMark() {
  * Phone + SMS code, or Google. `googleOnly` is the admin panel, where the
  * account's verified email is what grants access.
  */
-export function LoginPanel({ googleOnly = false, onDone }: { googleOnly?: boolean; onDone?: () => void }) {
+export function LoginPanel({ googleOnly: adminOnly = false, onDone }: { googleOnly?: boolean; onDone?: () => void }) {
+  // Phone login costs per SMS, so it is off unless site-settings.ts turns it on.
+  const googleOnly = adminOnly || !settings.login.phoneOtp;
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);

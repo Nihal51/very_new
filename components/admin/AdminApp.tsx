@@ -26,9 +26,9 @@ type Gate =
   | { kind: 'ready'; user: User };
 
 /**
- * /admin — the dispatch desk. Google sign-in, then the server decides whether
- * this account is an admin (functions/index.js → claimAdmin). Everything below
- * is live: a booking made anywhere appears here within a second.
+ * /admin — the dispatch desk. Google sign-in, then Firestore decides whether
+ * this account is an admin (admins/{email}, see firestore.rules). Everything
+ * below is live: a booking made anywhere appears here within a second.
  */
 export function AdminApp() {
   const [gate, setGate] = useState<Gate>({ kind: 'loading' });
@@ -52,7 +52,7 @@ export function AdminApp() {
           setGate({
             kind: 'error',
             message:
-              'Could not reach the DriveBuddy server. If the backend has not been deployed yet, run `npm run deploy:backend` (see docs/bookings-system.md).',
+              'Could not check admin access. Check your internet; if this is the first setup, deploy the rules with `npm run deploy:backend` (see docs/bookings-system.md).',
           });
       }
     }).then((u) => (off = u));

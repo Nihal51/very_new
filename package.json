@@ -12,10 +12,9 @@
     "inbox": "node scripts/inbox.mjs",
     "audit": "node scripts/audit.mjs",
     "indexnow": "node scripts/indexnow.mjs",
-    "test": "node --test \"scripts/*.test.mjs\" \"functions/test/*.test.js\"",
+    "test": "node --test \"scripts/*.test.mjs\"",
     "check": "npm run lint && next build && node scripts/audit.mjs",
-    "setup:alerts": "node scripts/setup-alerts.mjs",
-    "deploy:backend": "npm --prefix functions install && npx --yes firebase-tools@15 deploy --only firestore,functions",
+    "deploy:backend": "npx --yes firebase-tools@15 deploy --only firestore",
     "test:rules": "npm --prefix tests/rules install && npm --prefix tests/rules test"
   },
   "dependencies": {

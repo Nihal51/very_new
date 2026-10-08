@@ -36,9 +36,6 @@ export function isFirebaseConfigured(): boolean {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 }
 
-/** Must match FUNCTIONS_REGION in functions/.env — the admin panel calls claimAdmin there. */
-export const FUNCTIONS_REGION = 'asia-south1';
-
 /**
  * The one Firebase app instance, created on first use. Every caller (forms,
  * login, admin panel) goes through here so the SDK is downloaded once, only on

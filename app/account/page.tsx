@@ -6,6 +6,7 @@ import { PageHero } from '@/components/sections/PageHero';
 import { Container } from '@/components/ui/Section';
 import { breadcrumbSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
+import { settings } from '@/lib/settings';
 
 const trail = [{ name: 'My account', path: '/account/' }];
 
@@ -14,7 +15,7 @@ const trail = [{ name: 'My account', path: '/account/' }];
 export const metadata: Metadata = pageMeta({
   title: 'My Account — Log In or Sign Up',
   description:
-    'Log in with your mobile number or Google account to see your DriveBuddy bookings, their status and your driver, and book faster next time.',
+    'Log in with your Google account to see your DriveBuddy bookings, their status and your driver, and fill in your details faster next time.',
   path: '/account/',
   noIndex: true,
 });
@@ -25,7 +26,7 @@ export default function AccountPage() {
       <PageHero
         eyebrow="My account"
         title="Your bookings, in one place"
-        lede="Log in with your mobile number or Google. Booking without an account still works, always."
+        lede={`Log in with ${settings.login.phoneOtp ? 'your mobile number or ' : 'your '}Google account. Booking without an account still works, always.`}
         trail={trail}
       />
       <Container className="py-12 sm:py-16">

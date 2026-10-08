@@ -1,16 +1,18 @@
 /**
  * The booking package ids live in four places that cannot import each other:
  * the form (lib/content.ts), the security rules, the website's names
- * (lib/bookings.ts) and the server's alert names (functions/lib/format.js).
+ * (lib/bookings.ts) and the alerts robot's names (apps-script/Code.js).
  * If one gains or loses a package, bookings either fail to save or alert as
  * a raw id. This test makes that a build failure instead.
  */
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 
-import { PACKAGE_NAMES as SERVER_NAMES } from '../functions/lib/format.js';
+// Code.js is a plain Apps Script file; it exports for Node only when `module` exists.
+const { PACKAGE_NAMES: SERVER_NAMES } = createRequire(import.meta.url)('../apps-script/Code.js');
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
@@ -36,7 +38,7 @@ test('the booking form offers exactly the packages the rules accept', () => {
   assert.deepEqual(formIds, rulesIds);
 });
 
-test('the website and the server name every package', () => {
+test('the website and the alerts robot name every package', () => {
   assert.deepEqual(siteIds, rulesIds);
   assert.deepEqual(Object.keys(SERVER_NAMES).sort(), rulesIds);
 });

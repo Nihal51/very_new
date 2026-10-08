@@ -18,6 +18,7 @@ export type SiteSettings = {
   notice: { show: boolean; text: string };
   contact: { phone: string; phoneAlt: string; whatsapp: string; email: string };
   google: { profile: string; writeReview: string };
+  login: { phoneOtp: boolean };
   prices: {
     oneHour: number;
     threeHours: number;

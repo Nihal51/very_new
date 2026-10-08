@@ -3,7 +3,7 @@
  * names, statuses and shapes that the account page, the admin panel and the
  * forms share.
  *
- * firestore.rules enforces these; functions/lib/format.js mirrors PACKAGE_NAMES
+ * firestore.rules enforces these; apps-script/Code.js mirrors PACKAGE_NAMES
  * for alerts. scripts/packages.test.mjs fails `npm test` if the three disagree.
  */
 

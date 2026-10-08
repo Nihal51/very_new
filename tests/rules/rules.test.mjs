@@ -63,7 +63,7 @@ const driverApp = () => ({
 const guest = () => env.unauthenticatedContext().firestore();
 const customer = (uid = 'cust1') => env.authenticatedContext(uid, { phone_number: '+919111473929' }).firestore();
 const admin = () =>
-  env.authenticatedContext('admin1', { email: 'owner@example.com', email_verified: true, admin: true }).firestore();
+  env.authenticatedContext('admin1', { email: 'owner@example.com', email_verified: true }).firestore();
 const notAdmin = () =>
   env.authenticatedContext('google1', { email: 'someone@example.com', email_verified: true }).firestore();
 
@@ -74,7 +74,11 @@ before(async () => {
   });
 });
 after(() => env.cleanup());
-beforeEach(() => env.clearFirestore());
+beforeEach(async () => {
+  await env.clearFirestore();
+  // The robot's setup() writes this; rules look it up for every admin action.
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'admins', 'owner@example.com'), { email: 'owner@example.com' }));
+});
 
 /** Seed a booking with the rules switched off, as the Cloud Function would leave it. */
 async function seedBooking(id, extra = {}) {
@@ -236,6 +240,14 @@ describe('users and customers', () => {
     await assertSucceeds(getDoc(doc(admin(), 'customers', '9111473929')));
     await assertFails(getDoc(doc(customer(), 'customers', '9111473929')));
     await assertFails(setDoc(doc(admin(), 'customers', '9111473929'), { bookingsCount: 99 }));
+  });
+
+  test('only you can see your own admin entry, and nobody can make themselves admin', async () => {
+    await assertSucceeds(getDoc(doc(admin(), 'admins', 'owner@example.com')));
+    await assertFails(getDoc(doc(notAdmin(), 'admins', 'owner@example.com')));
+    await assertFails(setDoc(doc(notAdmin(), 'admins', 'someone@example.com'), { email: 'someone@example.com' }));
+    const unverified = env.authenticatedContext('x', { email: 'owner@example.com', email_verified: false }).firestore();
+    await assertFails(getDocs(collection(unverified, 'bookings')));
   });
 
   test('counters and unknown collections are closed to everyone', async () => {

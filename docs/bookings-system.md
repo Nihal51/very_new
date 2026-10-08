@@ -1,83 +1,97 @@
 # DriveBuddy bookings system
 
 How a booking travels from a customer's phone to a driver, and how to set it up.
+**Running cost: ₹0. No card needed.** Everything runs on free Google services.
 
 ## The design in one picture
 
 ```
- Customer's browser                     Google Cloud (Firebase project drive-buddy-acc4c)
- ─────────────────                      ──────────────────────────────────────────────────
- Booking form ── create ──────────────▶ Firestore  bookings/{id}   status: new
-   (guest, or logged in:                    │
-    phone OTP / Google)                     │ onBookingCreated (Cloud Function, asia-south1)
-                                            ├─▶ numbers it DB-1042 (meta/counters, in a transaction)
- /account  ◀── reads own bookings ──────    ├─▶ upserts customers/{phone}  (count, first/last booking)
-                                            ├─▶ writes timeline bookings/{id}/events
-                                            └─▶ Telegram message + email   ──▶ your phone
- /admin (admin Google account)
-   live list ◀─────────── onSnapshot ───  bookings, drivers, customers
-   Confirm / Assign driver / Complete ──▶ booking update + timeline event (one atomic batch)
-
-                                          remindUnhandled (every 10 min): a booking still "new"
-                                          after 10 minutes → one more Telegram nudge
+ Customer's browser                   Firebase (free Spark plan)         Google Apps Script (free)
+ ─────────────────                    ──────────────────────────         ─────────────────────────
+ Booking form ── create ───────────▶ Firestore bookings/{id}  ◀── every minute ──  alerts robot
+   (guest, or logged in                status: new                       (apps-script/Code.js,
+    with Google)                                                          inside the Google Sheet
+                                                                          "DriveBuddy Bookings")
+ /account ◀── own bookings ───────    customers/{phone}  ◀─────────────  • numbers it DB-1042
+                                      bookings/{id}/events ◀───────────  • customer record + timeline
+ /admin (admin Google account)                                           • Telegram + email alert
+   live list ◀── onSnapshot ───────   bookings, drivers, customers       • adds a row to the Sheet
+   Confirm / Assign / Complete ────▶  update + timeline (one batch)      • reminder if still "New"
+                                                                           after 10 minutes
 ```
 
-The website is still a static site on GitHub Pages. There is no server to keep
-running: Firestore stores the data, and the Cloud Functions run only when a
-booking or application arrives. Alerts go out even when every laptop and
-browser is closed.
+- The website stays a static site on GitHub Pages (free).
+- Firestore stores everything (free up to 50,000 reads and 20,000 writes a day; DriveBuddy uses a few thousand).
+- The alerts robot is a Google Apps Script attached to a Google Sheet. It runs on Google's servers every minute, so alerts arrive **within a minute even when every laptop and phone is off**. It also writes each booking into the Sheet, so you can read them like Excel.
+- Apps Script on a normal Gmail account allows 90 minutes of automatic runs a day and 100 emails a day. The robot uses roughly 30 minutes a day and one email per booking.
 
 ## Data model
 
 | Collection | One document per | Written by | Read by |
 |---|---|---|---|
-| `bookings/{id}` | booking | customer (create), server (ref, number, alerts), admin (status, driver) | admin; the customer who made it while logged in |
-| `bookings/{id}/events/{id}` | change or internal note | server, admin | admin only |
+| `bookings/{id}` | booking | customer (create), robot (ref, alerts), admin (status, driver) | admin; the customer who made it while logged in |
+| `bookings/{id}/events/{id}` | change or internal note | robot, admin | admin only |
 | `drivers/{id}` | driver application | applicant (create), admin (status, note) | admin |
-| `customers/{phone}` | customer (by mobile number) | server only | admin |
+| `customers/{phone}` | customer, by mobile number | robot only | admin |
 | `users/{uid}` | login account | that customer | that customer, admin |
-| `meta/counters` | — | server only | nobody from a browser |
+| `admins/{email}` | admin Google account | robot's `setup` (or the Firebase console) | that admin, to check their own access |
+| `meta/counters` | — | robot only | nobody from a browser |
 
-**Booking lifecycle:** `new → confirmed → assigned → completed`, or `cancelled` from any open state.
-Completed and cancelled bookings can be reopened.
-**Driver lifecycle:** `new (applied) → verified → active ⇄ inactive`, or `rejected`.
-Only `active` drivers can be assigned to bookings.
+**Booking lifecycle:** `new → confirmed → assigned → completed`, or `cancelled` from any open state. Completed and cancelled bookings can be reopened.
+**Driver lifecycle:** `new (applied) → verified → active ⇄ inactive`, or `rejected`. Only `active` drivers can be assigned.
 
 Design choices, and why:
 
-- **Bookings are never deleted**, only cancelled, so history and reporting stay complete.
-- **Customer records are keyed by phone number**, so five guest bookings from one person are one customer.
-- **Internal notes live in the admin-only timeline**, never on the booking, because a logged-in customer can read their own booking document.
-- **Admin access is a custom claim** granted by the `claimAdmin` function to the emails in the `ADMIN_EMAILS` secret. No admin email appears in the code or the rules.
-- **Every status change and its timeline entry are one batch**, so the history can never disagree with the booking.
-- **Reference numbers come from a transaction** on `meta/counters`, so two bookings in the same second can never share a number, and a retried function never numbers or alerts the same booking twice.
+- **Bookings are never deleted**, only cancelled, so the history stays complete.
+- **One customer record per phone number**, so five guest bookings from one person are one customer.
+- **Internal notes live in the admin-only timeline**, never on the booking, because a logged-in customer can read their own booking.
+- **Admin access is an entry in `admins/`**, created from the robot's `ADMIN_EMAILS` property. No email address is written in the code or the rules.
+- **Each change and its timeline entry are saved together** (one batch from the admin panel, one commit from the robot), so the history can never disagree with the booking.
+- **The robot runs under a lock** and only numbers bookings that have no number yet, so a booking is never numbered or alerted twice.
 
-Security is enforced in `firestore.rules`, and `tests/rules/rules.test.mjs` checks each role against them (`npm run test:rules`, needs Java).
+`firestore.rules` enforces all of this. `tests/rules/rules.test.mjs` checks every role against it (`npm run test:rules`, needs Java). `scripts/alerts-script.test.mjs` runs the robot against a simulated Firestore (`npm test`).
 
 ## One-time setup (about 20 minutes)
 
-1. **Blaze plan.** Firebase console → project drive-buddy-acc4c → ⚙ Usage and billing → Modify plan → Blaze. Add your card. Then Google Cloud console → Billing → Budgets & alerts → create a ₹100 monthly budget with email alerts at 50%, 90% and 100%. At DriveBuddy's volume, functions, Firestore and Secret Manager stay inside the free allowance.
-2. **Turn on login.** Firebase console → Authentication → Get started → Sign-in method: enable **Phone** and **Google**. Then Authentication → Settings → Authorized domains → add `thedrivebuddy.in`.
-3. **Log the CLI in** (once per computer): `npx firebase-tools login`
-4. **Alerts and admins:** `npm run setup:alerts`. It walks you through creating the Telegram bot, finds your chat automatically, sends a test message, takes the Gmail app password (optional) and the admin email(s), and saves them as secrets.
-5. **Deploy:** `npm run deploy:backend`. This deploys the security rules, indexes and the four functions. The first deploy takes a few minutes and may ask to enable some Google APIs; answer yes.
-6. **Push the website:** `git push`. Then open https://thedrivebuddy.in/admin/, sign in with the admin Google account, and make a test booking from your phone.
+Use the Google account that **owns the Firebase project** (Firebase console → ⚙ Project settings → Users and permissions → Owner).
 
-If the deploy says the functions region does not match the database location,
-set `FUNCTIONS_REGION` in `functions/.env` to the location shown in Firestore → Settings,
-and `FUNCTIONS_REGION` in `lib/firebase.ts` to the same value.
+**1. Turn on Google login (free).** Firebase console → Authentication → Get started → Sign-in method → **Google** → Enable → Save. Then Authentication → Settings → Authorized domains → Add domain → `thedrivebuddy.in`.
+
+**2. Make your Telegram bot.** In Telegram, open **@BotFather**, send `/newbot`, choose a name (e.g. *DriveBuddy Alerts*) and a username ending in `bot`. Copy the token it gives you (looks like `123456:ABC-xyz`). Then open your new bot, press **START** and send `hi`.
+
+**3. Create the alerts robot.**
+1. Go to https://sheets.new and name the sheet **DriveBuddy Bookings**.
+2. Extensions → **Apps Script**. Click *Untitled project* at the top and rename it **DriveBuddy**. Delete the sample code. Open `apps-script\Code.js` from this repo in Notepad, copy everything, and paste it in.
+3. ⚙ Project Settings → tick **Show "appsscript.json" manifest file in editor**. Back in the editor, open `appsscript.json` and replace its contents with `apps-script\appsscript.json` from this repo.
+4. ⚙ Project Settings → **Script properties** → add:
+   - `TELEGRAM_BOT_TOKEN` = the token from step 2
+   - `ADMIN_EMAILS` = the Google account you will use for `/admin` (several are allowed, separated by commas)
+   - optional: `ALERT_EMAIL` = where alert emails go (default: this account); write `none` to turn email off
+5. In the editor, pick **setup** in the function list and press **Run**. Google asks for permission. Choose your account → *Advanced* → *Go to DriveBuddy (unsafe)*: it is your own script → Allow.
+6. The log should show five ✓ lines, and Telegram should get "DriveBuddy alerts are connected".
+
+**4. Deploy the security rules.** In `C:\git\drivebuddy`:
+
+    npx firebase-tools login
+    npm run deploy:backend
+
+**5. Publish the website:** `git push`. Then open https://thedrivebuddy.in/admin/, sign in with the admin Google account, and make a test booking from your phone. It should reach Telegram within a minute.
+
+### If `setup` shows an error
+
+- **"Firestore 403 … permission"**: the script is running under a Google account that is not an Owner of the Firebase project. Use the owner account, or add this account as Owner in Firebase → Users and permissions.
+- **"No Telegram chat found"**: open the bot, press START, send `hi`, and run `setup` again.
+- **"Firestore 400 … index"**: run `npm run deploy:backend` (step 4) first, then wait 2–3 minutes for the indexes to build.
 
 ## Everyday use
 
-- **New booking:** Telegram buzzes (plus email). Tap *Open in admin panel* or call the number in the message.
-- In `/admin`: **Confirm – I called them**, then **Assign driver**, then **Mark completed** after the trip.
+- **New booking:** Telegram buzzes (plus email, plus a new row in the Sheet). Tap *Open in admin panel*, or call the number in the message.
+- In `/admin`: **Confirm – I called them** → **Assign driver** → **Mark completed**.
 - A booking left "New" for 10 minutes sends one reminder to Telegram.
-- **New driver application:** Telegram alert. In the Drivers tab: Verify (after ID and police check), then Activate.
-- `npm run inbox` and `npm run leads` still work for Excel exports.
+- **New driver application:** Telegram alert and a row in the *Drivers* sheet. In the Drivers tab: Verify (after the ID and police check) → Activate.
+- To add another admin later: add the email to `ADMIN_EMAILS` and run `setup` again.
 
-## Costs to know
+## Optional paid upgrades
 
-- **Phone OTP:** Google charges per SMS sent, on the Blaze plan. Google sign-in is free.
-- **Telegram:** free.
-- **Email:** free (Gmail).
-- **Cloud Functions, Firestore, Secret Manager, Scheduler:** within the free tier at current volume. The budget alert warns you long before anything is significant.
+- **Phone + SMS-code login:** Firebase charges per SMS, and it needs the Blaze plan with a card. Switch to Blaze, enable *Phone* under Authentication → Sign-in method, and set `login.phoneOtp: true` in `site-settings.ts`.
+- **Alerts in seconds instead of within a minute:** Cloud Functions (Blaze). The full version is in git history, commit `1115476`.

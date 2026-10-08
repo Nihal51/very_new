@@ -65,7 +65,7 @@ export function AccountApp() {
         <Card>
           <h2 className="text-display-sm">Log in or sign up</h2>
           <p className="text-fg-muted mt-2 mb-6 text-[0.9375rem]">
-            New here? Logging in creates your account. No password to remember.
+            New here? Logging in creates your account. No new password to remember.
           </p>
           <LoginPanel />
         </Card>

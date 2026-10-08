@@ -50,5 +50,3 @@ exports/
 # OS
 .DS_Store
 Thumbs.db
-# Functions config — plain settings, no secrets (secrets live in Google Secret Manager).
-!functions/.env

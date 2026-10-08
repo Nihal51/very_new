@@ -7,7 +7,7 @@
 import type { User } from 'firebase/auth';
 
 import type { BookingStatus, DriverRef, DriverStatus } from './bookings';
-import { FUNCTIONS_REGION, getFirebaseApp } from './firebase';
+import { getFirebaseApp } from './firebase';
 
 async function fs() {
   const [app, mod] = await Promise.all([getFirebaseApp(), import('firebase/firestore')]);
@@ -15,23 +15,20 @@ async function fs() {
 }
 
 /**
- * Ask the server to grant the admin claim, then refresh the token so Firestore
- * sees it. Resolves true for an admin, false for any other account.
+ * Is this Google account an admin? Firestore answers: the account can read
+ * admins/{its email} only if that entry exists (firestore.rules). The entry is
+ * created by the alerts robot from its ADMIN_EMAILS property.
  */
 export async function ensureAdmin(user: User): Promise<boolean> {
-  const existing = await user.getIdTokenResult();
-  if (existing.claims.admin === true) return true;
-
-  const [app, { getFunctions, httpsCallable }] = await Promise.all([getFirebaseApp(), import('firebase/functions')]);
+  if (!user.email || !user.emailVerified) return false;
+  const { db, doc, getDoc } = await fs();
   try {
-    await httpsCallable(getFunctions(app, FUNCTIONS_REGION), 'claimAdmin')();
+    return (await getDoc(doc(db, 'admins', user.email.toLowerCase()))).exists();
   } catch (err) {
     const code = typeof err === 'object' && err && 'code' in err ? String((err as { code: unknown }).code) : '';
     if (code.includes('permission-denied')) return false;
     throw err;
   }
-  const refreshed = await user.getIdTokenResult(true);
-  return refreshed.claims.admin === true;
 }
 
 export async function changeBookingStatus(

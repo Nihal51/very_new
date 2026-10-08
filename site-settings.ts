@@ -55,6 +55,14 @@ export const settings = {
     writeReview: 'https://search.google.com/local/writereview?placeid=ChIJs-jfFPrdKDoRHsazUysqIks',
   },
 
+  /* ------------------------------------------------------- customer login --
+     Login on the "My account" page. Google login is free. Login by phone
+     number + SMS code costs money per SMS and needs Firebase's paid Blaze
+     plan, so keep phoneOtp: false until you have switched to Blaze. */
+  login: {
+    phoneOtp: false,
+  },
+
   /* ---------------------------------------------------- driver charges -----
      In rupees. A from/to pair shows as a range, e.g. ₹1,000–1,200. */
   prices: {
