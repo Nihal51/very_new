@@ -13,7 +13,7 @@ import { Card } from '@/components/ui/Card';
 import { Section } from '@/components/ui/Section';
 import { BuildingIcon, PhoneIcon, RouteIcon } from '@/components/icons';
 import { faqs } from '@/lib/content';
-import { fitDescription, fitTitle, getPlace, nearbyPlaces, placePath, places, type Place } from '@/lib/local-seo';
+import { fitDescription, fitTitle, getPlace, isIndexed, nearbyPlaces, placePath, places, type Place } from '@/lib/local-seo';
 import { breadcrumbSchema, faqSchema, placeServiceSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { priceText } from '@/lib/settings';
@@ -78,6 +78,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title: t.title,
     description: t.description,
     path: placePath(p),
+    noIndex: !isIndexed(p),
     ogImageAlt: `${site.name} — verified drivers in ${p.label}`,
   });
 }

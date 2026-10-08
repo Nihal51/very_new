@@ -151,6 +151,18 @@ export const places: Place[] = [
   ),
 ];
 
+/**
+ * Neighbourhood pages Google may list. The rest stay live for visitors but carry
+ * noindex and stay out of the sitemap until they have something only that area
+ * has — a sentence from the owner about what people there book — because 38
+ * near-identical pages on a small site read as doorway pages (owner agreed,
+ * 8 Oct 2026). To switch one on: add a real line about it, then add its slug here.
+ */
+export const INDEXED_LOCALITIES = new Set<string>([]);
+
+/** Towns are always indexed; a neighbourhood only once it is in INDEXED_LOCALITIES. */
+export const isIndexed = (p: Place) => p.kind === 'town' || INDEXED_LOCALITIES.has(p.slug);
+
 export const getPlace = (slug: string) => places.find((p) => p.slug === slug);
 
 export const placePath = (p: Pick<Place, 'slug'>) => `/driver-in/${p.slug}/`;

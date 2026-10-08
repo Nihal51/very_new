@@ -1,7 +1,7 @@
 import type { MetadataRoute } from 'next';
 
 import { cities, services } from '@/lib/content';
-import { cityServicePairs, cityServicePath, placePath, places } from '@/lib/local-seo';
+import { cityServicePairs, cityServicePath, isIndexed, placePath, places } from '@/lib/local-seo';
 import { site } from '@/lib/site';
 
 /**
@@ -83,7 +83,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   ];
 
   /* Local search pages: one per town or neighbourhood, one per service in each city. */
-  const placePages: Entry[] = places.map((p) => ({
+  const placePages: Entry[] = places.filter(isIndexed).map((p) => ({
     url: `${site.url}${placePath(p)}`,
     lastModified: LAST_MODIFIED,
     changeFrequency: 'monthly',
