@@ -400,7 +400,8 @@ function sendTelegram_(msg) {
   var token = prop_('TELEGRAM_BOT_TOKEN');
   var chats = prop_('TELEGRAM_CHAT_ID').split(',').map(function (s) { return s.trim(); }).filter(String);
   if (!token || !chats.length) return 'off';
-  var ok = chats.every(function (chatId) {
+  var sent = 0;
+  chats.forEach(function (chatId) {
     var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
       method: 'post',
       contentType: 'application/json',
@@ -411,9 +412,9 @@ function sendTelegram_(msg) {
       lastTelegramError_ = res.getContentText().slice(0, 200);
       console.error('Telegram ' + res.getResponseCode() + ': ' + lastTelegramError_);
     }
-    return res.getResponseCode() === 200;
+    if (res.getResponseCode() === 200) sent++;
   });
-  return ok ? 'sent' : 'failed';
+  return sent ? 'sent' : 'failed';
 }
 
 function sendEmail_(msg) {
@@ -854,7 +855,12 @@ function setup() {
     var chat = (u.message && u.message.chat) || (u.my_chat_member && u.my_chat_member.chat);
     if (chat) chats[String(chat.id)] = chat.title || [chat.first_name, chat.last_name].filter(String).join(' ');
   });
-  var known = prop_('TELEGRAM_CHAT_ID').split(',').filter(String);
+  // Keep only chats this bot can actually reach (an old bot's chat gives "chat not found").
+  var known = prop_('TELEGRAM_CHAT_ID').split(',').map(function (s) { return s.trim(); }).filter(function (id) {
+    if (!id || chats[id] !== undefined) return false;
+    var r = JSON.parse(UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getChat?chat_id=' + encodeURIComponent(id), { muteHttpExceptions: true }).getContentText());
+    return r.ok;
+  });
   Object.keys(chats).forEach(function (id) { if (known.indexOf(id) < 0) known.push(id); });
   if (!known.length) {
     var me = JSON.parse(UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getMe', { muteHttpExceptions: true }).getContentText());
@@ -913,7 +919,9 @@ function connectTelegram() {
   if (res.getSelectedButton() !== ui.Button.OK) return;
   var token = res.getResponseText().trim() || saved;
   if (!/^\d+:[\w-]{20,}$/.test(token)) return ui.alert('That does not look like a bot token. Copy it again from @BotFather.');
-  PropertiesService.getScriptProperties().setProperty('TELEGRAM_BOT_TOKEN', token);
+  var props = PropertiesService.getScriptProperties();
+  if (token !== saved) props.deleteProperty('TELEGRAM_CHAT_ID'); // a new bot can't reach the old bot's chats
+  props.setProperty('TELEGRAM_BOT_TOKEN', token);
   try {
     setup();
     ui.alert('All set ✅\n\nNew bookings now reach Telegram, email and this sheet within a minute, even when your computer is off.');
