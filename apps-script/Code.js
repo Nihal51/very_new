@@ -919,9 +919,8 @@ function connectTelegram() {
   if (res.getSelectedButton() !== ui.Button.OK) return;
   var token = res.getResponseText().trim() || saved;
   if (!/^\d+:[\w-]{20,}$/.test(token)) return ui.alert('That does not look like a bot token. Copy it again from @BotFather.');
-  var props = PropertiesService.getScriptProperties();
-  if (token !== saved) props.deleteProperty('TELEGRAM_CHAT_ID'); // a new bot can't reach the old bot's chats
-  props.setProperty('TELEGRAM_BOT_TOKEN', token);
+  // setup() keeps only the saved chats this token's bot can reach, so a new bot or a new key both just work.
+  PropertiesService.getScriptProperties().setProperty('TELEGRAM_BOT_TOKEN', token);
   try {
     setup();
     ui.alert('All set ✅\n\nNew bookings now reach Telegram, email and this sheet within a minute, even when your computer is off.');
