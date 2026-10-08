@@ -813,7 +813,7 @@ function setup() {
 
   // 2. Telegram chat(s): everyone who has messaged the bot
   var upd = JSON.parse(UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getUpdates', { muteHttpExceptions: true }).getContentText());
-  if (!upd.ok) throw new Error('Telegram rejected the bot token. Copy it again from @BotFather.');
+  if (!upd.ok) throw new Error('Telegram did not accept the bot token (' + (upd.description || 'no reason given') + '). In @BotFather: /mybots → your bot → API Token, copy it, and paste it here again.');
   var chats = {};
   (upd.result || []).forEach(function (u) {
     var chat = (u.message && u.message.chat) || (u.my_chat_member && u.my_chat_member.chat);
@@ -821,7 +821,11 @@ function setup() {
   });
   var known = prop_('TELEGRAM_CHAT_ID').split(',').filter(String);
   Object.keys(chats).forEach(function (id) { if (known.indexOf(id) < 0) known.push(id); });
-  if (!known.length) throw new Error('No Telegram chat found. Open your bot in Telegram, press START, send "hi", then run setup again.');
+  if (!known.length) {
+    var me = JSON.parse(UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getMe', { muteHttpExceptions: true }).getContentText());
+    var bot = me.ok && me.result && me.result.username ? '@' + me.result.username + ' (t.me/' + me.result.username + ')' : 'your bot';
+    throw new Error('No Telegram chat found. Open ' + bot + ' in Telegram, press START, send "hi", then run Connect Telegram and start again.');
+  }
   props.setProperty('TELEGRAM_CHAT_ID', known.join(','));
   console.log('✓ Telegram chats: ' + known.join(', '));
 
@@ -865,10 +869,12 @@ function onOpen() {
 /** Asks for the bot token in a dialog, saves it, and runs setup. */
 function connectTelegram() {
   var ui = SpreadsheetApp.getUi();
+  var saved = prop_('TELEGRAM_BOT_TOKEN');
   var res = ui.prompt('Connect Telegram',
-    'Paste your bot token from @BotFather (it looks like 123456:ABC-xyz).\nSend your bot "hi" in Telegram first.', ui.ButtonSet.OK_CANCEL);
+    'Paste your bot token from @BotFather (it looks like 123456:ABC-xyz).\nSend your bot "hi" in Telegram first.' +
+    (saved ? '\n\nA token is already saved. Leave this empty and press OK to keep it.' : ''), ui.ButtonSet.OK_CANCEL);
   if (res.getSelectedButton() !== ui.Button.OK) return;
-  var token = res.getResponseText().trim();
+  var token = res.getResponseText().trim() || saved;
   if (!/^\d+:[\w-]{20,}$/.test(token)) return ui.alert('That does not look like a bot token. Copy it again from @BotFather.');
   PropertiesService.getScriptProperties().setProperty('TELEGRAM_BOT_TOKEN', token);
   try {
