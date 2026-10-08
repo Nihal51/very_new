@@ -10,6 +10,8 @@
  * be deployed (see README).
  */
 
+import { settings } from './settings';
+
 export type Collection = 'bookings' | 'drivers';
 
 export type SubmitFailure =
@@ -44,6 +46,22 @@ export function isFirebaseConfigured(): boolean {
 export async function getFirebaseApp() {
   const { initializeApp, getApps, getApp } = await import('firebase/app');
   return getApps().length ? getApp() : initializeApp(firebaseConfig);
+}
+
+/**
+ * Ring the alerts robot so it looks right now instead of at the next minute.
+ * Fire-and-forget: no data is sent, a failure changes nothing (the robot's
+ * every-minute check still finds the booking), and `keepalive` lets the ping
+ * finish even if the customer closes the page straight away.
+ */
+function pingAlerts() {
+  const url = settings.alerts.pingUrl;
+  if (!url) return;
+  try {
+    fetch(url, { method: 'POST', mode: 'no-cors', keepalive: true }).catch(() => {});
+  } catch {
+    /* never let an alert ping affect the booking */
+  }
 }
 
 const FRIENDLY: Record<SubmitFailure, string> = {
@@ -86,6 +104,7 @@ export async function submitDoc(
       source: 'website',
     });
 
+    pingAlerts();
     return { ok: true, id: ref.id };
   } catch (err: unknown) {
     const code = typeof err === 'object' && err && 'code' in err ? String(err.code) : '';

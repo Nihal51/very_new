@@ -139,6 +139,11 @@ function load() {
     },
     ScriptApp: { getOAuthToken: () => 'token', getProjectTriggers: () => [], newTrigger: () => ({ timeBased: () => ({ everyMinutes: () => ({ create() {} }) }) }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
+    CacheService: (() => {
+      const c = new Map();
+      return { getScriptCache: () => ({ get: (k) => c.get(k) ?? null, put: (k, v) => c.set(k, v), clear: () => c.clear() }) };
+    })(),
+    ContentService: { createTextOutput: (t) => ({ text: t }) },
     Utilities: { getUuid: () => Math.random().toString(16).slice(2) },
     Session: { getEffectiveUser: () => ({ getEmail: () => 'owner@example.com' }) },
     MailApp: { sendEmail: (m) => mail.push(m) },
@@ -245,6 +250,22 @@ describe('the alerts robot', () => {
     assert.equal(env.telegram.length, 1);
     assert.ok(env.telegram[0].text.includes('Not handled yet: DB-1009'));
     assert.ok(env.store.docs.get('bookings/late').reminderSentAt);
+  });
+
+  test('the website ping sends the alert at once, and a burst of pings is one run', () => {
+    seedBooking(env.store, 'b1');
+    const out = env.ctx.doPost();
+    assert.equal(out.text, 'ok');
+    assert.equal(env.telegram.length, 1);
+    assert.equal(env.store.docs.get('bookings/b1').ref.stringValue, 'DB-1001');
+    assert.equal(env.table('Bookings')[0].Ref, 'DB-1001');
+
+    seedBooking(env.store, 'b2', { msAgo: 1_000 });
+    const queriesBefore = env.store.queries.length;
+    env.ctx.doPost(); // within 3 seconds: merged, nothing runs
+    assert.equal(env.store.queries.length, queriesBefore);
+    env.ctx.tick(); // the minute check still catches it
+    assert.equal(env.telegram.length, 2);
   });
 
   test('every query is on one field only, so Firestore needs no composite index', () => {

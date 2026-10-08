@@ -63,6 +63,15 @@ export const settings = {
     phoneOtp: false,
   },
 
+  /* ------------------------------------------------------ instant alerts --
+     The alerts robot's web-app address (Apps Script → Deploy → Web app URL,
+     ends in /exec). The website pings it the moment a booking is saved, so
+     Telegram and email arrive in seconds. Leave '' and alerts still come
+     within a minute. */
+  alerts: {
+    pingUrl: '',
+  },
+
   /* ---------------------------------------------------- driver charges -----
      In rupees. A from/to pair shows as a range, e.g. ₹1,000–1,200. */
   prices: {

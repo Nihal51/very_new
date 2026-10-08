@@ -494,13 +494,18 @@ function driversTable_() {
 
 /* ============================================================ the robot */
 
-/** Runs every minute (set up by setup()). One failing step never stops the others. */
+/** Runs every minute (set up by setup()): the safety net behind the instant ping below. */
 function tick() {
+  var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_];
+  if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_);
+  runSteps_(steps, 5000);
+}
+
+/** Runs the steps under the script lock. One failing step never stops the others. */
+function runSteps_(steps, waitMs) {
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) return; // the previous run is still going
+  if (!lock.tryLock(waitMs)) return false; // another run is going; it or the next one picks this up
   try {
-    var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_];
-    if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_);
     steps.forEach(function (step) {
       try {
         step();
@@ -511,6 +516,31 @@ function tick() {
   } finally {
     lock.releaseLock();
   }
+  return true;
+}
+
+/**
+ * The instant doorbell. Deployed as a web app; the website calls its URL the
+ * moment a booking or driver application is saved, so Telegram and email go
+ * out in seconds instead of at the next minute. It takes no data and returns
+ * nothing private: a call only makes the robot look now. Calls closer than
+ * 3 seconds apart are merged (a burst of bookings is handled in one run).
+ */
+function doPost() {
+  return ping_();
+}
+
+function doGet() {
+  return ping_();
+}
+
+function ping_() {
+  var cache = CacheService.getScriptCache();
+  if (!cache.get('ping')) {
+    cache.put('ping', '1', 3);
+    runSteps_([processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_], 25000);
+  }
+  return ContentService.createTextOutput('ok');
 }
 
 function processBookings_() {

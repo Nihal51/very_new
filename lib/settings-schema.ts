@@ -19,6 +19,8 @@ export type SiteSettings = {
   contact: { phone: string; phoneAlt: string; whatsapp: string; email: string };
   google: { profile: string; writeReview: string };
   login: { phoneOtp: boolean };
+  /** The alerts robot's web-app URL; the website pings it after each booking so alerts go out in seconds. */
+  alerts: { pingUrl: string };
   prices: {
     oneHour: number;
     threeHours: number;
