@@ -59,37 +59,33 @@ Use the Google account that **owns the Firebase project** (Firebase console → 
 
 **2. Make your Telegram bot.** In Telegram, open **@BotFather**, send `/newbot`, choose a name (e.g. *DriveBuddy Alerts*) and a username ending in `bot`. Copy the token it gives you (looks like `123456:ABC-xyz`). Then open your new bot, press **START** and send `hi`.
 
-**3. Create the alerts robot.**
+**3. Create the alerts robot** (with the Firebase owner account).
 1. Go to https://sheets.new and name the sheet **DriveBuddy Bookings**.
 2. Extensions → **Apps Script**. Click *Untitled project* at the top and rename it **DriveBuddy**. Delete the sample code. Open `apps-script\Code.js` from this repo in Notepad, copy everything, and paste it in.
-3. ⚙ Project Settings → tick **Show "appsscript.json" manifest file in editor**. Back in the editor, open `appsscript.json` and replace its contents with `apps-script\appsscript.json` from this repo.
-4. ⚙ Project Settings → **Script properties** → add:
-   - `TELEGRAM_BOT_TOKEN` = the token from step 2
-   - `ADMIN_EMAILS` = the Google account you will use for `/admin` (several are allowed, separated by commas)
-   - optional: `ALERT_EMAIL` = where alert emails go (default: this account); write `none` to turn email off
-5. In the editor, pick **setup** in the function list and press **Run**. Google asks for permission. Choose your account → *Advanced* → *Go to DriveBuddy (unsafe)*: it is your own script → Allow.
-6. The log should show five ✓ lines, and Telegram should get "DriveBuddy alerts are connected".
+3. ⚙ Project Settings → tick **Show "appsscript.json" manifest file in editor**. Back in the editor, open `appsscript.json` and replace its contents with `apps-script\appsscript.json` from this repo. Save (Ctrl+S).
+4. Reload the Sheet. A **DriveBuddy** menu appears → **Connect Telegram and start**. Google asks for permission: choose your account → *Advanced* → *Go to DriveBuddy (unsafe)*: it is your own script → Allow. Run the menu item again, paste the bot token from step 2, OK.
+5. You get "All set ✅", Telegram gets "DriveBuddy alerts are connected", and the Sheet fills with every booking so far.
 
-**4. Deploy the security rules.** In `C:\git\drivebuddy`:
+Optional script properties (⚙ Project Settings → Script properties): `ADMIN_EMAILS` (who can open `/admin`; default: the account that owns the script; several allowed, comma-separated — run the menu item again after changing it) and `ALERT_EMAIL` (where alert emails go; `none` turns email off).
 
-    npx firebase-tools login
-    npm run deploy:backend
+**4. Publish the security rules.** Firebase console → Firestore Database → **Rules** → replace everything with the contents of `firestore.rules` → **Publish**. (Or from `C:\git\drivebuddy`: `npx firebase-tools login` then `npm run deploy:backend`.) No indexes are needed: every query is on one field.
 
-**5. Publish the website:** `git push`. Then open https://thedrivebuddy.in/admin/, sign in with the admin Google account, and make a test booking from your phone. It should reach Telegram within a minute.
+**5. Publish the website:** `git push`. Then open https://thedrivebuddy.in/admin/, sign in with the admin Google account, and make a test booking from your phone. It should reach Telegram and the Sheet within a minute.
 
-### If `setup` shows an error
+### If setup shows an error
 
 - **"Firestore 403 … permission"**: the script is running under a Google account that is not an Owner of the Firebase project. Use the owner account, or add this account as Owner in Firebase → Users and permissions.
-- **"No Telegram chat found"**: open the bot, press START, send `hi`, and run `setup` again.
-- **"Firestore 400 … index"**: run `npm run deploy:backend` (step 4) first, then wait 2–3 minutes for the indexes to build.
+- **"No Telegram chat found"**: open the bot, press START, send `hi`, and run **Connect Telegram and start** again.
+- **A row in the Sheet looks wrong, or you deleted rows**: DriveBuddy menu → **Refresh the whole sheet**.
 
 ## Everyday use
 
 - **New booking:** Telegram buzzes (plus email, plus a new row in the Sheet). Tap *Open in admin panel*, or call the number in the message.
-- In `/admin`: **Confirm – I called them** → **Assign driver** → **Mark completed**.
+- In `/admin` the top tiles are shortcuts (*New – call now*, *Needs action*, *Booked today*). The table works like a spreadsheet: filter by status, city and date, search, click a column heading to sort, click a row for details. The **Next step** button on each row does the usual move in one click: **Confirm** → **Assign driver** → **Complete**. **Excel** downloads exactly the rows you are looking at.
+- **The Google Sheet** is a live copy kept by the robot: newest bookings on top, a colour per status, filter buttons on every column, and a **Summary** tab (today, this week, this month, by city, by package, by month). Status and driver changes from `/admin` reach it within a minute. Add your own columns (e.g. *Paid?*) anywhere; the robot never touches them. Treat the robot's columns as read-only: change bookings in `/admin`.
 - A booking left "New" for 10 minutes sends one reminder to Telegram.
 - **New driver application:** Telegram alert and a row in the *Drivers* sheet. In the Drivers tab: Verify (after the ID and police check) → Activate.
-- To add another admin later: add the email to `ADMIN_EMAILS` and run `setup` again.
+- To add another admin later: add the email to the `ADMIN_EMAILS` script property and run **Connect Telegram and start** again.
 
 ## Optional paid upgrades
 

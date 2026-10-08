@@ -22,9 +22,9 @@ export default function AdminPage() {
     <>
       {/* The sticky "Call now / WhatsApp" bar is for customers, not the dispatcher. */}
       <style>{'[data-cta-bar]{display:none}'}</style>
-      <Container className="py-8 sm:py-10">
-        <h1 className="text-display-md">Dispatch desk</h1>
-        <div className="mt-6">
+      <Container className="py-6 sm:py-8">
+        <h1 className="text-display-sm">Dispatch desk</h1>
+        <div className="mt-4">
           <AdminApp />
         </div>
       </Container>

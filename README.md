@@ -478,10 +478,12 @@ Keep a copy somewhere first if you want the old design for reference.
 
 Free to run (no card): an Apps Script robot inside a Google Sheet numbers each
 booking, keeps customer records and sends Telegram + email alerts within a minute;
-you manage everything at `/admin`; customers can log in with Google at `/account`.
+you manage everything at `/admin` (a filterable table with Excel download), and
+the same Sheet stays a live, colour-coded copy of every booking; customers can log
+in with Google at `/account`.
 Architecture, data model and the 20-minute setup are in
 [docs/bookings-system.md](docs/bookings-system.md).
 
-    npm run deploy:backend   # security rules + indexes (free)
+    npm run deploy:backend   # security rules (or paste firestore.rules in the Firebase console)
     npm test                 # includes a simulated run of the alerts robot
     npm run test:rules       # security rules against the emulator (needs Java)

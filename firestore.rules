@@ -5,7 +5,8 @@ rules_version = '2';
 // =============================================================================
 //  The website is a static site with no server of its own, so browsers talk to
 //  Firestore directly. These rules are what keep customers' names, numbers and
-//  addresses private. Deploy with:  npm run deploy:backend
+//  addresses private. Publish: Firebase console → Firestore → Rules → paste →
+//  Publish (or `npm run deploy:backend`).
 //
 //  WHO CAN DO WHAT
 //

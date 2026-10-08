@@ -186,24 +186,26 @@ function Dashboard({ user, profile, onProfile }: { user: User; profile: Profile;
     let off: (() => void) | undefined;
     (async () => {
       const [app, fs] = await Promise.all([getFirebaseApp(), import('firebase/firestore')]);
+      // Equality only, sorted here: needs no composite index in Firestore.
       const q = fs.query(
         fs.collection(fs.getFirestore(app), 'bookings'),
         fs.where('customerUid', '==', user.uid),
-        fs.orderBy('createdAt', 'desc'),
-        fs.limit(50),
+        fs.limit(200),
       );
       off = fs.onSnapshot(
         q,
         (snap) =>
           setBookings(
-            snap.docs.map((d) => {
-              const data = d.data();
-              return {
-                ...(data as Omit<Booking, 'id'>),
-                id: d.id,
-                createdAt: toDate(data.createdAt),
-              };
-            }),
+            snap.docs
+              .map((d) => {
+                const data = d.data();
+                return {
+                  ...(data as Omit<Booking, 'id'>),
+                  id: d.id,
+                  createdAt: toDate(data.createdAt),
+                };
+              })
+              .sort((a, b) => (b.createdAt?.getTime() ?? 9e15) - (a.createdAt?.getTime() ?? 9e15)),
           ),
         () => setLoadError(true),
       );

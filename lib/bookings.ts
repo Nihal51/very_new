@@ -56,6 +56,7 @@ export type Booking = {
   createdAt?: Date;
   customerUid?: string;
   ref?: string;
+  number?: number;
   isReturning?: boolean;
   assignedDriver?: DriverRef | null;
   cancelReason?: string;
@@ -125,11 +126,55 @@ export const formatDateTime = (d?: Date) => (d ? dateFmt.format(d) : '');
 export function formatPreferred(raw: string): string {
   const s = (raw ?? '').trim();
   if (!s) return 'As soon as possible';
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
-  if (!m) return s;
+  const t = tripInstant(s);
+  return t ? dateFmt.format(t) : s;
+}
+
+/** The customer's preferred time as a real instant (digits are India time), or undefined for "as soon as possible". */
+export function tripInstant(raw: string): Date | undefined {
+  const m = (raw ?? '').trim().match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!m) return undefined;
   const [, y, mo, d, h, mi] = m.map(Number) as [number, number, number, number, number, number];
-  // Treat the digits as IST: build the UTC instant that IST shows as these digits.
-  return dateFmt.format(new Date(Date.UTC(y, mo - 1, d, h, mi) - 330 * 60 * 1000));
+  return new Date(Date.UTC(y, mo - 1, d, h, mi) - 330 * 60 * 1000);
+}
+
+/* ------------------------------------------------------------- date filters */
+
+export const DATE_RANGES = [
+  { id: 'any', label: 'Any date' },
+  { id: 'today', label: 'Today' },
+  { id: 'yesterday', label: 'Yesterday' },
+  { id: '7d', label: 'Last 7 days' },
+  { id: '30d', label: 'Last 30 days' },
+  { id: 'month', label: 'This month' },
+] as const;
+export type DateRange = (typeof DATE_RANGES)[number]['id'];
+
+/** Midnight in India, `daysAgo` days back. */
+export function istMidnight(now: number, daysAgo = 0): number {
+  const day = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  return Date.parse(`${day}T00:00:00+05:30`) - daysAgo * 86_400_000;
+}
+
+export function inDateRange(d: Date | undefined, range: DateRange, now: number): boolean {
+  if (range === 'any') return true;
+  if (!d) return false;
+  const t = d.getTime();
+  const today = istMidnight(now);
+  switch (range) {
+    case 'today':
+      return t >= today;
+    case 'yesterday':
+      return t >= today - 86_400_000 && t < today;
+    case '7d':
+      return t >= istMidnight(now, 6);
+    case '30d':
+      return t >= istMidnight(now, 29);
+    case 'month': {
+      const ym = new Date(now).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }).slice(0, 7);
+      return t >= Date.parse(`${ym}-01T00:00:00+05:30`);
+    }
+  }
 }
 
 export function timeAgo(d?: Date, now = Date.now()): string {
@@ -151,4 +196,10 @@ export function toDate(v: unknown): Date | undefined {
   if (typeof v === 'object' && v && 'toDate' in v && typeof (v as { toDate: unknown }).toDate === 'function')
     return (v as { toDate: () => Date }).toDate();
   return undefined;
+}
+
+/** The DB-number, or why there isn't one: the robot numbers new bookings within a minute; older ones never got one. */
+export function refLabel(b: Pick<Booking, 'ref' | 'createdAt'>, now = Date.now()): string {
+  if (b.ref) return b.ref;
+  return b.createdAt && now - b.createdAt.getTime() < 15 * 60_000 ? 'Numbering…' : '—';
 }
