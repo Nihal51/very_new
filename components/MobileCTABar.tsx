@@ -11,6 +11,7 @@ import { site, telHref, waHref } from '@/lib/site';
 export function MobileCTABar() {
   return (
     <div
+      data-cta-bar
       className={[
         'border-border bg-bg/95 fixed inset-x-0 bottom-0 z-30 border-t backdrop-blur-md lg:hidden',
         'pb-[env(safe-area-inset-bottom)]',

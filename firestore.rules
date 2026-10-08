@@ -3,31 +3,28 @@ rules_version = '2';
 // =============================================================================
 //  DriveBuddy — Firestore security rules
 // =============================================================================
-//  The website is a static site with no server, so the browser writes directly
-//  to Firestore. That makes these rules the ONLY thing standing between your
-//  customers' names, phone numbers and home addresses and the open internet.
+//  The website is a static site with no server of its own, so browsers talk to
+//  Firestore directly. These rules are what keep customers' names, numbers and
+//  addresses private. Deploy with:  npm run deploy:backend
 //
-//  Deploy them:
-//      firebase deploy --only firestore:rules
+//  WHO CAN DO WHAT
 //
-//  Design:
-//    * create  — allowed, but only for documents that match the exact shape the
-//                two website forms produce. Nothing else gets written.
-//    * read    — DENIED. Nobody can list or fetch a booking from the browser.
-//                Read your leads in the Firebase console, or from a backend
-//                using the Admin SDK (which bypasses these rules).
-//    * update  — DENIED. A submitted lead is immutable from the client.
-//    * delete  — DENIED. Same reason.
+//    Anyone (no login)    create a booking or a driver application, in the exact
+//                         shape the website forms produce. Nothing else.
+//    A logged-in customer the above, plus: read and edit their own profile
+//                         (users/{uid}) and read the bookings they made while
+//                         logged in. Never anyone else's.
+//    An admin             read everything; move bookings and drivers through
+//                         their statuses; assign drivers; add notes. Admin is a
+//                         custom claim (`admin: true`) granted only by the
+//                         claimAdmin function to the emails in the ADMIN_EMAILS
+//                         secret — no email address is written in this file.
+//    Cloud Functions      everything else (reference numbers, customer records,
+//                         alerts). They use the Admin SDK, which these rules do
+//                         not apply to, so no client can forge those fields.
 //
-//  Without the deny-read rule, anyone who views the page source can lift your
-//  project ID and dump every booking you have ever taken. With it, a leaked
-//  API key is worth nothing: the key identifies the project, it does not
-//  authorise access.
-//
-//  Recommended next step: turn on App Check (reCAPTCHA v3 / Enterprise) in the
-//  Firebase console and enforce it for Firestore. These rules validate the
-//  *shape* of a write; App Check validates that the write came from your real
-//  website rather than a script, which is what stops spam floods.
+//  Nothing is ever deleted from the browser — a booking is cancelled, not erased,
+//  so the history of every job stays complete.
 // =============================================================================
 
 service cloud.firestore {
@@ -35,19 +32,23 @@ service cloud.firestore {
 
     /* ----------------------------------------------------------- helpers -- */
 
-    function isText(value, minLen, maxLen) {
-      return value is string
-        && value.size() >= minLen
-        && value.size() <= maxLen;
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    // Optional free-text: must still be a string, may be empty.
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.admin == true;
+    }
+
+    function isText(value, minLen, maxLen) {
+      return value is string && value.size() >= minLen && value.size() <= maxLen;
+    }
+
     function isOptionalText(value, maxLen) {
       return value is string && value.size() <= maxLen;
     }
 
-    // Indian mobile: exactly ten digits, starting 6–9. The form normalises
-    // away any +91 or leading 0 before writing.
+    // Indian mobile: exactly ten digits, starting 6–9. Forms strip +91 / 0 first.
     function isMobile(value) {
       return value is string && value.matches('^[6-9][0-9]{9}$');
     }
@@ -56,25 +57,52 @@ service cloud.firestore {
       return value in ['Raipur', 'Bhilai', 'Durg', 'Bilaspur'];
     }
 
-    // Clients cannot backdate or forge a submission time, invent a source, or
-    // create a lead that is already marked as handled.
+    // Clients cannot backdate a submission, invent a source, or create a lead
+    // that is already marked as handled.
     function isServerStamped(data) {
       return data.createdAt == request.time
         && data.source == 'website'
         && data.status == 'new';
     }
 
+    // Every admin edit records who made it (uid — customers can read their own
+    // booking, so no admin email is stored on it) and when (server time).
+    function isAdminStamped(data) {
+      return data.updatedAt == request.time
+        && data.updatedBy == request.auth.uid;
+    }
+
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
     /* ---------------------------------------------------------- bookings -- */
-    //  Written by components/BookingForm.tsx
+    //  Created by components/BookingForm.tsx; numbered and alerted by
+    //  functions/index.js (onBookingCreated); managed in /admin.
+
+    function bookingStatuses() {
+      return ['new', 'confirmed', 'assigned', 'completed', 'cancelled'];
+    }
+
+    function isDriverRef(d) {
+      return d is map
+        && d.keys().hasOnly(['id', 'name', 'phone'])
+        && d.keys().hasAll(['id', 'name', 'phone'])
+        && isText(d.id, 1, 128)
+        && isText(d.name, 2, 60)
+        && isMobile(d.phone);
+    }
 
     match /bookings/{bookingId} {
-      allow read, update, delete: if false;
+      // Admins see everything; a customer sees only bookings tied to their login.
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.get('customerUid', '') == request.auth.uid);
 
       allow create: if
-        // No extra fields, no missing fields — the shape is exact.
         request.resource.data.keys().hasOnly([
           'name', 'phone', 'city', 'package', 'pickup',
-          'preferredTime', 'notes', 'createdAt', 'status', 'source'
+          'preferredTime', 'notes', 'createdAt', 'status', 'source',
+          'customerUid'
         ])
         && request.resource.data.keys().hasAll([
           'name', 'phone', 'city', 'package', 'pickup',
@@ -98,14 +126,47 @@ service cloud.firestore {
         && isText(request.resource.data.pickup, 6, 300)
         && isOptionalText(request.resource.data.preferredTime, 40)
         && isOptionalText(request.resource.data.notes, 500)
+        // Guests leave customerUid out; a logged-in customer can only tag their own uid.
+        && (!('customerUid' in request.resource.data)
+            || (isSignedIn() && request.resource.data.customerUid == request.auth.uid))
         && isServerStamped(request.resource.data);
+
+      // Admins move a booking through its lifecycle. The customer's own details
+      // and everything the server wrote stay read-only, even to an admin.
+      // Internal notes do NOT live here — the customer can read this document —
+      // they go in the admin-only timeline below.
+      allow update: if isAdmin()
+        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'updatedAt', 'updatedBy'])
+        && request.resource.data.status in bookingStatuses()
+        && (request.resource.data.get('assignedDriver', null) == null
+            || isDriverRef(request.resource.data.assignedDriver))
+        && isOptionalText(request.resource.data.get('cancelReason', ''), 200)
+        && isAdminStamped(request.resource.data);
+
+      allow delete: if false;
+
+      // The timeline: one entry per change or note, append-only, admins only.
+      // Status changes are written in the same batch as the change itself.
+      match /events/{eventId} {
+        allow read: if isAdmin();
+        allow create: if isAdmin()
+          && request.resource.data.keys().hasOnly(['type', 'from', 'to', 'note', 'by', 'at'])
+          && request.resource.data.keys().hasAll(['type', 'from', 'to', 'note', 'by', 'at'])
+          && request.resource.data.type in ['status', 'driver', 'note']
+          && (request.resource.data.from == null || request.resource.data.from in bookingStatuses())
+          && (request.resource.data.to == null || request.resource.data.to in bookingStatuses())
+          && isOptionalText(request.resource.data.note, 500)
+          && request.resource.data.by == request.auth.token.email
+          && request.resource.data.at == request.time;
+        allow update, delete: if false;
+      }
     }
 
     /* ----------------------------------------------------------- drivers -- */
-    //  Written by components/DriverForm.tsx
+    //  Applications from components/DriverForm.tsx; vetted in /admin.
 
     match /drivers/{driverId} {
-      allow read, update, delete: if false;
+      allow read: if isAdmin();
 
       allow create: if
         request.resource.data.keys().hasOnly([
@@ -125,11 +186,56 @@ service cloud.firestore {
         && request.resource.data.licence in ['commercial', 'lmv', 'both']
         && isOptionalText(request.resource.data.about, 500)
         && isServerStamped(request.resource.data);
+
+      // new → verified → active ⇄ inactive, or rejected.
+      allow update: if isAdmin()
+        && changedOnly(['status', 'adminNote', 'updatedAt', 'updatedBy'])
+        && request.resource.data.status in ['new', 'verified', 'active', 'inactive', 'rejected']
+        && isOptionalText(request.resource.data.get('adminNote', ''), 1000)
+        && isAdminStamped(request.resource.data);
+
+      allow delete: if false;
     }
 
-    /* --------------------------------------------------------- catch-all -- */
-    //  Anything not explicitly allowed above is denied, including any
-    //  collection someone invents. Deny last, deny everything.
+    /* ------------------------------------------------------------- users -- */
+    //  A customer's own login profile, written from /account.
+
+    match /users/{uid} {
+      function isOwner() {
+        return isSignedIn() && request.auth.uid == uid;
+      }
+      function validProfile(data) {
+        return isText(data.name, 2, 60)
+          && (data.get('phone', '') == '' || isMobile(data.get('phone', '')))
+          && (data.get('email', '') == '' || data.get('email', '') == request.auth.token.get('email', ''));
+      }
+
+      allow read: if isOwner() || isAdmin();
+      allow create: if isOwner()
+        && request.resource.data.keys().hasOnly(['name', 'phone', 'email', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['name', 'createdAt', 'updatedAt'])
+        && validProfile(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if isOwner()
+        && changedOnly(['name', 'phone', 'email', 'updatedAt'])
+        && validProfile(request.resource.data)
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    /* --------------------------------------------------------- customers -- */
+    //  One record per phone number, kept by onBookingCreated: name, booking
+    //  count, first and last booking. Read-only, admins only.
+
+    match /customers/{phone} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    /* -------------------------------------------------------- catch-all -- */
+    //  Anything not allowed above is denied — including meta/counters and any
+    //  collection someone invents.
 
     match /{document=**} {
       allow read, write: if false;

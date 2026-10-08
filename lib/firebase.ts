@@ -36,6 +36,19 @@ export function isFirebaseConfigured(): boolean {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
 }
 
+/** Must match FUNCTIONS_REGION in functions/.env — the admin panel calls claimAdmin there. */
+export const FUNCTIONS_REGION = 'asia-south1';
+
+/**
+ * The one Firebase app instance, created on first use. Every caller (forms,
+ * login, admin panel) goes through here so the SDK is downloaded once, only on
+ * pages that actually need it.
+ */
+export async function getFirebaseApp() {
+  const { initializeApp, getApps, getApp } = await import('firebase/app');
+  return getApps().length ? getApp() : initializeApp(firebaseConfig);
+}
+
 const FRIENDLY: Record<SubmitFailure, string> = {
   config:
     'Online booking is not connected on this deployment yet. Send your details on WhatsApp and we will confirm right away.',
@@ -61,10 +74,10 @@ export async function submitDoc(
   }
 
   try {
-    const [{ initializeApp, getApps, getApp }, { getFirestore, collection, addDoc, serverTimestamp }] =
-      await Promise.all([import('firebase/app'), import('firebase/firestore')]);
-
-    const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+    const [app, { getFirestore, collection, addDoc, serverTimestamp }] = await Promise.all([
+      getFirebaseApp(),
+      import('firebase/firestore'),
+    ]);
     const db = getFirestore(app);
 
     const ref = await addDoc(collection(db, collectionName), {

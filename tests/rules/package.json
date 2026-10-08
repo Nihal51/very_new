@@ -1,0 +1,14 @@
+{
+  "name": "drivebuddy-rules-tests",
+  "private": true,
+  "description": "Runs firestore.rules against the real Firestore emulator. Separate package so the website build never installs the emulator.",
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-drivebuddy --config ../../firebase.json \"node --test rules.test.mjs\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
+    "firebase": "^12.18.0",
+    "firebase-tools": "^15.32.1"
+  }
+}

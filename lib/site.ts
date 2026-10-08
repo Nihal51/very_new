@@ -105,4 +105,5 @@ export const nav = [
   { href: '/drivers/', label: 'Join as Driver' },
   { href: '/faq/', label: 'FAQ' },
   { href: '/contact/', label: 'Contact' },
+  { href: '/account/', label: 'My account' },
 ] as const;

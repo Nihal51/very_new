@@ -473,3 +473,14 @@ cd /c/git && rm -f "New Text Document.txt" "index (2).html" _original_backup.htm
 ```
 
 Keep a copy somewhere first if you want the old design for reference.
+
+## Bookings system: alerts, admin panel, customer login
+
+Bookings and driver applications are numbered, stored and alerted to Telegram and
+email by Cloud Functions; you manage them at `/admin`, and customers can log in at
+`/account`. Architecture, data model and the one-time setup are in
+[docs/bookings-system.md](docs/bookings-system.md).
+
+    npm run setup:alerts     # once: Telegram bot, email, admin accounts
+    npm run deploy:backend   # rules, indexes and functions
+    npm run test:rules       # security rules against the emulator (needs Java)

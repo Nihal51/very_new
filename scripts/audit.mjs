@@ -255,8 +255,14 @@ if (!robots.includes('Sitemap:')) {
    against prefix + page path rather than the bare path — an exact match, not a
    suffix match, so `/pricing/` can't be satisfied by `/anything/pricing/`. */
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
+/* noindex pages (/account/, /admin/) are deliberately left out of the sitemap. */
+const noindex = new Set(
+  pages
+    .filter((f) => /<meta name="robots" content="noindex/.test(readFileSync(f, 'utf8')))
+    .map((f) => path.relative(OUT, f).replaceAll('\\', '/')),
+);
 const indexable = rows
-  .filter((r) => !r.rel.includes('404') && !r.rel.includes('_not-found'))
+  .filter((r) => !r.rel.includes('404') && !r.rel.includes('_not-found') && !noindex.has(r.rel))
   .map((r) => r.rel.replace(/index\.html$/, ''));
 const missing = indexable.filter(
   (rel) => !urls.some((u) => new URL(u).pathname === `${BASE}/${rel}`),

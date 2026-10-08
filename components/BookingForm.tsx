@@ -6,6 +6,7 @@ import { Button, ButtonAnchor } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { CheckCircleIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
+import { currentUser, loadProfile, mightBeSignedIn } from '@/lib/auth';
 import { bookingPackages, cities } from '@/lib/content';
 import { submitDoc } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
@@ -112,6 +113,31 @@ export function BookingForm({
   const formRef = useRef<HTMLFormElement>(null);
   const successRef = useRef<HTMLDivElement>(null);
 
+  /* Logged-in customers: fill in name and number, and tie the booking to their
+     account so it shows under My account. The auth SDK is only fetched when this
+     browser has logged in before — first-time visitors download none of it. */
+  const [account, setAccount] = useState<{ uid: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!mightBeSignedIn()) return;
+    let alive = true;
+    (async () => {
+      const user = await currentUser().catch(() => null);
+      if (!user || !alive) return;
+      const profile = await loadProfile(user.uid).catch(() => null);
+      if (!alive) return;
+      setAccount({ uid: user.uid, name: profile?.name || user.displayName || 'you' });
+      if (profile)
+        setValues((v) => ({
+          ...v,
+          name: v.name || profile.name,
+          phone: v.phone || profile.phone,
+        }));
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // Move focus to the confirmation so screen reader and keyboard users land on it.
   useEffect(() => {
     if (status === 'success') successRef.current?.focus();
@@ -159,12 +185,13 @@ export function BookingForm({
       pickup: values.pickup.trim(),
       preferredTime: values.when || '',
       notes: values.notes.trim(),
+      ...(account && { customerUid: account.uid }),
     });
 
     if (result.ok) {
       setSubmitted(values);
       setStatus('success');
-      setValues(EMPTY);
+      setValues(account ? { ...EMPTY, name: values.name, phone: values.phone } : EMPTY);
       setTouched({});
       setErrors({});
     } else {
@@ -217,6 +244,15 @@ export function BookingForm({
           </dl>
 
           <p className="text-fg-subtle mt-5 text-sm">
+            {account ? (
+              <>
+                You can follow this booking in{' '}
+                <a href="/account/" className="text-accent-text font-semibold underline underline-offset-4">
+                  My account
+                </a>
+                .{' '}
+              </>
+            ) : null}
             Need it sooner, or something to add? Reach us directly — we are available 24/7.
           </p>
 
@@ -258,6 +294,25 @@ export function BookingForm({
     <Card id={id} className={cn('scroll-mt-28', className)}>
       <Heading className="text-display-sm">{title}</Heading>
       <p className="text-fg-muted mt-2 text-[0.9375rem]">{lede}</p>
+      <p className="text-fg-subtle mt-2 text-sm">
+        {account ? (
+          <>
+            Logged in as <strong className="text-fg">{account.name}</strong> — this booking will show in{' '}
+            <a href="/account/" className="underline underline-offset-4">
+              My account
+            </a>
+            .
+          </>
+        ) : (
+          <>
+            No account needed.{' '}
+            <a href="/account/" className="underline underline-offset-4">
+              Log in
+            </a>{' '}
+            to track your bookings.
+          </>
+        )}
+      </p>
 
       <form ref={formRef} onSubmit={onSubmit} noValidate className="mt-6">
         {/* Disabling the fieldset freezes every control while the write is in flight. */}
