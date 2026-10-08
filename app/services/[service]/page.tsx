@@ -11,6 +11,7 @@ import { ButtonAnchor, ButtonLink } from '@/components/ui/Button';
 import { Section } from '@/components/ui/Section';
 import { CheckIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
 import { cities, faqs, services } from '@/lib/content';
+import { cityServicePath } from '@/lib/local-seo';
 import { breadcrumbSchema, faqSchema, serviceSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { formatPhone, site, telHref, waHref } from '@/lib/site';
@@ -175,8 +176,8 @@ export default async function ServicePage({ params }: Props) {
       >
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {cities.map((c) => (
-            <ButtonLink key={c.slug} href={`/cities/${c.slug}/`} variant="outline" fullWidth>
-              Drivers in {c.name}
+            <ButtonLink key={c.slug} href={cityServicePath(c, service)} variant="outline" fullWidth>
+              {service.title} in {c.name}
             </ButtonLink>
           ))}
         </div>

@@ -8,6 +8,7 @@ import {
   services,
 } from '@/lib/content';
 import { cityHi } from '@/lib/content-hi';
+import { placePath, towns } from '@/lib/local-seo';
 import { priceText } from '@/lib/settings';
 import { formatPhone, site } from '@/lib/site';
 
@@ -66,6 +67,11 @@ function body(): string {
       (c) =>
         `- [Drivers in ${c.name}](${url(`/cities/${c.slug}/`)}) — Hindi: [${cityHi(c.slug).name} में ड्राइवर](${url(`/hi/cities/${c.slug}/`)})`,
     ),
+    '',
+    '## Nearby towns (driver comes from Raipur; arrival time confirmed on the call)',
+    '',
+    ...towns.map((t) => `- [Driver in ${t.name}](${url(placePath(t))}) — about ${t.km} km from Raipur`),
+    `- [Every area we cover](${url('/driver-in/')})`,
     '',
     '## Key pages',
     '',

@@ -439,3 +439,53 @@ export function breadcrumbSchema(
     })),
   };
 }
+
+/* ------------------------------------------------- local search pages */
+
+/** Service offered in one named place — the /driver-in/<place>/ pages. */
+export function placeServiceSchema({
+  path,
+  name,
+  description,
+  place,
+  city,
+}: {
+  path: string;
+  name: string;
+  description: string;
+  /** The town or neighbourhood. */
+  place: string;
+  city: (typeof cities)[number];
+}) {
+  const cityNode = {
+    '@type': 'City',
+    name: city.name,
+    geo: { '@type': 'GeoCoordinates', latitude: String(city.geo.lat), longitude: String(city.geo.lng) },
+    containedInPlace: STATE_AREA,
+  };
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    '@id': `${abs(path)}#service`,
+    name,
+    description,
+    serviceType: 'Driver on call',
+    url: abs(path),
+    provider: { '@id': ORG_ID },
+    areaServed:
+      place === city.name ? cityNode : { '@type': 'Place', name: `${place}, ${site.region}`, containedInPlace: cityNode },
+    audience: { '@type': 'Audience', audienceType: 'Car owners' },
+  };
+}
+
+/** One service in one city — the /cities/<city>/<service>/ pages. */
+export function cityServiceSchema(citySlug: string, serviceSlug: string, path: string, description: string) {
+  const city = cities.find((c) => c.slug === citySlug);
+  const service = services.find((s) => s.slug === serviceSlug);
+  if (!city || !service) return null;
+  return {
+    ...placeServiceSchema({ path, name: `${service.title} in ${city.name}`, description, place: city.name, city }),
+    serviceType: service.title,
+    ...(service.tiers && { offers: tierOffers(service.tiers) }),
+  };
+}

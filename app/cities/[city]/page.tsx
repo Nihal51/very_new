@@ -9,12 +9,14 @@ import { PricingCards } from '@/components/sections/PricingCards';
 import { ServicesGrid } from '@/components/sections/ServicesGrid';
 import { Accordion } from '@/components/ui/Accordion';
 import { Badge } from '@/components/ui/Badge';
+import { PlaceLinks, ServiceLinks } from '@/components/sections/LocalBlocks';
 import { ButtonAnchor, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Container, Section } from '@/components/ui/Section';
 import { BuildingIcon, ClockIcon, PhoneIcon, RouteIcon } from '@/components/icons';
 import { LanguageLink } from '@/components/hi/HindiBlocks';
 import { cities, faqs, getCity } from '@/lib/content';
+import { localitiesOf, townsNear } from '@/lib/local-seo';
 import { cityHi } from '@/lib/content-hi';
 import { breadcrumbSchema, citySchema, faqSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
@@ -110,13 +112,16 @@ export default async function CityPage({ params }: Props) {
               </span>
               <h3 className="font-display text-lg font-semibold">Areas we serve</h3>
             </div>
-            <ul className="mt-5 flex flex-wrap gap-2">
-              {city.areas.map((area) => (
-                <li key={area}>
-                  <Badge tone="outline">{area}</Badge>
-                </li>
-              ))}
-            </ul>
+            <div className="mt-5">
+              <PlaceLinks places={[...localitiesOf(city.slug), ...townsNear(city.slug)]} prefix="" />
+              {city.areas
+                .filter((a) => /\bto\b/i.test(a))
+                .map((a) => (
+                  <Badge key={a} tone="outline" className="mt-2">
+                    {a}
+                  </Badge>
+                ))}
+            </div>
             <p className="text-fg-subtle mt-5 text-sm">
               Not on the list? We still come — these are simply the areas we are booked in most
               often.
@@ -188,6 +193,10 @@ export default async function CityPage({ params }: Props) {
         lede="The same verified drivers at the same rates as everywhere else we operate — by the hour, the day or the month."
       >
         <ServicesGrid />
+        <h3 className="text-fg-subtle mt-10 mb-3 text-xs font-semibold tracking-wide uppercase">
+          Book by service in {city.name}
+        </h3>
+        <ServiceLinks city={city} where={city.name} />
       </Section>
 
       <Section tone="subtle" id="pricing" eyebrow="Pricing" title={`Driver charges in ${city.name}`}>

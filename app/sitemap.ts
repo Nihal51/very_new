@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 
 import { cities, services } from '@/lib/content';
+import { cityServicePairs, cityServicePath, placePath, places } from '@/lib/local-seo';
 import { site } from '@/lib/site';
 
 /**
@@ -23,6 +24,7 @@ const CORE: ReadonlyArray<Pick<Entry, 'url' | 'changeFrequency' | 'priority'>> =
   { url: '/pricing/', changeFrequency: 'monthly', priority: 0.9 },
   { url: '/book/', changeFrequency: 'monthly', priority: 0.9 },
   { url: '/cities/', changeFrequency: 'monthly', priority: 0.8 },
+  { url: '/driver-in/', changeFrequency: 'monthly', priority: 0.8 },
   { url: '/drivers/', changeFrequency: 'monthly', priority: 0.7 },
   { url: '/faq/', changeFrequency: 'monthly', priority: 0.7 },
   { url: '/about/', changeFrequency: 'yearly', priority: 0.6 },
@@ -80,5 +82,19 @@ export default function sitemap(): MetadataRoute.Sitemap {
     ),
   ];
 
-  return [...core, ...cityPages, ...servicePages, ...hindiPages];
+  /* Local search pages: one per town or neighbourhood, one per service in each city. */
+  const placePages: Entry[] = places.map((p) => ({
+    url: `${site.url}${placePath(p)}`,
+    lastModified: LAST_MODIFIED,
+    changeFrequency: 'monthly',
+    priority: p.kind === 'town' ? 0.8 : 0.6,
+  }));
+  const cityServicePages: Entry[] = cityServicePairs.map(({ city, service }) => ({
+    url: `${site.url}${cityServicePath(city, service)}`,
+    lastModified: LAST_MODIFIED,
+    changeFrequency: 'monthly',
+    priority: 0.7,
+  }));
+
+  return [...core, ...cityPages, ...servicePages, ...cityServicePages, ...placePages, ...hindiPages];
 }
