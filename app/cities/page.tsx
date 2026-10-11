@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { Section } from '@/components/ui/Section';
 import { MapPinIcon } from '@/components/icons';
 import { cities } from '@/lib/content';
+import { towns } from '@/lib/local-seo';
 import { breadcrumbSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { site } from '@/lib/site';
@@ -21,7 +22,7 @@ const trail = [{ name: 'Cities', path: '/cities/' }];
 export const metadata: Metadata = pageMeta({
   title: 'Cities We Serve — Raipur, Bhilai, Durg & Bilaspur',
   description:
-    'DriveBuddy provides verified drivers in Raipur, Bhilai, Durg and Bilaspur — 24 hours a day, with a 30-minute arrival guarantee. See coverage area by city.',
+    'Verified drivers in Raipur, Bhilai, Durg, Bilaspur and nearby towns like Naya Raipur, Arang and Kumhari — 24 hours a day, usually within 30 minutes.',
   path: '/cities/',
 });
 
@@ -31,7 +32,7 @@ export default function CitiesPage() {
       <PageHero
         eyebrow="Service area"
         title="Where we operate"
-        lede={`Four cities across ${site.region}, each with its own driver roster on duty around the clock. Pick your city to see the areas we cover and how quickly we usually reach you.`}
+        lede={`Four cities across ${site.region}, each with its own driver roster on duty around the clock, plus ${towns.length} nearby towns: ${towns.map((t) => t.name).join(', ')}. Pick your city or town to see the areas we cover.`}
         trail={trail}
       />
 
@@ -64,7 +65,7 @@ export default function CitiesPage() {
         </div>
 
         <p className="text-fg-subtle mt-8 text-sm">
-          Travelling outside these four cities? Outstation bookings start from any of them and go
+          Travelling beyond these areas? Outstation bookings start from any of them and go
           anywhere in {site.region} and beyond — call us for a quote on the full journey.
         </p>
       </Section>

@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Logo } from '@/components/Logo';
 import { MailIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
 import { cities, services } from '@/lib/content';
+import { placePath, towns } from '@/lib/local-seo';
 import { formatPhone, mailHref, site, telHref, telHrefAlt, waHref } from '@/lib/site';
 
 const company = [
@@ -80,6 +81,18 @@ export function Footer() {
                 </li>
               ))}
             </ul>
+            <h2 id="footer-towns" className="text-eyebrow mt-8 text-white/45 uppercase">
+              Nearby towns
+            </h2>
+            <ul aria-labelledby="footer-towns" className="mt-4 flex flex-col gap-3">
+              {towns.map((t) => (
+                <li key={t.slug}>
+                  <Link href={placePath(t)} className={linkClass}>
+                    Drivers in {t.name}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </nav>
 
           <div>
@@ -118,8 +131,8 @@ export function Footer() {
       <div className="border-t border-white/10">
         <div className="container-page flex flex-col gap-3 py-6 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-white/45">
-            © {site.foundingYear}–2026 {site.legalName}. Serving Raipur, Bhilai, Durg and
-            Bilaspur.
+            © {site.foundingYear}–2026 {site.legalName}. Serving Raipur, Bhilai, Durg,
+            Bilaspur and nearby towns.
           </p>
           <ul className="flex flex-wrap gap-x-5 gap-y-2">
             <li>
