@@ -111,8 +111,9 @@ const premiumJoiningFeeShort =
  * quoted on the call, never a typed figure (owner, 11 Oct 2026).
  */
 export const monthlyHigherRate = {
-  label: 'Luxury car or a 10+ year driver',
-  short: 'Higher, quoted on the call',
+  /** Under the price on each plan card, where every visitor reads it before choosing. */
+  cardNote: 'For a standard car and a 5+ year driver. Luxury car or 10+ year driver: price on call.',
+  /** The full version, for the FAQ and llms.txt. */
   sentence:
     'These prices are for a standard car and a driver with 5+ years of experience. For a luxury car, or a senior driver with 10+ years of experience, the monthly price is higher and we quote it on the call.',
 } as const;
@@ -180,7 +181,6 @@ export const monthlyComparison: readonly { label: string; basic: string; premium
     premium: `New driver ${priceText.replacement}, free`,
   },
   { label: 'Driver quits after the first month', basic: 'Not included', premium: `New driver ${priceText.replacement}, free` },
-  { label: monthlyHigherRate.label, basic: monthlyHigherRate.short, premium: monthlyHigherRate.short },
 ];
 
 export const services: Service[] = [

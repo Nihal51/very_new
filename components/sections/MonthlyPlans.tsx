@@ -34,6 +34,7 @@ export function MonthlyPlans() {
             <p className={cn('mt-1 text-sm', plan.joiningFee ? 'text-fg-muted' : 'text-success font-semibold')}>
               {plan.joiningFee ?? 'No joining fee'}
             </p>
+            <p className="text-fg-subtle mt-1 text-sm">{monthlyHigherRate.cardNote}</p>
 
             <p className="text-fg-muted mt-4 text-[0.9375rem]">{plan.blurb}</p>
 
@@ -105,7 +106,6 @@ export function MonthlyPlans() {
         </li>
         <li>Plans cover driving within your city; outstation trips are charged separately.</li>
         <li>The driver&apos;s charge only — you provide the car and fuel, as with every booking.</li>
-        <li>{monthlyHigherRate.sentence}</li>
       </ul>
     </>
   );
