@@ -150,6 +150,7 @@ export default async function CityServicePage({ params }: Props) {
               </li>
             ))}
           </ul>
+          {quote.note && <p className="text-fg-muted mt-6 max-w-2xl text-[0.9375rem]">{quote.note}</p>}
           <div className="mt-8">
             <ButtonAnchor href={waHref(quote.whatsapp)} target="_blank" rel="noopener noreferrer" variant="outline">
               <WhatsappIcon className="size-5" />
@@ -198,7 +199,11 @@ export default async function CityServicePage({ params }: Props) {
 
       <ClosingCTA
         title={`Need a ${service.title.toLowerCase()} in ${city.name}?`}
-        lede={`Call or WhatsApp us — a police-verified, sober driver for your own car, anywhere in ${city.name}.`}
+        lede={
+          quote?.note
+            ? `Call or WhatsApp us for one fixed quote — police-verified, sober drivers, anywhere in ${city.name}.`
+            : `Call or WhatsApp us — a police-verified, sober driver for your own car, anywhere in ${city.name}.`
+        }
       />
 
       <JsonLd data={cityServiceSchema(city.slug, service.slug, path, describe(city.name, service))} />

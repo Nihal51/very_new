@@ -132,8 +132,9 @@ export default async function ServicePage({ params }: Props) {
             ))}
           </ul>
           <p className="text-fg-muted mt-6 max-w-2xl text-[0.9375rem]">
-            The driver&apos;s charge only — you provide the vehicle and fuel, as with every
-            DriveBuddy booking. No surge and no hidden extras once the price is agreed.
+            {quote.note ??
+              'The driver’s charge only — you provide the vehicle and fuel, as with every DriveBuddy booking.'}{' '}
+            No surge and no hidden extras once the price is agreed.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             <ButtonAnchor href={telHref}>

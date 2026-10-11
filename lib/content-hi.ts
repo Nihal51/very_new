@@ -174,7 +174,7 @@ export const servicesHi: Record<string, { title: string; short: string }> = {
   },
   'wedding-event-driver': {
     title: 'शादी और इवेंट ड्राइवर',
-    short: 'बारात की गाड़ी, मेहमानों का पिकअप और फ़ंक्शन के बाद देर रात की ड्रॉप।',
+    short: 'आपकी गाड़ियों के लिए ड्राइवर, या ड्राइवर के साथ गाड़ी: बारात, मेहमानों का पिकअप और देर रात की ड्रॉप।',
   },
   'one-way-car-drop': {
     title: 'वन-वे कार ड्रॉप',

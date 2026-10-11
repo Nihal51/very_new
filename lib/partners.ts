@@ -50,7 +50,7 @@ export const partnerTypes: readonly PartnerType[] = [
     title: 'Weddings and events',
     who: 'Wedding planners, banquet halls and event managers',
     need: 'A function needs many drivers at once: the baraat, guest pickups and late-night drops.',
-    customersGet: 'One fixed quote for all the drivers, agreed before the day.',
+    customersGet: 'Drivers for their own cars, or cars with our drivers, in one fixed quote agreed before the day.',
     partnerGets: `${priceText.partnerEventDay} per driver per day booked through you.`,
   },
   {

@@ -50,6 +50,8 @@ export type Service = {
      * instead of "hi, how much?".
      */
     whatsapp: string;
+    /** Replaces the usual "driver's charge only, you provide the car and fuel" line. */
+    note?: string;
   };
   /**
    * Fixed-price plans the customer chooses between (the monthly driver's Basic and
@@ -294,16 +296,17 @@ export const services: Service[] = [
     slug: 'wedding-event-driver',
     icon: 'star',
     title: 'Wedding & Event Driver',
-    short: 'Drivers for the baraat, guest pickups and late-night drops after the function.',
-    body: 'Weddings and family functions need more drivers than any family has. We supply verified, sober drivers for the baraat and family cars, guest pickups from the station and airport, and safe drops after a late function — so the people who would otherwise be driving can enjoy the day.',
-    heading: 'Drivers for weddings and family functions',
-    metaTitle: 'Wedding and Event Driver on Hire',
+    short: 'Drivers for your cars, or cars with drivers: the baraat, guest pickups and late-night drops.',
+    body: 'Weddings and family functions need more drivers than any family has. We supply verified, sober drivers for the baraat and family cars, guest pickups from the station and airport, and safe drops after a late function — so the people who would otherwise be driving can enjoy the day. Short of cars? For weddings and events we can also bring the car, always with our driver.',
+    heading: 'Drivers and cars with drivers for weddings and functions',
+    metaTitle: 'Wedding Car with Driver & Event Drivers',
     metaDescription:
-      'Hire verified, sober drivers for weddings, baraat cars, guest pickups and functions in Raipur, Bhilai, Durg and Bilaspur. One car or several.',
+      'Verified drivers for your own cars, or a car with a driver, for weddings, the baraat, guest pickups and functions in Raipur, Bhilai, Durg and Bilaspur.',
     badge: 'Book ahead',
     extra: true,
     includes: [
       'Drivers for the baraat and family cars',
+      'A car with a driver, when you need more cars',
       'Guest pickups from the station and airport',
       'Safe drops after a late function',
       'Breath-tested before duty, zero alcohol',
@@ -313,17 +316,23 @@ export const services: Service[] = [
       body: 'Every function is different, so we quote it as a whole once we know the plan. In the wedding season, book a few days ahead so we can hold enough drivers for every car.',
       factors: [
         'Number of cars that need a driver',
+        'How many cars we bring, with drivers',
         'Hours per driver',
         'Late-night drops',
         'Travel between venues or towns',
       ],
       whatsapp:
-        'Hi DriveBuddy, I need drivers for an event.\nEvent date(s):\nCity / venue:\nHow many cars need a driver:\nTimings (from – to):',
+        'Hi DriveBuddy, I need drivers for an event.\nEvent date(s):\nCity / venue:\nHow many of our own cars need a driver:\nHow many cars with drivers we need from you:\nTimings (from – to):',
+      note: 'Driver only: you provide the car and fuel. Car with a driver: the quote covers the car as well, and we tell you exactly what is included before you book. We do not rent out cars without our driver.',
     },
     faqs: [
       {
         q: 'Can I book drivers for a wedding?',
         a: 'Yes. Tell us the date, how many cars need a driver and the timings — baraat, guest pickups, late-night drops — and we will quote the whole event and assign a verified driver to each car.',
+      },
+      {
+        q: 'Can you provide the car as well as the driver?',
+        a: 'Yes, for weddings and events. If the family is short of cars, we send a car with our driver for the baraat, guest pickups or drops, and include it in the quote. We do not rent out cars without a driver.',
       },
       {
         q: 'How early should I book a wedding driver?',
@@ -480,7 +489,7 @@ export const extraRates = [
   },
   {
     label: 'Wedding & event drivers',
-    detail: 'Per event — by cars and hours',
+    detail: 'Per event — drivers, or cars with drivers',
     price: 'On call',
   },
 ];
@@ -500,7 +509,7 @@ export const bookingPackages = [
   { value: 'medical-emergency', label: 'Hospital / Emergency — priority' },
   { value: 'monthly-basic', label: `Monthly Driver, Basic plan — ${priceText.basic} a month` },
   { value: 'monthly-premium', label: `Monthly Driver, Premium plan — ${priceText.premium} a month` },
-  { value: 'wedding-event', label: 'Wedding / Event Drivers — quoted on call' },
+  { value: 'wedding-event', label: 'Wedding / Event — drivers or cars with drivers, quoted on call' },
   { value: 'one-way-drop', label: 'One-Way Car Drop — quoted on call' },
 ] as const;
 
@@ -763,7 +772,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'How much does it cost to hire a driver?',
-    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstation} for an outstation trip; the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel.`,
+    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstation} for an outstation trip; the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers and one-way car drops are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
   },
   {
     q: 'How quickly will a driver arrive?',
@@ -803,7 +812,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Do you provide drivers for weddings and events?',
-    a: 'Yes — for the baraat and family cars, guest pickups from the station and airport, and drops after a late function. Tell us the date, the number of cars and the timings, and we quote the whole event.',
+    a: 'Yes — for the baraat and family cars, guest pickups from the station and airport, and drops after a late function. If you are short of cars, we can also send a car with our driver. Tell us the date, the number of cars and the timings, and we quote the whole event.',
   },
   {
     q: 'Can a driver take my car to another city one way?',
