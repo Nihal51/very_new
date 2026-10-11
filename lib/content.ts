@@ -105,6 +105,18 @@ const premiumJoiningFeeShort =
   m.premiumJoiningFeePercent > 0
     ? `${priceText.premiumJoiningFeePercent} of one month (${priceText.premiumJoiningFee})`
     : null;
+/**
+ * Both plan prices assume a standard car and a driver with 5+ years of experience.
+ * A luxury car, or a senior driver with 10+ years of experience, costs more —
+ * quoted on the call, never a typed figure (owner, 11 Oct 2026).
+ */
+export const monthlyHigherRate = {
+  label: 'Luxury car or a 10+ year driver',
+  short: 'Higher, quoted on the call',
+  sentence:
+    'These prices are for a standard car and a driver with 5+ years of experience. For a luxury car, or a senior driver with 10+ years of experience, the monthly price is higher and we quote it on the call.',
+} as const;
+
 /** "plus a one-time joining fee of 10% of one month (₹2,000)" / "with no joining fee". */
 const premiumFeeClause = premiumJoiningFeeShort
   ? `plus a one-time joining fee of ${premiumJoiningFeeShort}`
@@ -168,6 +180,7 @@ export const monthlyComparison: readonly { label: string; basic: string; premium
     premium: `New driver ${priceText.replacement}, free`,
   },
   { label: 'Driver quits after the first month', basic: 'Not included', premium: `New driver ${priceText.replacement}, free` },
+  { label: monthlyHigherRate.label, basic: monthlyHigherRate.short, premium: monthlyHigherRate.short },
 ];
 
 export const services: Service[] = [
@@ -265,7 +278,7 @@ export const services: Service[] = [
     faqs: [
       {
         q: 'How much does a monthly driver cost?',
-        a: `The Basic plan is ${priceText.basic} a month${m.joiningFeePercent > 0 ? ` plus a one-time joining fee of ${priceText.joiningFeePercent} of one month` : ''}. The Premium plan is ${priceText.premium} a month ${premiumFeeClause}. Both give you a verified driver for ${m.hoursPerDay} hours a day with ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month; extra hours are ${priceText.extraHour} an hour.`,
+        a: `The Basic plan is ${priceText.basic} a month${m.joiningFeePercent > 0 ? ` plus a one-time joining fee of ${priceText.joiningFeePercent} of one month` : ''}. The Premium plan is ${priceText.premium} a month ${premiumFeeClause}. Both give you a verified driver for ${m.hoursPerDay} hours a day with ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month; extra hours are ${priceText.extraHour} an hour. ${monthlyHigherRate.sentence}`,
       },
       {
         q: 'What is the difference between the Basic and Premium plans?',

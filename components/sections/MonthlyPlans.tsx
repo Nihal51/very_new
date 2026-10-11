@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/Badge';
 import { ButtonAnchor } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { CheckIcon, WhatsappIcon } from '@/components/icons';
-import { monthlyComparison, monthlyPlans, monthlyTerms } from '@/lib/content';
+import { monthlyComparison, monthlyHigherRate, monthlyPlans, monthlyTerms } from '@/lib/content';
 import { cn } from '@/lib/cn';
 import { waHref } from '@/lib/site';
 
@@ -105,6 +105,7 @@ export function MonthlyPlans() {
         </li>
         <li>Plans cover driving within your city; outstation trips are charged separately.</li>
         <li>The driver&apos;s charge only — you provide the car and fuel, as with every booking.</li>
+        <li>{monthlyHigherRate.sentence}</li>
       </ul>
     </>
   );

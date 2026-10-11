@@ -2,6 +2,7 @@ import {
   cities,
   faqs,
   monthlyComparison,
+  monthlyHigherRate,
   monthlyPlans,
   monthlyTerms,
   plans,
@@ -49,6 +50,7 @@ function body(): string {
         `- Monthly driver, ${p.name} plan: ${p.price} a month${p.joiningFee ? ` + ${p.joiningFee.toLowerCase()}` : ', no joining fee'}`,
     ),
     `- Monthly driver, both plans: ${monthlyTerms.hoursPerDay} hours a day, ${monthlyTerms.daysOffPerMonth} days off a month, ${monthlyTerms.overtime} per extra hour; outstation trips extra`,
+    `- Monthly driver: ${monthlyHigherRate.sentence}`,
     ...monthlyComparison
       .filter((r) => r.basic !== r.premium && r.label !== 'Monthly charge' && !r.label.startsWith('Joining'))
       .map((r) => `- Monthly driver, ${r.label.toLowerCase()}: Basic — ${r.basic}; Premium — ${r.premium}`),
