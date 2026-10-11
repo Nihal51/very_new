@@ -65,8 +65,9 @@ export type Service = {
 
 /**
  * Monthly driver plans. Every figure and promise here was set by the owner on
- * 7 Oct 2026 — change them only on the owner's word, and keep the Hindi copy in
- * lib/content-hi.ts in step.
+ * 7 Oct 2026 (Premium's one-time 10% joining fee added on the owner's word,
+ * 11 Oct 2026) — change them only on the owner's word, and keep the Hindi copy
+ * in lib/content-hi.ts in step.
  */
 /** The monthly plans' shared terms, as set in site-settings.ts. */
 export const monthlyTerms = {
@@ -100,6 +101,14 @@ const planWhatsapp = (plan: string) =>
 
 const joiningFeeShort =
   m.joiningFeePercent > 0 ? `${priceText.joiningFeePercent} of one month (${priceText.joiningFee})` : null;
+const premiumJoiningFeeShort =
+  m.premiumJoiningFeePercent > 0
+    ? `${priceText.premiumJoiningFeePercent} of one month (${priceText.premiumJoiningFee})`
+    : null;
+/** "plus a one-time joining fee of 10% of one month (₹2,000)" / "with no joining fee". */
+const premiumFeeClause = premiumJoiningFeeShort
+  ? `plus a one-time joining fee of ${premiumJoiningFeeShort}`
+  : 'with no joining fee';
 
 export const monthlyPlans: readonly MonthlyPlan[] = [
   {
@@ -125,14 +134,16 @@ export const monthlyPlans: readonly MonthlyPlan[] = [
     price: priceText.premium,
     min: m.premium,
     max: m.premium,
-    joiningFee: null,
+    joiningFee: premiumJoiningFeeShort && `One-time joining fee: ${premiumJoiningFeeShort}`,
     blurb: `Never be left without a driver: a free stand-in on leave days, and a new driver ${priceText.replacement} if yours ever leaves.`,
     recommended: true,
     highlights: [
       `A verified driver, ${m.hoursPerDay} hours a day`,
       'Free stand-in driver whenever yours takes leave',
       `New verified driver ${priceText.replacement} if yours quits — any time`,
-      'No joining fee',
+      premiumJoiningFeeShort
+        ? `Joining fee only ${priceText.premiumJoiningFeePercent}, against ${priceText.joiningFeePercent} on Basic`
+        : 'No joining fee',
     ],
     packageValue: 'monthly-premium',
     whatsapp: planWhatsapp('Premium'),
@@ -142,7 +153,7 @@ export const monthlyPlans: readonly MonthlyPlan[] = [
 /** Row-by-row comparison shown under the plan cards. */
 export const monthlyComparison: readonly { label: string; basic: string; premium: string }[] = [
   { label: 'Monthly charge', basic: priceText.basic, premium: priceText.premium },
-  { label: 'Joining fee (one time)', basic: joiningFeeShort ?? 'None', premium: 'None' },
+  { label: 'Joining fee (one time)', basic: joiningFeeShort ?? 'None', premium: premiumJoiningFeeShort ?? 'None' },
   { label: 'Working hours', basic: `${m.hoursPerDay} hours a day`, premium: `${m.hoursPerDay} hours a day` },
   { label: 'Extra hours', basic: `${priceText.extraHour} an hour`, premium: `${priceText.extraHour} an hour` },
   {
@@ -254,11 +265,11 @@ export const services: Service[] = [
     faqs: [
       {
         q: 'How much does a monthly driver cost?',
-        a: `The Basic plan is ${priceText.basic} a month${m.joiningFeePercent > 0 ? ` plus a one-time joining fee of ${priceText.joiningFeePercent} of one month` : ''}. The Premium plan is ${priceText.premium} a month with no joining fee. Both give you a verified driver for ${m.hoursPerDay} hours a day with ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month; extra hours are ${priceText.extraHour} an hour.`,
+        a: `The Basic plan is ${priceText.basic} a month${m.joiningFeePercent > 0 ? ` plus a one-time joining fee of ${priceText.joiningFeePercent} of one month` : ''}. The Premium plan is ${priceText.premium} a month ${premiumFeeClause}. Both give you a verified driver for ${m.hoursPerDay} hours a day with ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month; extra hours are ${priceText.extraHour} an hour.`,
       },
       {
         q: 'What is the difference between the Basic and Premium plans?',
-        a: `What happens when your driver is away. On Premium, a stand-in driver comes free whenever your driver takes leave, and if your driver quits at any time we send a new verified driver ${priceText.replacement}; there is no joining fee. On Basic, a stand-in costs ${priceText.standIn} a day, and the free replacement ${priceText.replacement} applies only if the driver quits in the first month.`,
+        a: `What happens when your driver is away. On Premium, a stand-in driver comes free whenever your driver takes leave, and if your driver quits at any time we send a new verified driver ${priceText.replacement}. On Basic, a stand-in costs ${priceText.standIn} a day, and the free replacement ${priceText.replacement} applies only if the driver quits in the first month.`,
       },
       {
         q: 'Can I hire a permanent driver through DriveBuddy?',
@@ -775,7 +786,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can I hire a monthly or permanent driver?',
-    a: `Yes. Choose the Basic plan at ${priceText.basic} a month${m.joiningFeePercent > 0 ? ` (plus a one-time joining fee of ${priceText.joiningFeePercent} of one month)` : ''} or Premium at ${priceText.premium} a month, which adds free stand-in drivers and a new driver ${priceText.replacement} if yours quits. Both cover ${m.hoursPerDay} hours a day with ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month.`,
+    a: `Yes. Choose the Basic plan at ${priceText.basic} a month${m.joiningFeePercent > 0 ? ` (plus a one-time joining fee of ${priceText.joiningFeePercent} of one month)` : ''} or Premium at ${priceText.premium} a month${premiumJoiningFeeShort ? ` (plus a one-time joining fee of ${premiumJoiningFeeShort})` : ''}, which adds free stand-in drivers and a new driver ${priceText.replacement} if yours quits. Both cover ${m.hoursPerDay} hours a day with ${m.daysOffPerMonth} ${day(m.daysOffPerMonth)} off a month.`,
   },
   {
     q: 'Do you provide drivers for weddings and events?',

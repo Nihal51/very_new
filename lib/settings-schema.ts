@@ -32,6 +32,7 @@ export type SiteSettings = {
     basic: Range;
     joiningFeePercent: number;
     premium: number;
+    premiumJoiningFeePercent: number;
     hoursPerDay: number;
     extraHour: number;
     daysOffPerMonth: number;
@@ -94,6 +95,7 @@ export function checkSettings(s: SiteSettings): SiteSettings {
   range('monthly.basic', s.monthly.basic);
   count('monthly.joiningFeePercent', s.monthly.joiningFeePercent, 100);
   price('monthly.premium', s.monthly.premium);
+  count('monthly.premiumJoiningFeePercent', s.monthly.premiumJoiningFeePercent, 100);
   count('monthly.hoursPerDay', s.monthly.hoursPerDay, 24);
   price('monthly.extraHour', s.monthly.extraHour);
   count('monthly.daysOffPerMonth', s.monthly.daysOffPerMonth, 30);

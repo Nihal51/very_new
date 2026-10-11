@@ -213,7 +213,11 @@ export const pricesHi: { name: string; price: string; unit: string }[] = [
     price: priceText.basic,
     unit: m.joiningFeePercent > 0 ? 'प्रति माह + एक बार जॉइनिंग फ़ीस' : 'प्रति माह',
   },
-  { name: 'मंथली ड्राइवर — प्रीमियम प्लान', price: priceText.premium, unit: 'प्रति माह, कोई जॉइनिंग फ़ीस नहीं' },
+  {
+    name: 'मंथली ड्राइवर — प्रीमियम प्लान',
+    price: priceText.premium,
+    unit: m.premiumJoiningFeePercent > 0 ? 'प्रति माह + एक बार जॉइनिंग फ़ीस' : 'प्रति माह, कोई जॉइनिंग फ़ीस नहीं',
+  },
   { name: 'शादी / इवेंट और वन-वे ड्रॉप', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
 ];
 
@@ -267,7 +271,7 @@ const verified: Faq = {
 
 const monthly: Faq = {
   q: 'क्या महीने भर के लिए ड्राइवर मिल सकता है?',
-  a: `हाँ, दो प्लान हैं। बेसिक: ${priceText.basic} प्रति माह${m.joiningFeePercent > 0 ? ` और एक बार की जॉइनिंग फ़ीस (एक महीने का ${priceText.joiningFeePercent})` : ''}। प्रीमियम: ${priceText.premium} प्रति माह, कोई जॉइनिंग फ़ीस नहीं — ड्राइवर छुट्टी पर हो तो दूसरा ड्राइवर मुफ़्त, और ड्राइवर कभी भी काम छोड़े तो ${m.replacementDays} दिन में नया वेरिफ़ाइड ड्राइवर। दोनों में रोज़ ${m.hoursPerDay} घंटे, महीने में ${m.daysOffPerMonth} ${chhutti(m.daysOffPerMonth)}, और ज़्यादा घंटों के ${priceText.extraHour} प्रति घंटा।`,
+  a: `हाँ, दो प्लान हैं। बेसिक: ${priceText.basic} प्रति माह${m.joiningFeePercent > 0 ? ` और एक बार की जॉइनिंग फ़ीस (एक महीने का ${priceText.joiningFeePercent})` : ''}। प्रीमियम: ${priceText.premium} प्रति माह${m.premiumJoiningFeePercent > 0 ? ` और एक बार की जॉइनिंग फ़ीस (एक महीने का ${priceText.premiumJoiningFeePercent})` : ', कोई जॉइनिंग फ़ीस नहीं'} — ड्राइवर छुट्टी पर हो तो दूसरा ड्राइवर मुफ़्त, और ड्राइवर कभी भी काम छोड़े तो ${m.replacementDays} दिन में नया वेरिफ़ाइड ड्राइवर। दोनों में रोज़ ${m.hoursPerDay} घंटे, महीने में ${m.daysOffPerMonth} ${chhutti(m.daysOffPerMonth)}, और ज़्यादा घंटों के ${priceText.extraHour} प्रति घंटा।`,
 };
 
 const payment: Faq = {

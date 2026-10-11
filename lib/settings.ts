@@ -31,6 +31,7 @@ const joiningFee = {
   from: Math.round((m.basic.from * m.joiningFeePercent) / 100),
   to: Math.round((m.basic.to * m.joiningFeePercent) / 100),
 };
+const premiumJoiningFee = Math.round((m.premium * m.premiumJoiningFeePercent) / 100);
 
 /** Every price as display text. Content, schema and the Hindi pages read these. */
 export const priceText = {
@@ -46,6 +47,8 @@ export const priceText = {
   premium: rupees(m.premium),
   joiningFee: rupeeRange(joiningFee.from, joiningFee.to),
   joiningFeePercent: `${m.joiningFeePercent}%`,
+  premiumJoiningFee: rupees(premiumJoiningFee),
+  premiumJoiningFeePercent: `${m.premiumJoiningFeePercent}%`,
   extraHour: rupees(m.extraHour),
   standIn: rupees(m.standInPerDay),
   replacement: `within ${days(m.replacementDays)}`,

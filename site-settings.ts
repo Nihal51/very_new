@@ -86,8 +86,9 @@ export const settings = {
      The Basic and Premium plans on the Monthly Driver page. */
   monthly: {
     basic: { from: 16000, to: 17000 }, //   per month
-    joiningFeePercent: 25, //               Basic only, paid once
-    premium: 20000, //                      per month, no joining fee
+    joiningFeePercent: 25, //               Basic: one-time joining fee, % of one month
+    premium: 20000, //                      per month
+    premiumJoiningFeePercent: 10, //        Premium: one-time joining fee, % of one month (0 = none)
     hoursPerDay: 9,
     extraHour: 100, //                      price for each hour over hoursPerDay
     daysOffPerMonth: 4,
