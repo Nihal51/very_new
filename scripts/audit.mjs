@@ -94,7 +94,11 @@ function walk(dir) {
   return out;
 }
 
-const pages = walk(OUT).sort();
+/* Google Search Console's ownership file (public/google<hex>.html) is a one-line
+   text file, not a page — it must stay exactly as Google issued it. */
+const pages = walk(OUT)
+  .filter((f) => !/^google[0-9a-f]+\.html$/.test(path.basename(f)))
+  .sort();
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH || '';
 if (pages.length === 0) {
   console.error('No HTML found in out/ — run `npm run build` first.');
