@@ -195,7 +195,7 @@ export const serviceSearchTerms: Record<string, string[]> = {
   'night-safety-driver': ['night driver', 'late-night driver', 'driver for a night out'],
   'airport-outstation': ['airport drop driver', 'outstation driver', 'driver for a long trip'],
   'monthly-driver': ['permanent driver', 'full-time car driver', 'monthly car driver'],
-  'wedding-event-driver': ['wedding driver', 'wedding car with driver', 'driver for a function'],
+  'wedding-event-driver': ['wedding driver', 'wedding car with driver', 'wedding car on rent with driver'],
   'one-way-car-drop': ['one-way driver', 'car drop driver', 'driver to deliver my car'],
 };
 

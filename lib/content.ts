@@ -297,7 +297,7 @@ export const services: Service[] = [
     icon: 'star',
     title: 'Wedding & Event Driver',
     short: 'Drivers for your cars, or cars with drivers: the baraat, guest pickups and late-night drops.',
-    body: 'Weddings and family functions need more drivers than any family has. We supply verified, sober drivers for the baraat and family cars, guest pickups from the station and airport, and safe drops after a late function — so the people who would otherwise be driving can enjoy the day. Short of cars? For weddings and events we can also bring the car, always with our driver.',
+    body: 'Weddings and family functions need more drivers than any family has. We supply verified, sober drivers for the baraat and family cars, guest pickups from the station and airport, and safe drops after a late function — so the people who would otherwise be driving can enjoy the day. Short of cars? For weddings and events we can also bring the car, always with our driver: any type, from a hatchback or sedan to an SUV like the Innova or Ertiga, or a luxury car, through the car dealers we partner with.',
     heading: 'Drivers and cars with drivers for weddings and functions',
     metaTitle: 'Wedding Car with Driver & Event Drivers',
     metaDescription:
@@ -306,7 +306,7 @@ export const services: Service[] = [
     extra: true,
     includes: [
       'Drivers for the baraat and family cars',
-      'A car with a driver, when you need more cars',
+      'Any car with a driver: sedan, SUV or luxury',
       'Guest pickups from the station and airport',
       'Safe drops after a late function',
       'Breath-tested before duty, zero alcohol',
@@ -332,7 +332,7 @@ export const services: Service[] = [
       },
       {
         q: 'Can you provide the car as well as the driver?',
-        a: 'Yes, for weddings and events. If the family is short of cars, we send a car with our driver for the baraat, guest pickups or drops, and include it in the quote. We do not rent out cars without a driver.',
+        a: 'Yes, for weddings and events. If the family is short of cars, we send a car with our driver for the baraat, guest pickups or drops, and include it in the quote. Any type of car — a hatchback, a sedan, an SUV such as the Innova or Ertiga, or a luxury car — through the car dealers we partner with. We do not rent out cars without a driver.',
       },
       {
         q: 'How early should I book a wedding driver?',
