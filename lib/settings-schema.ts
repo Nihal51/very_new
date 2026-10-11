@@ -39,6 +39,12 @@ export type SiteSettings = {
     standInPerDay: number;
     replacementDays: number;
   };
+  partners: {
+    monthlyCustomer: number;
+    perTrip: number;
+    perEventDriverDay: number;
+    joiningDiscount: number;
+  };
 };
 
 export function checkSettings(s: SiteSettings): SiteSettings {
@@ -102,6 +108,13 @@ export function checkSettings(s: SiteSettings): SiteSettings {
   price('monthly.standInPerDay', s.monthly.standInPerDay);
   count('monthly.replacementDays', s.monthly.replacementDays, 30);
   if (s.monthly.replacementDays < 1) problems.push('monthly.replacementDays must be at least 1');
+
+  price('partners.monthlyCustomer', s.partners.monthlyCustomer);
+  price('partners.perTrip', s.partners.perTrip);
+  price('partners.perEventDriverDay', s.partners.perEventDriverDay);
+  price('partners.joiningDiscount', s.partners.joiningDiscount);
+  if (s.partners.joiningDiscount >= Math.round((s.monthly.premium * s.monthly.premiumJoiningFeePercent) / 100) && s.monthly.premiumJoiningFeePercent > 0)
+    problems.push('partners.joiningDiscount must be smaller than the Premium joining fee');
 
   if (problems.length) {
     throw new Error(

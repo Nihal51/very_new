@@ -78,6 +78,7 @@ function body(): string {
     '## Key pages',
     '',
     `- [Book a driver](${url('/book/')})`,
+    `- [Become a partner](${url('/partners/')}): showrooms, hospitals, wedding planners, hotels and housing societies that send customers`,
     `- [Pricing](${url('/pricing/')})`,
     `- [About ${site.name}](${url('/about/')})`,
     `- [Frequently asked questions](${url('/faq/')})`,

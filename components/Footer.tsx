@@ -12,6 +12,7 @@ const company = [
   { href: '/book/', label: 'Book a driver' },
   { href: '/driver-in/', label: 'All areas we cover' },
   { href: '/drivers/', label: 'Driver jobs' },
+  { href: '/partners/', label: 'Become a partner' },
   { href: '/faq/', label: 'FAQ' },
   { href: '/contact/', label: 'Contact' },
 ];

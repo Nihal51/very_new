@@ -95,4 +95,13 @@ export const settings = {
     standInPerDay: 900, //                  Basic only (free on Premium)
     replacementDays: 1, //                  a new driver within this many days
   },
+  /* ---------------------------------------------------- partner program ----
+     The rewards on the Become a partner page (/partners/). Partners are paid
+     only after the customer they sent has paid. */
+  partners: {
+    monthlyCustomer: 1000, //  to a showroom, hotel or travel agent, per customer who takes a monthly driver
+    perTrip: 50, //            to a hotel or travel agent, per full-day or outstation booking
+    perEventDriverDay: 50, //  to a wedding planner or banquet hall, per driver per day
+    joiningDiscount: 500, //   off the monthly joining fee for families sent by a hospital, clinic or society
+  },
 } satisfies SiteSettings;

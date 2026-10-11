@@ -52,6 +52,11 @@ export const priceText = {
   extraHour: rupees(m.extraHour),
   standIn: rupees(m.standInPerDay),
   replacement: `within ${days(m.replacementDays)}`,
+  /** Partner program rewards (/partners/). */
+  partnerMonthly: rupees(settings.partners.monthlyCustomer),
+  partnerTrip: rupees(settings.partners.perTrip),
+  partnerEventDay: rupees(settings.partners.perEventDriverDay),
+  partnerDiscount: rupees(settings.partners.joiningDiscount),
 } as const;
 
 /** Whole-rupee bounds of everything sold at a listed price, for JSON-LD priceRange/minPrice. */
