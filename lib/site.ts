@@ -41,7 +41,7 @@ export const site = {
      accident, and `scripts/audit.mjs` fails the build if a rating, review count or
      customer total reappears in the rendered text. Real ratings live on the Google
      Business Profile, where real customers put them. */
-  foundingYear: '2024',
+  foundingYear: '2025', // opened December 2025 (owner, 11 Oct 2026); matches the Google Business Profile
   /** Named on /about and as `founder` in the LocalBusiness JSON-LD. A business with a
       named, real person behind it is one search engines and AI assistants can vouch
       for; an anonymous one is not. Confirmed by the owner on 7 Oct 2026. */
