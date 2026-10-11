@@ -68,7 +68,7 @@ function body(): string {
         `- [Drivers in ${c.name}](${url(`/cities/${c.slug}/`)}) — Hindi: [${cityHi(c.slug).name} में ड्राइवर](${url(`/hi/cities/${c.slug}/`)})`,
     ),
     '',
-    '## Nearby towns (driver comes from Raipur; arrival time confirmed on the call)',
+    '## Nearby towns (also covered by the 30-minute arrival promise)',
     '',
     ...towns.map((t) => `- [Driver in ${t.name}](${url(placePath(t))}) — about ${t.km} km from Raipur`),
     `- [Every area we cover](${url('/driver-in/')})`,

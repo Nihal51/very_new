@@ -39,15 +39,16 @@ function copy(p: Place) {
         `Driver in ${t.name}`,
       ),
       description: fitDescription(
-        `Hire a driver in ${t.name}${t.alsoCalled ? ` (${t.alsoCalled})` : ''} to drive your own car — hourly, full day, night, monthly or outstation. Police-verified drivers from ${priceText.oneHour}.`,
+        `Hire a driver in ${t.name}${t.alsoCalled ? ` (${t.alsoCalled})` : ''} for your own car, at your door in about 30 minutes — hourly, full day, night or monthly. From ${priceText.oneHour}.`,
+        `Hire a driver in ${t.name} for your own car, at your door in about 30 minutes — hourly, full day, night or monthly. From ${priceText.oneHour}.`,
         `Hire a verified driver in ${t.name} for your own car — hourly, full day, night or monthly, from ${priceText.oneHour}. Call or book online.`,
       ),
       eyebrow: `Near ${c} · about ${t.km} km`,
       lede: `Need a driver in ${t.name}? DriveBuddy sends a police-verified, sober driver to drive your own car — for an hour, a full day, the night, an outstation trip or every month. ${t.where}`,
-      coverage: `Because the driver travels about ${t.km} km from ${c}, we give you the arrival time when we confirm the booking instead of a fixed promise. Book a little ahead for early-morning trips and it is rarely a wait.`,
+      coverage: `${t.name} is about ${t.km} km from ${c}, and it is covered by the same 30-minute arrival promise as the city itself. Tell us your pickup point when you book and we send the nearest free driver.`,
       landmarks: t.landmarks,
       popular: t.popular,
-      eta: `We confirm the arrival time on the call — the driver comes out from ${c}, about ${t.km} km away.`,
+      eta: `Within 30 minutes of your booking being confirmed — the same promise we keep inside ${c}.`,
     };
   }
   return {

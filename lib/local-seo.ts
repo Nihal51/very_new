@@ -12,8 +12,9 @@
  *    town here until a driver can really be sent there.
  *  - Every page carries something true and specific to the place (distance, the
  *    road it sits on, the landmarks, the areas next to it), not just a swapped name.
- *  - Towns outside the four cities never claim the 30-minute arrival: the driver
- *    travels from the city pool, so the time is given on the call.
+ *  - The 30-minute arrival promise covers the five towns too — confirmed by the
+ *    owner on 11 Oct 2026. If that ever stops holding for a town, take it out of
+ *    that town's copy here and in app/driver-in/[place]/page.tsx before anything else.
  */
 
 import { cities, services, type City, type Service } from './content';
@@ -62,7 +63,7 @@ export const towns: Town[] = [
   {
     slug: 'naya-raipur',
     name: 'Naya Raipur',
-    alsoCalled: 'Atal Nagar (Nava Raipur)',
+    alsoCalled: 'Atal Nagar, Nava Raipur',
     servedFrom: 'raipur',
     km: 20,
     where:
