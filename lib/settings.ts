@@ -54,8 +54,12 @@ export const priceText = {
   replacement: `within ${days(m.replacementDays)}`,
   /** Partner program rewards (/partners/). */
   partnerMonthly: rupees(settings.partners.monthlyCustomer),
-  partnerTrip: rupees(settings.partners.perTrip),
-  partnerEventDay: rupees(settings.partners.perEventDriverDay),
+  partnerCommission: `${settings.partners.commissionPercent}%`,
+  /** What the commission means on a driver-only full day, e.g. "₹100–120". */
+  partnerCommissionFullDay: rupeeRange(
+    Math.round((p.fullDay.from * settings.partners.commissionPercent) / 100),
+    Math.round((p.fullDay.to * settings.partners.commissionPercent) / 100),
+  ),
   partnerDiscount: rupees(settings.partners.joiningDiscount),
 } as const;
 

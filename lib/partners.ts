@@ -51,7 +51,7 @@ export const partnerTypes: readonly PartnerType[] = [
     who: 'Wedding planners, banquet halls and event managers',
     need: 'A function needs many drivers at once: the baraat, guest pickups and late-night drops.',
     customersGet: 'Drivers for their own cars, or any car with our driver (sedan, SUV or luxury), in one fixed quote agreed before the day.',
-    partnerGets: `${priceText.partnerEventDay} per driver per day booked through you.`,
+    partnerGets: `${priceText.partnerCommission} of every booking you send, about ${priceText.partnerCommissionFullDay} per driver per day, and more when we also bring the car.`,
   },
   {
     id: 'hotels',
@@ -60,7 +60,7 @@ export const partnerTypes: readonly PartnerType[] = [
     who: 'Hotels, guest houses and travel agents',
     need: 'Guests who came in their own car often don’t want to drive in a new city, or after a long journey.',
     customersGet: 'A verified driver for a full day in the city, an outstation trip or an airport run.',
-    partnerGets: `${priceText.partnerTrip} per full-day or outstation booking, and ${priceText.partnerMonthly} per monthly customer.`,
+    partnerGets: `${priceText.partnerCommission} of every full-day, outstation or event booking, and ${priceText.partnerMonthly} per monthly customer.`,
   },
   {
     id: 'societies',
@@ -99,7 +99,7 @@ export const partnerFaqs: Faq[] = [
   },
   {
     q: 'When and how is the reward paid?',
-    a: `By UPI, once the customer you sent has paid. For a monthly driver, that is after their first month is paid. Rewards: ${priceText.partnerMonthly} per monthly customer for showrooms, hotels and travel agents; ${priceText.partnerTrip} per full-day or outstation booking for hotels and travel agents; ${priceText.partnerEventDay} per driver per day for wedding planners and banquet halls.`,
+    a: `By UPI, once the customer you sent has paid. For a monthly driver, that is after their first month is paid. Rewards: ${priceText.partnerMonthly} per monthly customer for showrooms, hotels and travel agents; ${priceText.partnerCommission} of every full-day or outstation booking for hotels and travel agents; ${priceText.partnerCommission} of every wedding or event booking for wedding planners and banquet halls.`,
   },
   {
     q: 'Why don’t hospitals and housing societies get cash?',

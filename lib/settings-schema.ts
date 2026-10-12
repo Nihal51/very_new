@@ -41,8 +41,8 @@ export type SiteSettings = {
   };
   partners: {
     monthlyCustomer: number;
-    perTrip: number;
-    perEventDriverDay: number;
+    /** % of each full-day, outstation, wedding or event booking a partner sends. */
+    commissionPercent: number;
     joiningDiscount: number;
   };
 };
@@ -110,8 +110,8 @@ export function checkSettings(s: SiteSettings): SiteSettings {
   if (s.monthly.replacementDays < 1) problems.push('monthly.replacementDays must be at least 1');
 
   price('partners.monthlyCustomer', s.partners.monthlyCustomer);
-  price('partners.perTrip', s.partners.perTrip);
-  price('partners.perEventDriverDay', s.partners.perEventDriverDay);
+  count('partners.commissionPercent', s.partners.commissionPercent, 30);
+  if (s.partners.commissionPercent < 1) problems.push('partners.commissionPercent must be at least 1');
   price('partners.joiningDiscount', s.partners.joiningDiscount);
   if (s.partners.joiningDiscount >= Math.round((s.monthly.premium * s.monthly.premiumJoiningFeePercent) / 100) && s.monthly.premiumJoiningFeePercent > 0)
     problems.push('partners.joiningDiscount must be smaller than the Premium joining fee');

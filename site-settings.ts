@@ -100,8 +100,8 @@ export const settings = {
      only after the customer they sent has paid. */
   partners: {
     monthlyCustomer: 1000, //  to a showroom, hotel or travel agent, per customer who takes a monthly driver
-    perTrip: 50, //            to a hotel or travel agent, per full-day or outstation booking
-    perEventDriverDay: 50, //  to a wedding planner or banquet hall, per driver per day
+    commissionPercent: 10, //  to a hotel, travel agent, wedding planner or banquet hall: % of every
+    //                         full-day, outstation, wedding or event booking they send
     joiningDiscount: 500, //   off the monthly joining fee for families sent by a hospital, clinic or society
   },
 } satisfies SiteSettings;
