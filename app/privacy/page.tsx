@@ -36,12 +36,13 @@ export default function PrivacyPage() {
           </Alert>
 
           <div className="prose-legal mt-10">
-            <p className="text-fg-subtle text-sm">Last updated: 22 August 2026</p>
+            <p className="text-fg-subtle text-sm">Last updated: 12 October 2026</p>
 
             <h2 id="what-we-collect">What we collect</h2>
             <p>
-              We only collect what you type into one of our two forms. There are no tracking
-              pixels, advertising cookies or analytics scripts on this site.
+              We only collect what you type into our forms (on this website or in the DriveBuddy
+              app), plus the few account details listed below if you choose to log in. There are no
+              tracking pixels, advertising cookies or analytics scripts on this site or in the app.
             </p>
             <h3>Booking form</h3>
             <ul>
@@ -59,6 +60,25 @@ export default function PrivacyPage() {
               <li>Anything you write in the free-text field</li>
             </ul>
 
+            <h3>If you log in (optional)</h3>
+            <ul>
+              <li>Your Google account name and email address, and an account ID from Google Firebase</li>
+              <li>The name and mobile number you save, so we can fill in your next booking</li>
+            </ul>
+            <h3>The DriveBuddy app</h3>
+            <ul>
+              <li>The same booking details as the form above</li>
+              <li>
+                If you turn on booking updates: a notification token for your phone and the language
+                you use in the app, so we can tell you when a booking is confirmed or a driver is
+                assigned
+              </li>
+            </ul>
+            <p>
+              The app does not access your location, contacts, photos or files, and shows no
+              advertising.
+            </p>
+
             <h2 id="how-we-use-it">How we use it</h2>
             <p>
               Booking details are used to call you back, confirm the booking and dispatch a driver
@@ -72,6 +92,11 @@ export default function PrivacyPage() {
               {' '}{site.legalName} staff who handle dispatch and recruitment. Your pickup address
               and phone number are shared with the driver assigned to your booking, because they
               cannot reach you otherwise. We do not sell, rent or trade your information.
+            </p>
+            <p>
+              Service providers that handle data for us: Google Firebase (storage and login), Expo
+              with Google and Apple (delivering app notifications), and Meta&apos;s WhatsApp (when we
+              message you there about your booking).
             </p>
 
             <h2 id="how-long">How long we keep it</h2>
@@ -88,6 +113,13 @@ export default function PrivacyPage() {
               request within 30 days. Deletion requests are honoured except where we are required to
               retain a record by law.
             </p>
+            <p>
+              <strong>Deleting your account:</strong> in the DriveBuddy app, open Account →
+              <em> Delete my account</em>. This removes your login, your saved details and your
+              phones&apos; notification tokens at once. Past bookings are kept for the period above
+              for accounts and safety, no longer linked to a login. Without the app, email or
+              WhatsApp us and we will delete it for you.
+            </p>
 
             <h2 id="cookies">Cookies</h2>
             <p>
@@ -98,10 +130,10 @@ export default function PrivacyPage() {
 
             <h2 id="security">Security</h2>
             <p>
-              The site is served over HTTPS. Form submissions are written to Firestore under
-              security rules that permit creating a record but not reading, editing or deleting one
-              from the browser. We recommend you also treat your booking confirmation SMS or
-              WhatsApp message as private.
+              The site and the app use HTTPS only. Bookings are written to Firestore under security
+              rules that let a guest create a booking but not read, edit or delete one; a logged-in
+              customer can read only their own bookings and profile. We recommend you also treat
+              your booking confirmation SMS or WhatsApp message as private.
             </p>
 
             <h2 id="children">Children</h2>

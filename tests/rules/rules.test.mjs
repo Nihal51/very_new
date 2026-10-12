@@ -241,6 +241,13 @@ describe('users and customers', () => {
     await assertFails(setDoc(doc(customer('cust3'), 'users', 'cust3'), profile({ role: 'admin' })));
   });
 
+  test('a customer can delete their own account profile, and only their own', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'users', 'cust1'), { name: 'Ramesh' }));
+    await assertFails(deleteDoc(doc(customer('cust2'), 'users', 'cust1')));
+    await assertFails(deleteDoc(doc(guest(), 'users', 'cust1')));
+    await assertSucceeds(deleteDoc(doc(customer('cust1'), 'users', 'cust1')));
+  });
+
   test('a customer registers only their own phones for notifications, in a fixed shape', async () => {
     const device = (extra = {}) => ({
       token: 'ExponentPushToken[abcdEFGH1234_-]',

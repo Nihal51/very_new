@@ -230,7 +230,9 @@ service cloud.firestore {
         && changedOnly(['name', 'phone', 'email', 'updatedAt'])
         && validProfile(request.resource.data)
         && request.resource.data.updatedAt == request.time;
-      allow delete: if false;
+      // "Delete my account" in the app (a Google Play and App Store requirement).
+      // Their bookings stay, as business records (see /privacy).
+      allow delete: if isOwner();
 
       // One per phone with booking notifications on, written by the mobile app:
       // the Expo push token and the language to write in. The alerts robot
