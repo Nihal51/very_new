@@ -29,11 +29,12 @@ How a booking travels from a customer's phone to a driver, and how to set it up.
 
 | Collection | One document per | Written by | Read by |
 |---|---|---|---|
-| `bookings/{id}` | booking | customer (create), robot (ref, alerts), admin (status, driver) | admin; the customer who made it while logged in |
+| `bookings/{id}` | booking | customer, on the website or in the app (create, `source` = `website` / `app`), robot (ref, alerts, what the customer was told), admin (status, driver) | admin; the customer who made it while logged in |
 | `bookings/{id}/events/{id}` | change or internal note | robot, admin | admin only |
 | `drivers/{id}` | driver application | applicant (create), admin (status, note) | admin |
 | `customers/{phone}` | customer, by mobile number | robot only | admin |
 | `users/{uid}` | login account | that customer | that customer, admin |
+| `users/{uid}/devices/{id}` | phone with the DriveBuddy app and notifications on | the app (push token + language) | that customer; the robot |
 | `admins/{email}` | admin Google account | robot's `setup` (or the Firebase console) | that admin, to check their own access |
 | `meta/counters` | — | robot only | nobody from a browser |
 
@@ -78,12 +79,25 @@ Optional script properties (⚙ Project Settings → Script properties): `ADMIN_
 - **"No Telegram chat found"**: open the bot, press START, send `hi`, and run **Connect Telegram and start** again.
 - **A row in the Sheet looks wrong, or you deleted rows**: DriveBuddy menu → **Refresh the whole sheet**.
 
+## Customer updates
+
+When you move a booking along in `/admin`, the customer hears about it:
+
+- **In the DriveBuddy app** (customers logged in on the app): a phone notification for *Confirmed*, *Driver assigned* (with the driver's name), *Completed* and *Cancelled*, in the language they use in the app. Tapping it opens that booking. The robot sends these within a minute through Expo's free push service; nothing to set up here.
+- **On WhatsApp, one tap (free, works now):** open the booking in `/admin` after assigning a driver → **Tell the customer their driver is coming** → *English* or *हिंदी*. WhatsApp opens with the driver's name, number, trip time and pickup typed in; press Send.
+- **On WhatsApp, automatic (optional, paid per message):** the robot sends the same details by itself the moment you assign a driver. Off until you set up the WhatsApp Business API: see [whatsapp.md](whatsapp.md).
+
+Each booking remembers what the customer was last told (`pushedKey`, `whatsappKey`), so nothing is sent twice; assigning a different driver tells them again.
+
+**After changing `apps-script/Code.js`** (as in this update), paste the new file into the Sheet's Apps Script editor (Extensions → Apps Script → select all in `Code.js` → paste → Save). The every-minute trigger keeps running; nothing else to redo.
+
 ## Everyday use
 
 - **New booking:** Telegram buzzes (plus email, plus a new row in the Sheet). Tap *Open in admin panel*, or call the number in the message.
 - In `/admin` the top tiles are shortcuts (*New – call now*, *Needs action*, *Booked today*). The table works like a spreadsheet: filter by status, city and date, search, click a column heading to sort, click a row for details. The **Next step** button on each row does the usual move in one click: **Confirm** → **Assign driver** → **Complete**. **Excel** downloads exactly the rows you are looking at.
 - **The Google Sheet** is a live copy kept by the robot: newest bookings on top, a colour per status, filter buttons on every column, and a **Summary** tab (today, this week, this month, by city, by package, by month). Status and driver changes from `/admin` reach it within a minute. Add your own columns (e.g. *Paid?*) anywhere; the robot never touches them. Treat the robot's columns as read-only: change bookings in `/admin`.
 - A booking left "New" for 10 minutes sends one reminder to Telegram.
+- **Driver assigned:** in the booking's panel, tap **English** or **हिंदी** under *Tell the customer their driver is coming*, then Send in WhatsApp. App users also get a notification by themselves.
 - **New driver application:** Telegram alert and a row in the *Drivers* sheet. In the Drivers tab: Verify (after the ID and police check) → Activate.
 - To add another admin later: add the email to the `ADMIN_EMAILS` script property and run **Connect Telegram and start** again.
 

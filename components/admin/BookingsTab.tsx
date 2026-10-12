@@ -27,7 +27,10 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
+import { WhatsappIcon } from '@/components/icons';
 import { addBookingNote, changeBookingStatus } from '@/lib/admin';
+import { driverAssignedMessage, type MessageLanguage } from '@/lib/customer-messages';
+import { site } from '@/lib/site';
 import {
   BOOKING_STATUS,
   DATE_RANGES,
@@ -417,6 +420,51 @@ function Row({
   );
 }
 
+/* ------------------------------------------------------- tell the customer */
+
+/**
+ * One tap opens WhatsApp to the customer with the driver's name, number and
+ * trip time already typed — press Send. Free; no WhatsApp Business API needed.
+ */
+function TellCustomer({ b }: { b: Booking }) {
+  const driver = b.assignedDriver;
+  if (!driver) return null;
+  const phone = String(b.phone ?? '').replace(/\D/g, '').slice(-10);
+  const link = (lang: MessageLanguage) => {
+    const text = driverAssignedMessage(
+      {
+        customerName: b.name,
+        bookingRef: b.ref ?? '',
+        driverName: driver.name,
+        driverPhone: prettyPhone(driver.phone),
+        when: formatPreferred(b.preferredTime),
+        pickup: b.pickup,
+        helpPhone: prettyPhone(site.phone),
+      },
+      lang,
+    );
+    return `https://wa.me/91${phone}?text=${encodeURIComponent(text)}`;
+  };
+  const cls =
+    'border-border-strong bg-bg hover:bg-surface inline-flex h-11 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-semibold';
+  return (
+    <div className="bg-accent-subtle border-accent-border rounded-xl border p-3">
+      <p className="text-sm font-semibold">Tell the customer their driver is coming</p>
+      <p className="text-fg-subtle mt-0.5 text-xs">Opens WhatsApp with the driver’s name, number and time typed in. You press Send.</p>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <a href={link('en')} target="_blank" rel="noopener noreferrer" className={cls}>
+          <WhatsappIcon className="size-4" />
+          English
+        </a>
+        <a href={link('hi')} target="_blank" rel="noopener noreferrer" className={cls}>
+          <WhatsappIcon className="size-4" />
+          हिंदी
+        </a>
+      </div>
+    </div>
+  );
+}
+
 /* --------------------------------------------------------------- the drawer */
 
 export type Mode = null | 'assign' | 'cancel';
@@ -501,6 +549,11 @@ function BookingDetail({
                 {prettyPhone(b.assignedDriver.phone)}
               </a>
             </Detail>
+          )}
+          {b.status === 'assigned' && b.assignedDriver && (
+            <div className="col-span-2">
+              <TellCustomer b={b} />
+            </div>
           )}
           {b.status === 'cancelled' && b.cancelReason && (
             <Detail label="Cancelled because" wide>

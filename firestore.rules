@@ -13,8 +13,9 @@ rules_version = '2';
 //    Anyone (no login)    create a booking or a driver application, in the exact
 //                         shape the website forms produce. Nothing else.
 //    A logged-in customer the above, plus: read and edit their own profile
-//                         (users/{uid}) and read the bookings they made while
-//                         logged in. Never anyone else's.
+//                         (users/{uid}), register their phones for booking
+//                         notifications (users/{uid}/devices), and read the
+//                         bookings they made while logged in. Never anyone else's.
 //    An admin             read everything; move bookings and drivers through
 //                         their statuses; assign drivers; add notes. An admin is
 //                         a Google account with a verified email that has a
@@ -65,10 +66,11 @@ service cloud.firestore {
     }
 
     // Clients cannot backdate a submission, invent a source, or create a lead
-    // that is already marked as handled.
+    // that is already marked as handled. 'app' = the DriveBuddy mobile app
+    // (Nihal51/drivebuddy-mobile), which writes exactly the website's shape.
     function isServerStamped(data) {
       return data.createdAt == request.time
-        && data.source == 'website'
+        && data.source in ['website', 'app']
         && data.status == 'new';
     }
 
@@ -229,6 +231,24 @@ service cloud.firestore {
         && validProfile(request.resource.data)
         && request.resource.data.updatedAt == request.time;
       allow delete: if false;
+
+      // One per phone with booking notifications on, written by the mobile app:
+      // the Expo push token and the language to write in. The alerts robot
+      // reads these to send "Driver assigned" and other status updates. The
+      // customer removes their phone on logout; the robot drops dead tokens.
+      match /devices/{deviceId} {
+        function validDevice(data) {
+          return data.keys().hasOnly(['token', 'platform', 'language', 'updatedAt'])
+            && data.keys().hasAll(['token', 'platform', 'language', 'updatedAt'])
+            && data.token is string
+            && data.token.matches('^Expo(nent)?PushToken\\[[A-Za-z0-9_-]{8,200}\\]$')
+            && data.platform in ['android', 'ios']
+            && data.language in ['en', 'hi']
+            && data.updatedAt == request.time;
+        }
+        allow read, delete: if isOwner();
+        allow create, update: if isOwner() && deviceId.size() <= 150 && validDevice(request.resource.data);
+      }
     }
 
     /* --------------------------------------------------------- customers -- */

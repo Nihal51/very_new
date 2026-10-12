@@ -56,8 +56,19 @@ function makeStore() {
         .slice(0, q.limit)
         .map(([p, f]) => ({ document: { name: PREFIX + p, fields: f } }));
     },
+    /** listDocuments: the documents directly inside a collection path. */
+    list(collectionPath) {
+      const depth = collectionPath.split('/').length + 1;
+      return [...docs.entries()]
+        .filter(([p]) => p.startsWith(`${collectionPath}/`) && p.split('/').length === depth)
+        .map(([p, f]) => ({ name: PREFIX + p, fields: f }));
+    },
     commit(writes) {
       for (const w of writes) {
+        if (w.delete) {
+          docs.delete(w.delete.replace(PREFIX, ''));
+          continue;
+        }
         const path = w.update.name.replace(PREFIX, '');
         const exists = docs.has(path);
         if (w.currentDocument?.exists === true && !exists) throw new Error(`precondition: ${path} missing`);
@@ -127,10 +138,14 @@ function load() {
   const telegram = [];
   const mail = [];
   const sheets = new Map();
+  const pushes = []; // every message sent to Expo's push service
+  const whatsapps = []; // every WhatsApp Cloud API request
+  const warnings = [];
+  const deadTokens = new Set(); // tokens Expo answers with DeviceNotRegistered
 
   const response = (code, body) => ({ getResponseCode: () => code, getContentText: () => JSON.stringify(body) });
   const ctx = {
-    console: { log() {}, error(e) { throw new Error(`robot logged an error: ${e}`); } },
+    console: { log() {}, warn: (m) => warnings.push(String(m)), error(e) { throw new Error(`robot logged an error: ${e}`); } },
     PropertiesService: {
       getScriptProperties: () => ({
         getProperty: (k) => props.get(k) ?? null,
@@ -164,6 +179,21 @@ function load() {
           if (url.endsWith('/sendMessage')) telegram.push(body);
           return response(200, { ok: true, result: [] });
         }
+        if (url === 'https://exp.host/--/api/v2/push/send') {
+          pushes.push(...body);
+          return response(200, {
+            data: body.map((m) =>
+              deadTokens.has(m.to) ? { status: 'error', details: { error: 'DeviceNotRegistered' } } : { status: 'ok', id: 'r' },
+            ),
+          });
+        }
+        if (url.startsWith('https://graph.facebook.com/')) {
+          whatsapps.push({ url, auth: opts.headers?.Authorization, body });
+          return response(200, { messages: [{ id: 'wamid.1' }] });
+        }
+        if (url.startsWith(`${BASE}/`) && url.includes('?pageSize=')) {
+          return response(200, { documents: store.list(url.slice(BASE.length + 1).split('?')[0]) });
+        }
         if (url === `${BASE}:runQuery`) return response(200, store.runQuery(body.structuredQuery));
         if (url === `${BASE}:commit`) return response(200, store.commit(body.writes));
         const doc = store.get(url.slice(BASE.length + 1));
@@ -181,7 +211,7 @@ function load() {
     const [head = [], ...rows] = g;
     return rows.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
   };
-  return { ctx, store, props, telegram, mail, sheets, table };
+  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens };
 }
 
 const ts = (msAgo) => ({ timestampValue: new Date(Date.now() - msAgo).toISOString() });
@@ -387,6 +417,126 @@ describe('the live Sheet copy', () => {
     const rec = env.ctx.bookingRecord('x', { status: 'cancelled', cancelReason: 'Customer changed plans', notes: '', name: 'A', phone: '9111473929', package: 'outstation' });
     assert.equal(rec.Status, 'Cancelled');
     assert.equal(rec['Customer notes'], 'Cancelled: Customer changed plans');
+  });
+});
+
+describe('customer updates', () => {
+  let env;
+  beforeEach(() => (env = load()));
+
+  const driver = (id, name, phone) => ({ mapValue: { fields: { id: s(id), name: s(name), phone: s(phone) } } });
+  let clock = 0;
+  /** An admin action in the panel: new fields and a fresh updatedAt. */
+  const adminSets = (id, fields) => {
+    clock += 5_000;
+    env.store.docs.set(`bookings/${id}`, {
+      ...env.store.docs.get(`bookings/${id}`),
+      ...fields,
+      updatedAt: { timestampValue: new Date(Date.now() + clock).toISOString() },
+    });
+  };
+  const device = (uid, id, token, language) =>
+    env.store.docs.set(`users/${uid}/devices/${id}`, { token: s(token), platform: s('android'), language: s(language) });
+
+  test('an app customer hears about each step once, on every phone, in each phone’s language', () => {
+    seedBooking(env.store, 'b1', { extra: { ref: s('DB-1001'), customerUid: s('u1') } });
+    device('u1', 'p1', 'ExponentPushToken[hindiPhone01]', 'hi');
+    device('u1', 'p2', 'ExponentPushToken[englishPhone2]', 'en');
+
+    adminSets('b1', { status: s('confirmed') });
+    env.ctx.tick();
+    assert.equal(env.pushes.length, 2);
+    const [hi, en] = env.pushes;
+    assert.equal(hi.to, 'ExponentPushToken[hindiPhone01]');
+    assert.equal(hi.title, 'बुकिंग कन्फ़र्म');
+    assert.equal(en.title, 'Booking confirmed');
+    assert.ok(en.body.startsWith('DB-1001'));
+    assert.deepEqual(en.data, { bookingId: 'b1' });
+    assert.equal(en.channelId, 'bookings');
+
+    env.ctx.tick(); // nothing new: nothing sent
+    assert.equal(env.pushes.length, 2);
+
+    adminSets('b1', { status: s('assigned'), assignedDriver: driver('d1', 'Suresh Verma', '9893302783') });
+    env.ctx.tick();
+    assert.equal(env.pushes.length, 4);
+    assert.equal(env.pushes[3].title, 'Driver assigned');
+    assert.ok(env.pushes[3].body.includes('Suresh Verma will drive for DB-1001'));
+    assert.equal(env.store.docs.get('bookings/b1').pushedKey.stringValue, 'assigned:d1');
+
+    adminSets('b1', { assignedDriver: driver('d2', 'Manoj Patel', '9893300000') }); // a different driver
+    env.ctx.tick();
+    assert.equal(env.pushes.length, 6);
+    assert.ok(env.pushes[5].body.includes('Manoj Patel'));
+  });
+
+  test('guests, new bookings and customers without the app get no push', () => {
+    seedBooking(env.store, 'guest', { extra: { ref: s('DB-1001') } });
+    seedBooking(env.store, 'fresh', { extra: { ref: s('DB-1002'), customerUid: s('u1') } });
+    seedBooking(env.store, 'webOnly', { extra: { ref: s('DB-1003'), customerUid: s('u2') } });
+    device('u1', 'p1', 'ExponentPushToken[somePhone0001]', 'en');
+    adminSets('guest', { status: s('confirmed') });
+    adminSets('fresh', { status: s('new') });
+    adminSets('webOnly', { status: s('confirmed') });
+    env.ctx.tick();
+    assert.equal(env.pushes.length, 0);
+    assert.equal(env.store.docs.get('bookings/webOnly').pushedKey.stringValue, 'confirmed', 'remembered, not retried every minute');
+  });
+
+  test('a phone that uninstalled the app is forgotten', () => {
+    seedBooking(env.store, 'b1', { extra: { ref: s('DB-1001'), customerUid: s('u1') } });
+    device('u1', 'old', 'ExponentPushToken[uninstalled01]', 'en');
+    device('u1', 'new', 'ExponentPushToken[currentPhone1]', 'en');
+    env.deadTokens.add('ExponentPushToken[uninstalled01]');
+    adminSets('b1', { status: s('confirmed') });
+    env.ctx.tick();
+    assert.equal(env.store.docs.has('users/u1/devices/old'), false);
+    assert.equal(env.store.docs.has('users/u1/devices/new'), true);
+  });
+
+  test('customer updates never touch updatedAt, so the Sheet is not rewritten for them', () => {
+    seedBooking(env.store, 'b1', { extra: { ref: s('DB-1001'), customerUid: s('u1') } });
+    device('u1', 'p1', 'ExponentPushToken[somePhone0001]', 'en');
+    adminSets('b1', { status: s('confirmed') });
+    const before = env.store.docs.get('bookings/b1').updatedAt.timestampValue;
+    env.ctx.tick();
+    assert.equal(env.store.docs.get('bookings/b1').updatedAt.timestampValue, before);
+  });
+
+  test('WhatsApp stays off until it is set up, then sends the driver details once', () => {
+    seedBooking(env.store, 'b1', { extra: { ref: s('DB-1001'), name: s('Ramesh Kumar Sahu'), preferredTime: s('2026-10-09T09:30') } });
+    adminSets('b1', { status: s('assigned'), assignedDriver: driver('d1', 'Suresh Verma', '9893302783') });
+    env.ctx.tick();
+    assert.equal(env.whatsapps.length, 0);
+    assert.equal(env.store.docs.get('bookings/b1').whatsappKey, undefined);
+
+    env.props.set('WHATSAPP_TOKEN', 'EAAG-test');
+    env.props.set('WHATSAPP_PHONE_ID', '1234567890');
+    adminSets('b1', { assignedDriver: driver('d2', 'Manoj Patel', '9893300000') });
+    env.ctx.tick();
+    env.ctx.tick();
+    assert.equal(env.whatsapps.length, 1);
+    const w = env.whatsapps[0];
+    assert.equal(w.url, 'https://graph.facebook.com/v23.0/1234567890/messages');
+    assert.equal(w.auth, 'Bearer EAAG-test');
+    assert.equal(w.body.to, '919111473929');
+    assert.equal(w.body.template.name, 'driver_assigned');
+    assert.equal(w.body.template.language.code, 'en');
+    assert.deepEqual(
+      w.body.template.components[0].parameters.map((p) => p.text),
+      ['Ramesh', 'DB-1001', 'Manoj Patel', '+91 98933 00000', 'Fri 9 Oct, 9:30 AM'],
+    );
+    const b = env.store.docs.get('bookings/b1');
+    assert.equal(b.whatsappAssigned.stringValue, 'sent');
+    assert.equal(b.whatsappKey.stringValue, 'assigned:d2');
+  });
+
+  test('the app booking is labelled in Telegram and in the timeline', () => {
+    seedBooking(env.store, 'b1', { extra: { source: s('app') } });
+    env.ctx.processBookings_();
+    assert.ok(env.telegram[0].text.includes('Booked in the DriveBuddy app'));
+    const event = [...env.store.docs.entries()].find(([p]) => p.startsWith('bookings/b1/events/'))[1];
+    assert.equal(event.note.stringValue, 'Booking received from the app');
   });
 });
 

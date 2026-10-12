@@ -12,6 +12,10 @@
  *                     admin panel copied over — so the Sheet is a live copy you
  *                     can filter, sort and download like Excel
  *   • every 5 min   → a booking still "New" after 10 minutes gets one reminder
+ *   • status change → the customer hears about it: a phone notification in the
+ *                     DriveBuddy app (confirmed, driver assigned, completed,
+ *                     cancelled), and — once WhatsApp is set up — a WhatsApp
+ *                     message when a driver is assigned
  *
  * It reads and writes Firestore through the REST API as the Google account that
  * owns this script, so it must be the account that owns the Firebase project.
@@ -28,6 +32,13 @@
  *   ALERT_EMAIL          where alert emails go; default: this account; "none" = off
  *   SITE_URL             default https://thedrivebuddy.in
  *   TELEGRAM_CHAT_ID     filled in by setup()
+ *   EXPO_ACCESS_TOKEN    optional: only if "enhanced push security" is on in Expo
+ *   WHATSAPP_TOKEN       optional: WhatsApp Cloud API access token — automatic
+ *   WHATSAPP_PHONE_ID    "driver assigned" messages stay off until both are set
+ *                        (docs/whatsapp.md)
+ *   WHATSAPP_TEMPLATE    default driver_assigned
+ *   WHATSAPP_LANGUAGE    default en (or hi — the language of the approved template)
+ *   WHATSAPP_API_VERSION default v23.0
  *
  * Your own columns are safe: the robot finds its columns by their heading, only
  * ever writes those, and leaves any column you add (e.g. "Paid?") alone.
@@ -38,6 +49,9 @@
 var DEFAULTS = {
   FIREBASE_PROJECT_ID: 'drive-buddy-acc4c',
   SITE_URL: 'https://thedrivebuddy.in',
+  WHATSAPP_TEMPLATE: 'driver_assigned',
+  WHATSAPP_LANGUAGE: 'en',
+  WHATSAPP_API_VERSION: 'v23.0',
 };
 
 function prop_(key) {
@@ -227,6 +241,7 @@ function bookingTelegram(c) {
   lines.push('', c.previousBookings > 0
     ? '🔁 Returning customer (' + c.previousBookings + ' earlier booking' + (c.previousBookings === 1 ? '' : 's') + ')'
     : '🆕 New customer');
+  if (b.source === 'app') lines.push('📱 Booked in the DriveBuddy app');
   if (b.customerUid) lines.push('👤 Booked while logged in');
   var greeting = 'Hi ' + b.name + ', this is DriveBuddy about your booking ' + c.ref + '. ';
   return {
@@ -290,6 +305,93 @@ function reminderTelegram(c) {
     text: '⏰ <b>Not handled yet: ' + escapeHtml(c.booking.ref || c.id) + '</b>\n' + escapeHtml(c.booking.name) + ', ' +
       escapeHtml(prettyPhone(c.booking.phone)) + ' – waiting ' + c.minutes + ' min.\nCall the customer, then mark it Confirmed in the admin panel.',
     reply_markup: { inline_keyboard: [[{ text: 'Open in admin panel', url: c.siteUrl + '/admin/?b=' + encodeURIComponent(c.id) }]] },
+  };
+}
+
+/* ------------------------------------------------------ customer updates */
+
+/**
+ * What each status change has told the customer, e.g. "assigned:drv7". A new
+ * driver on the same booking is a new key, so the customer hears about it.
+ */
+function updateKey(b) {
+  var d = b.assignedDriver;
+  return String(b.status || '') + (b.status === 'assigned' && d ? ':' + (d.id || d.phone || d.name) : '');
+}
+
+var PUSH_TEXT = {
+  en: {
+    confirmed: function (c) { return { title: 'Booking confirmed', body: c.ref + ': we are choosing your driver. You will get their name and number here.' }; },
+    assigned: function (c) { return { title: 'Driver assigned', body: c.driver + ' will drive for ' + c.ref + '. Tap to see the details and call.' }; },
+    completed: function (c) { return { title: 'Trip completed', body: 'Thank you for choosing DriveBuddy. We hope to drive for you again soon.' }; },
+    cancelled: function (c) { return { title: 'Booking cancelled', body: c.ref + ' was cancelled. Need a driver? Book again any time.' }; },
+  },
+  hi: {
+    confirmed: function (c) { return { title: 'बुकिंग कन्फ़र्म', body: c.ref + ': हम आपका ड्राइवर चुन रहे हैं। उनका नाम और नंबर यहीं मिलेगा।' }; },
+    assigned: function (c) { return { title: 'ड्राइवर तय हो गया', body: c.ref + ' के लिए ' + c.driver + ' आएँगे। जानकारी और कॉल के लिए टैप करें।' }; },
+    completed: function (c) { return { title: 'ट्रिप पूरी हुई', body: 'DriveBuddy चुनने के लिए धन्यवाद। फिर सेवा का मौका दीजिए।' }; },
+    cancelled: function (c) { return { title: 'बुकिंग रद्द', body: c.ref + ' रद्द कर दी गई। ड्राइवर चाहिए तो कभी भी फिर बुक करें।' }; },
+  },
+};
+
+/**
+ * The phone notification for a booking's current status, in the language the
+ * customer uses in the app — or null when this status sends none ('new' is
+ * what they just did themselves).
+ */
+function customerPush(c) {
+  var b = c.booking;
+  var texts = PUSH_TEXT[c.language] || PUSH_TEXT.en;
+  var make = texts[b.status];
+  if (!make || (b.status === 'assigned' && !b.assignedDriver)) return null;
+  var msg = make({ ref: b.ref || 'Your booking', driver: b.assignedDriver ? b.assignedDriver.name : '' });
+  return {
+    to: c.token,
+    title: msg.title,
+    body: msg.body,
+    data: { bookingId: c.id },
+    sound: 'default',
+    priority: 'high',
+    channelId: 'bookings',
+  };
+}
+
+/** First name for a greeting; WhatsApp template values may not hold line breaks. */
+function firstName(name) {
+  return String(name == null ? '' : name).trim().split(/\s+/)[0] || 'there';
+}
+
+function oneLine(s) {
+  return String(s == null ? '' : s).replace(/\s+/g, ' ').trim() || '—';
+}
+
+/**
+ * WhatsApp Cloud API request for the approved "driver assigned" template
+ * (docs/whatsapp.md has its text). Values, in order: customer's first name,
+ * booking number, driver's name, driver's mobile, trip time.
+ */
+function whatsappAssigned(c) {
+  var b = c.booking;
+  var d = String(b.phone == null ? '' : b.phone).replace(/\D/g, '').slice(-10);
+  var text = function (v) { return { type: 'text', text: oneLine(v) }; };
+  return {
+    messaging_product: 'whatsapp',
+    to: '91' + d,
+    type: 'template',
+    template: {
+      name: c.template,
+      language: { code: c.language },
+      components: [{
+        type: 'body',
+        parameters: [
+          text(firstName(b.name)),
+          text(c.ref),
+          text(b.assignedDriver.name),
+          text(prettyPhone(b.assignedDriver.phone)),
+          text(formatWhen(b.preferredTime)),
+        ],
+      }],
+    },
   };
 }
 
@@ -367,6 +469,14 @@ function fsGet_(path) {
   return doc ? fromFields(doc.fields) : null;
 }
 
+/** Every document directly in a (small) collection, e.g. users/{uid}/devices → [{ id, data }]. */
+function fsList_(path) {
+  var res = fsFetch_(fsBase_() + '/' + path + '?pageSize=50');
+  return ((res && res.documents) || []).map(function (d) {
+    return { id: d.name.split('/').pop(), data: fromFields(d.fields) };
+  });
+}
+
 /**
  * runQuery on one collection → [{ id, data }]. Filters and ordering always use
  * the same single field, which Firestore indexes automatically.
@@ -432,6 +542,49 @@ function sendEmail_(msg) {
 /* ================================================================ sheets */
 
 /** Open (or create) a tab and make sure every robot column has a heading. */
+/**
+ * Phone notifications through Expo's push service (the app registers an Expo
+ * push token per phone). Returns one ticket per message, same order:
+ * { status: 'ok' } or { status: 'error', details: { error: 'DeviceNotRegistered' } }.
+ */
+function sendPush_(messages) {
+  if (!messages.length) return [];
+  var headers = { Accept: 'application/json' };
+  var expoToken = prop_('EXPO_ACCESS_TOKEN');
+  if (expoToken) headers.Authorization = 'Bearer ' + expoToken;
+  var res = UrlFetchApp.fetch('https://exp.host/--/api/v2/push/send', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: headers,
+    payload: JSON.stringify(messages),
+    muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() !== 200) {
+    console.warn('Expo push ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 200));
+    return messages.map(function () { return { status: 'error', details: { error: 'RequestFailed' } }; });
+  }
+  return JSON.parse(res.getContentText()).data || [];
+}
+
+/** True once the WhatsApp Cloud API is set up (docs/whatsapp.md). Until then the free one-tap button in /admin is the way. */
+function whatsappReady_() {
+  return Boolean(prop_('WHATSAPP_TOKEN') && prop_('WHATSAPP_PHONE_ID'));
+}
+
+function sendWhatsapp_(payload) {
+  var url = 'https://graph.facebook.com/' + prop_('WHATSAPP_API_VERSION') + '/' + prop_('WHATSAPP_PHONE_ID') + '/messages';
+  var res = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { Authorization: 'Bearer ' + prop_('WHATSAPP_TOKEN') },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() === 200) return 'sent';
+  console.warn('WhatsApp ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 300));
+  return 'failed';
+}
+
 function table_(name, columns, sortBy) {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sh = ss.getSheetByName(name) || ss.insertSheet(name);
@@ -502,7 +655,7 @@ function driversTable_() {
 
 /** Runs every minute (set up by setup()): the safety net behind the instant ping below. */
 function tick() {
-  var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_];
+  var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_];
   if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_);
   runSteps_(steps, 5000);
 }
@@ -544,7 +697,7 @@ function ping_() {
   var cache = CacheService.getScriptCache();
   if (!cache.get('ping')) {
     cache.put('ping', '1', 3);
-    runSteps_([processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_], 25000);
+    runSteps_([processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_], 25000);
   }
   return ContentService.createTextOutput('ok');
 }
@@ -601,7 +754,7 @@ function processBookings_() {
       {
         update: {
           name: docName_('bookings/' + row.id + '/events/' + Utilities.getUuid().replace(/-/g, '')),
-          fields: toFields({ type: 'created', from: null, to: 'new', note: 'Booking received from the website', by: 'system', at: now }),
+          fields: toFields({ type: 'created', from: null, to: 'new', note: 'Booking received from the ' + (b.source === 'app' ? 'app' : 'website'), by: 'system', at: now }),
         },
         currentDocument: { exists: false },
       },
@@ -639,21 +792,23 @@ function processDrivers_() {
 }
 
 /**
- * Copy every booking changed since the last run into the Sheet. "Changed" means
- * its updatedAt moved: numbered by the robot, or confirmed / assigned /
- * completed / cancelled in the admin panel.
+ * Hands every document changed since the last run to `handle`, then moves the
+ * bookmark. "Changed" means its updatedAt moved: numbered by the robot, or
+ * confirmed / assigned / completed / cancelled in the admin panel. Each job
+ * (the Sheet copy, customer updates) keeps its own bookmark, so one failing
+ * never makes another skip or repeat work.
  */
-function syncSheet_(collection, bookmark, table, toRecord) {
+function changedSince_(collection, bookmark, handle) {
   var props = PropertiesService.getScriptProperties();
   var since = Number(props.getProperty(bookmark) || Date.now() - 15 * 60 * 1000);
-  // Documents already copied at exactly the bookmark millisecond (Firestore keeps
+  // Documents already handled at exactly the bookmark millisecond (Firestore keeps
   // microseconds, so "≥ bookmark" returns them again until something newer comes).
   var seen = (props.getProperty(bookmark + 'Ids') || '').split(',');
   var ms = function (r) { return r.data.updatedAt.getTime(); };
   var rows = fsQuery_(collection, fieldFilter_('updatedAt', 'GREATER_THAN_OR_EQUAL', new Date(since)), 'ASCENDING', 200, 'updatedAt')
     .filter(function (r) { return !(ms(r) === since && seen.indexOf(r.id) >= 0); });
   if (!rows.length) return 0;
-  upsertRows_(table(), rows.map(function (r) { return toRecord(r.id, r.data); }));
+  handle(rows);
   var last = ms(rows[rows.length - 1]);
   var atLast = rows.filter(function (r) { return ms(r) === last; }).map(function (r) { return r.id; });
   if (last === since) atLast = atLast.concat(seen.filter(String));
@@ -662,12 +817,68 @@ function syncSheet_(collection, bookmark, table, toRecord) {
   return rows.length;
 }
 
+/** Copy every changed booking or driver into the Sheet. */
+function syncSheet_(collection, bookmark, table, toRecord) {
+  return changedSince_(collection, bookmark, function (rows) {
+    upsertRows_(table(), rows.map(function (r) { return toRecord(r.id, r.data); }));
+  });
+}
+
 function syncBookingsSheet_() {
   return syncSheet_('bookings', 'sheetBookingsMs', bookingsTable_, bookingRecord);
 }
 
 function syncDriversSheet_() {
   return syncSheet_('drivers', 'sheetDriversMs', driversTable_, driverRecord);
+}
+
+/**
+ * Tell customers what changed on their booking (see customerPush and
+ * whatsappAssigned). Each booking remembers what it was last told — pushedKey,
+ * whatsappKey — written WITHOUT touching updatedAt, so this never wakes the
+ * Sheet copy or itself again, and nothing is ever sent twice.
+ */
+function notifyCustomers_() {
+  return changedSince_('bookings', 'notifyBookingsMs', function (rows) {
+    rows.forEach(function (row) { notifyCustomer_(row.id, row.data); });
+  });
+}
+
+function notifyCustomer_(id, b) {
+  var key = updateKey(b);
+  var fields = {};
+
+  // App users: a notification on every phone they are logged in on.
+  if (b.customerUid && b.pushedKey !== key && customerPush({ booking: b, id: id, language: 'en', token: '' })) {
+    var devices = fsList_('users/' + b.customerUid + '/devices').filter(function (d) { return d.data.token; });
+    var messages = devices.map(function (d) {
+      return customerPush({ booking: b, id: id, language: d.data.language, token: d.data.token });
+    });
+    var tickets = sendPush_(messages);
+    // Phones that uninstalled the app or logged out offline: forget them.
+    var gone = devices.filter(function (d, i) {
+      var t = tickets[i];
+      return t && t.status === 'error' && t.details && t.details.error === 'DeviceNotRegistered';
+    });
+    if (gone.length) fsCommit_(gone.map(function (d) { return { delete: docName_('users/' + b.customerUid + '/devices/' + d.id) }; }));
+    fields.pushedKey = key;
+  }
+
+  // Everyone, once WhatsApp is set up: the driver's name and number on WhatsApp.
+  if (b.status === 'assigned' && b.assignedDriver && b.ref && b.whatsappKey !== key && whatsappReady_()) {
+    fields.whatsappKey = key;
+    fields.whatsappAssigned = sendWhatsapp_(whatsappAssigned({
+      booking: b, ref: b.ref, template: prop_('WHATSAPP_TEMPLATE'), language: prop_('WHATSAPP_LANGUAGE'),
+    }));
+  }
+
+  var keys = Object.keys(fields);
+  if (!keys.length) return;
+  fsCommit_([{
+    update: { name: docName_('bookings/' + id), fields: toFields(fields) },
+    updateMask: { fieldPaths: keys },
+    currentDocument: { exists: true },
+  }]);
 }
 
 /** A booking still New 10 minutes after it came in gets one Telegram nudge. */
@@ -943,5 +1154,6 @@ if (typeof module !== 'undefined') {
     bookingEmail: bookingEmail, driverTelegram: driverTelegram, reminderTelegram: reminderTelegram,
     bookingRecord: bookingRecord, driverRecord: driverRecord, columnLetter: columnLetter,
     toValue: toValue, fromValue: fromValue, toFields: toFields, fromFields: fromFields,
+    updateKey: updateKey, customerPush: customerPush, whatsappAssigned: whatsappAssigned,
   };
 }

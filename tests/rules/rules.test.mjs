@@ -110,6 +110,12 @@ describe('bookings — creating', () => {
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ createdAt: new Date(2020, 0, 1) })));
   });
 
+  test('the mobile app books with source "app"; any other source is refused', async () => {
+    await assertSucceeds(addDoc(collection(guest(), 'bookings'), booking({ source: 'app' })));
+    await assertSucceeds(addDoc(collection(customer(), 'bookings'), booking({ source: 'app', customerUid: 'cust1' })));
+    await assertFails(addDoc(collection(guest(), 'bookings'), booking({ source: 'admin' })));
+  });
+
   test('bad phone, city or package is refused', async () => {
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ phone: '12345' })));
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ city: 'Mumbai' })));
@@ -233,6 +239,27 @@ describe('users and customers', () => {
     await assertFails(setDoc(doc(customer('cust1'), 'users', 'cust2'), profile()));
     await assertFails(getDoc(doc(customer('cust2'), 'users', 'cust1')));
     await assertFails(setDoc(doc(customer('cust3'), 'users', 'cust3'), profile({ role: 'admin' })));
+  });
+
+  test('a customer registers only their own phones for notifications, in a fixed shape', async () => {
+    const device = (extra = {}) => ({
+      token: 'ExponentPushToken[abcdEFGH1234_-]',
+      platform: 'android',
+      language: 'hi',
+      updatedAt: serverTimestamp(),
+      ...extra,
+    });
+    const mine = doc(customer('cust1'), 'users', 'cust1', 'devices', 'ExponentPushToken_abcdEFGH1234_-_');
+    await assertSucceeds(setDoc(mine, device()));
+    await assertSucceeds(setDoc(mine, device({ language: 'en' }))); // language change on the same phone
+    await assertSucceeds(getDoc(mine));
+    await assertSucceeds(deleteDoc(mine)); // logout
+    await assertFails(setDoc(doc(customer('cust2'), 'users', 'cust1', 'devices', 'x'), device()));
+    await assertFails(setDoc(doc(guest(), 'users', 'cust1', 'devices', 'x'), device()));
+    await assertFails(setDoc(doc(customer('cust1'), 'users', 'cust1', 'devices', 'x'), device({ token: 'not-a-token' })));
+    await assertFails(setDoc(doc(customer('cust1'), 'users', 'cust1', 'devices', 'x'), device({ platform: 'web' })));
+    await assertFails(setDoc(doc(customer('cust1'), 'users', 'cust1', 'devices', 'x'), device({ extra: true })));
+    await assertFails(getDoc(doc(customer('cust2'), 'users', 'cust1', 'devices', 'ExponentPushToken_abcdEFGH1234_-_')));
   });
 
   test('customer records are admin-read-only', async () => {
