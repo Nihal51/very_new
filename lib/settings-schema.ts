@@ -39,6 +39,13 @@ export type SiteSettings = {
     standInPerDay: number;
     replacementDays: number;
   };
+  /** The DriveBuddy mobile app (Nihal51/drivebuddy-mobile), via /app-config.json. */
+  app: {
+    /** Installed apps older than this show "Please update". Format 1.0.0. */
+    minVersion: string;
+    playStoreUrl: string;
+    appStoreUrl: string;
+  };
   partners: {
     monthlyCustomer: number;
     /** % of each full-day, outstation, wedding or event booking a partner sends. */
@@ -87,6 +94,22 @@ export function checkSettings(s: SiteSettings): SiteSettings {
   };
   googleLink('google.profile', s.google.profile);
   if (s.google.writeReview.trim()) googleLink('google.writeReview', s.google.writeReview);
+
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(s.app.minVersion))
+    problems.push(`app.minVersion must look like 1.0.0 (it is "${s.app.minVersion}")`);
+  /* Store links only: an "update" button must never send customers anywhere else. */
+  const storeLink = (name: string, url: string, host: string) => {
+    if (!url.trim()) return;
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'https:' || u.hostname !== host)
+        problems.push(`${name} must be an https link on ${host} (it is "${url}")`);
+    } catch {
+      problems.push(`${name} is not a web link ("${url}")`);
+    }
+  };
+  storeLink('app.playStoreUrl', s.app.playStoreUrl, 'play.google.com');
+  storeLink('app.appStoreUrl', s.app.appStoreUrl, 'apps.apple.com');
 
   if (s.notice.show && !s.notice.text.trim()) problems.push('notice.show is true but notice.text is empty');
   if (s.notice.text.length > 160)

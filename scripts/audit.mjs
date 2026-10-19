@@ -276,4 +276,37 @@ if (missing.length) {
   failures++;
 }
 
+/* /app-config.json feeds the DriveBuddy mobile app its prices and numbers. The
+   app checks every field itself and keeps its last good copy if this file is
+   wrong (Nihal51/drivebuddy-mobile, packages/shared/src/config.ts) — this
+   catches a broken file before it is published at all. */
+{
+  const issues = [];
+  let cfg = null;
+  try {
+    cfg = JSON.parse(readFileSync(path.join(OUT, 'app-config.json'), 'utf8'));
+  } catch (err) {
+    issues.push(`missing or not JSON (${err.message})`);
+  }
+  if (cfg) {
+    const money = (v) => typeof v === 'number' && Number.isFinite(v) && v > 0;
+    const range = (r) => r && money(r.from) && money(r.to) && r.from <= r.to;
+    const mobile = (v) => typeof v === 'string' && /^[6-9]\d{9}$/.test(v);
+    const https = (v) => typeof v === 'string' && /^https:\/\/\S+$/.test(v);
+    if (cfg.schema !== 1) issues.push('schema is not 1');
+    for (const k of ['phone', 'phoneAlt', 'whatsapp']) if (!mobile(cfg.contact?.[k])) issues.push(`contact.${k}`);
+    for (const k of ['oneHour', 'threeHours', 'nightFrom']) if (!money(cfg.prices?.[k])) issues.push(`prices.${k}`);
+    for (const k of ['fullDay', 'outstation']) if (!range(cfg.prices?.[k])) issues.push(`prices.${k}`);
+    if (!range(cfg.monthly?.basic) || !money(cfg.monthly?.premium)) issues.push('monthly prices');
+    for (const k of ['url', 'privacy', 'terms']) if (!https(cfg.site?.[k])) issues.push(`site.${k}`);
+    if (typeof cfg.app?.minVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(cfg.app.minVersion)) issues.push('app.minVersion');
+  }
+  if (issues.length) {
+    console.log(`app-config.json — ↳ FAIL ${issues.join(', ')}`);
+    failures++;
+  } else {
+    console.log('app-config.json — ok, the mobile app will accept it');
+  }
+}
+
 process.exit(failures === 0 ? 0 : 1);

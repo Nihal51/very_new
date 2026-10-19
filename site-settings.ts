@@ -95,6 +95,17 @@ export const settings = {
     standInPerDay: 900, //                  Basic only (free on Premium)
     replacementDays: 1, //                  a new driver within this many days
   },
+  /* -------------------------------------------------------- mobile app -----
+     The DriveBuddy app on customers' phones reads these (with the prices and
+     numbers above) from thedrivebuddy.in/app-config.json.
+     minVersion: raise it ONLY when old app versions must stop being used — they
+     then show "Please update" with a button to the store. Looks like 1.0.0. */
+  app: {
+    minVersion: '1.0.0',
+    playStoreUrl: 'https://play.google.com/store/apps/details?id=in.thedrivebuddy.app',
+    appStoreUrl: '', //  the App Store link, once the iPhone app is published
+  },
+
   /* ---------------------------------------------------- partner program ----
      The rewards on the Become a partner page (/partners/). Partners are paid
      only after the customer they sent has paid. */

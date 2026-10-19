@@ -16,7 +16,7 @@ import { site } from '@/lib/site';
 export const dynamic = 'force-static';
 
 export function GET() {
-  const { contact, notice, prices, monthly, google, alerts } = settings;
+  const { contact, notice, prices, monthly, google, alerts, app } = settings;
   const body = {
     schema: 1,
     generatedAt: new Date().toISOString(),
@@ -43,6 +43,7 @@ export function GET() {
     google: { profile: google.profile, writeReview: google.writeReview },
     alerts: { pingUrl: alerts.pingUrl },
     site: { url: site.url, privacy: `${site.url}/privacy/`, terms: `${site.url}/terms/` },
+    app: { minVersion: app.minVersion, playStoreUrl: app.playStoreUrl, appStoreUrl: app.appStoreUrl },
   };
   return new Response(JSON.stringify(body, null, 2), {
     headers: { 'Content-Type': 'application/json; charset=utf-8' },
