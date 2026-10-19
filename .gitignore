@@ -36,6 +36,10 @@ firestore-debug.log*
 serviceAccount.json
 service-account*.json
 *-firebase-adminsdk-*.json
+# Apps Script deploys (docs/automatic-deploys.md): the login token is a secret;
+# the project file is made by the workflow.
+.clasprc.json
+.clasp.json
 
 # Exported leads — real customer names, mobile numbers and home addresses.
 exports/

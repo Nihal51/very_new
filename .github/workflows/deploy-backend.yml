@@ -1,0 +1,111 @@
+# ============================================================================
+#  Deploy the backend when it changes — no more copy-pasting.
+#
+#    firestore.rules changed   → test them on the emulator → publish to Firebase
+#    apps-script/ changed      → push the alerts robot to its Apps Script project
+#
+#  Each part runs only once its secret is set; until then it says what is
+#  missing and skips, and you keep doing that part by hand
+#  (docs/bookings-system.md). One-time setup: docs/automatic-deploys.md.
+# ============================================================================
+
+name: Deploy backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - firestore.rules
+      - firestore.indexes.json
+      - firebase.json
+      - apps-script/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      rules: ${{ steps.filter.outputs.rules }}
+      robot: ${{ steps.filter.outputs.robot }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rules:
+              - firestore.rules
+              - firestore.indexes.json
+              - firebase.json
+            robot:
+              - apps-script/**
+
+  rules:
+    needs: changes
+    if: needs.changes.outputs.rules == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: tests/rules/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm --prefix tests/rules ci
+
+      - name: Test the rules on the Firestore emulator (never publish untested rules)
+        run: npm --prefix tests/rules test
+
+      - name: Publish to Firebase
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::notice::FIREBASE_SERVICE_ACCOUNT secret not set — publish the rules by hand in the Firebase console (docs/automatic-deploys.md)."
+            exit 0
+          fi
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@15 deploy --only firestore:rules,firestore:indexes --project drive-buddy-acc4c --non-interactive
+          rm -f "$RUNNER_TEMP/sa.json"
+
+  robot:
+    needs: changes
+    if: needs.changes.outputs.robot == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Test the robot (never push an untested robot)
+        run: node --test scripts/alerts-script.test.mjs
+
+      - name: Push to Apps Script
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          APPS_SCRIPT_ID: ${{ vars.APPS_SCRIPT_ID }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$APPS_SCRIPT_ID" ]; then
+            echo "::notice::CLASPRC_JSON secret or APPS_SCRIPT_ID variable not set — paste apps-script/Code.js into the Apps Script editor by hand (docs/automatic-deploys.md)."
+            exit 0
+          fi
+          echo "$CLASPRC_JSON" > ~/.clasprc.json
+          printf '{"scriptId":"%s","rootDir":"apps-script"}\n' "$APPS_SCRIPT_ID" > .clasp.json
+          npx --yes @google/clasp@2 push --force
+          rm -f ~/.clasprc.json
