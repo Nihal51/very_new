@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { JsonLd } from '@/components/JsonLd';
 import { ClosingCTA } from '@/components/sections/ClosingCTA';
@@ -96,8 +97,11 @@ export default function PricingPage() {
               ({priceText.outstationExtraHour} for each hour beyond) and his way home included. If
               he is still travelling home after the last paid day, those hours are{' '}
               {priceText.outstationReturnHour} each, at most {priceText.outstationReturnMax} a day.
-              Pick your destination on the booking form for an estimate — we confirm the total on
-              the call, before the driver leaves.
+              Pick your destination on the booking form for an estimate — or see{' '}
+              <Link href="/one-way-drop/" className="text-accent-text font-semibold underline underline-offset-4">
+                one-way drop prices by route
+              </Link>
+              . We confirm the total on the call, before the driver leaves.
             </p>
           </Card>
         </div>

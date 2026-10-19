@@ -489,3 +489,31 @@ export function cityServiceSchema(citySlug: string, serviceSlug: string, path: s
     ...(service.tiers && { offers: tierOffers(service.tiers) }),
   };
 }
+
+/** The /one-way-drop/ page: the service, priced per day, with the price range. */
+export function oneWayDropSchema({ from, to }: { from: number; to: number }) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    '@id': `${abs('/one-way-drop/')}#service`,
+    name: 'One-way car drop with a driver',
+    serviceType: 'One-way driver to another city',
+    description:
+      'A verified driver drives you and your car, or just the car, from Raipur, Bhilai, Durg or Bilaspur to another city, then comes home by bus or train.',
+    url: abs('/one-way-drop/'),
+    provider: { '@id': ORG_ID },
+    areaServed: SERVICE_AREA,
+    offers: {
+      '@type': 'Offer',
+      priceCurrency: 'INR',
+      priceSpecification: {
+        '@type': 'UnitPriceSpecification',
+        minPrice: from,
+        maxPrice: to,
+        priceCurrency: 'INR',
+        unitText: 'DAY',
+      },
+      availability: 'https://schema.org/InStock',
+    },
+  };
+}

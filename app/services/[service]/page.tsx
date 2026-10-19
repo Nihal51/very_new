@@ -137,7 +137,8 @@ export default async function ServicePage({ params }: Props) {
             No surge and no hidden extras once the price is agreed.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-            <ButtonAnchor href={telHref}>
+            {quote.priceLink && <ButtonLink href={quote.priceLink.href}>{quote.priceLink.label}</ButtonLink>}
+            <ButtonAnchor href={telHref} variant={quote.priceLink ? 'outline' : undefined}>
               <PhoneIcon className="size-5" />
               Call for a quote
             </ButtonAnchor>

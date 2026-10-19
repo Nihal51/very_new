@@ -52,6 +52,8 @@ export type Service = {
     whatsapp: string;
     /** Replaces the usual "driver's charge only, you provide the car and fuel" line. */
     note?: string;
+    /** A page where customers can work out the price themselves (shown as the first button). */
+    priceLink?: { href: string; label: string };
   };
   /**
    * Fixed-price plans the customer chooses between (the monthly driver's Basic and
@@ -368,6 +370,7 @@ export const services: Service[] = [
       ],
       whatsapp:
         'Hi DriveBuddy, I need a one-way car drop.\nFrom (city / area):\nTo (city / address):\nDate and time:\nCar model:',
+      priceLink: { href: '/one-way-drop/', label: 'See the price for your route' },
     },
     faqs: [
       {

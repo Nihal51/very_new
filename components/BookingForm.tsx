@@ -9,6 +9,7 @@ import { CheckCircleIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
 import { TripEstimate } from '@/components/TripEstimate';
 import { currentUser, loadProfile, mightBeSignedIn } from '@/lib/auth';
 import { isTripPackage, type BookingTrip } from '@/lib/bookings';
+import { findDestination } from '@/lib/outstation';
 import { bookingPackages, cities } from '@/lib/content';
 import { submitDoc } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
@@ -174,6 +175,23 @@ export function BookingForm({
     return () => {
       alive = false;
     };
+  }, []);
+
+  /* Links can pre-fill the form: /book/?pkg=one-way-drop&city=Raipur&to=nagpur&days=2
+     (the One-Way Drop page's "Book this drop"). Unknown values are ignored. */
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const pkg = q.get('pkg') ?? '';
+    const city = q.get('city') ?? '';
+    const to = q.get('to') ?? '';
+    const days = q.get('days') ?? '';
+    const patch: Partial<Values> = {
+      ...(bookingPackages.some((p) => p.value === pkg) && { pkg }),
+      ...(cities.some((c) => c.name === city) && { city }),
+      ...((to === ELSEWHERE || findDestination(to)) && { dest: to }),
+      ...(/^[1-9]\d?$/.test(days) && { days }),
+    };
+    if (Object.keys(patch).length) setValues((v) => ({ ...v, ...patch }));
   }, []);
 
   // Move focus to the confirmation so screen reader and keyboard users land on it.
