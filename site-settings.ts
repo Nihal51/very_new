@@ -84,19 +84,22 @@ export const settings = {
 
   /* ------------------------------------- outstation trips & one-way drops --
      How the trip estimate is worked out on the booking form and in the app.
-     The customer picks a destination; the site counts the one-way km, the
-     driving days and the days the driver needs to get home by bus or train,
-     and shows a range: days × prices.outstation + return days × returnDay.
-     The team confirms the exact price on the call (the quote calculator in
-     /admin works it out from what the driver costs). */
+     The customer picks a destination; the site counts the one-way km and the
+     days. Each day (prices.outstation) covers the driver's 24 hours from the
+     start, his way home included. Only if he is still travelling home after
+     the last paid day are those hours added, at returnHour each, at most
+     returnMaxPerDay in any 24 hours. The team confirms the exact price on the
+     call (the quote calculator in /admin works it out from the driver's cost). */
   outstation: {
     hoursPerDay: 12, //        driving hours in one outstation day
-    extraHour: 120, //         each hour beyond hoursPerDay
-    returnDay: { from: 1000, to: 1200 }, //  each day the driver spends getting home by bus/train after a one-way drop
-    mealAllowance: 100, //     per meal, only if the customer does not give the driver his meals
+    extraHour: 120, //         each hour of driving beyond hoursPerDay
+    returnHour: 120, //        each hour the driver is still travelling home after the paid days
+    returnMaxPerDay: 1200, //  the most those return hours cost in any 24 hours
+    mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 400, //          how far one driver drives in a day, with breaks
-    averageKmh: 45, //         highway average with stops: decides if a short drop needs no return day
-    returnKmPerDay: 800, //    how far a bus or train gets the driver home in one day
+    averageKmh: 45, //         highway average with stops
+    busKmh: 50, //             bus/train average on the way home, with stops
+    stationHours: 1, //        getting to the bus stand or station and waiting
     localWithinKm: 60, //      closer than this, the form suggests a local package instead
     minProfitPercent: 15, //   the /admin quote calculator never quotes below this profit
   },

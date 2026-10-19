@@ -33,12 +33,16 @@ export type SiteSettings = {
   outstation: {
     hoursPerDay: number;
     extraHour: number;
-    /** Per day the driver travels home by bus/train (not driving). */
-    returnDay: Range;
+    /** Per hour the driver is still travelling home after the paid days. */
+    returnHour: number;
+    /** The most return hours cost in any 24 hours. */
+    returnMaxPerDay: number;
+    /** Per day, if the customer does not give the driver his meals. */
     mealAllowance: number;
     kmPerDay: number;
     averageKmh: number;
-    returnKmPerDay: number;
+    busKmh: number;
+    stationHours: number;
     localWithinKm: number;
     /** Used only by the /admin quote calculator; not published to the app. */
     minProfitPercent: number;
@@ -146,20 +150,24 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   count('outstation.hoursPerDay', o.hoursPerDay, 16);
   if (o.hoursPerDay < 8) problems.push('outstation.hoursPerDay must be at least 8');
   price('outstation.extraHour', o.extraHour);
-  range('outstation.returnDay', o.returnDay);
+  price('outstation.returnHour', o.returnHour);
+  price('outstation.returnMaxPerDay', o.returnMaxPerDay);
+  if (o.returnMaxPerDay < o.returnHour)
+    problems.push('outstation.returnMaxPerDay must be at least one returnHour');
   price('outstation.mealAllowance', o.mealAllowance);
   count('outstation.kmPerDay', o.kmPerDay, 800);
   if (o.kmPerDay < 200) problems.push('outstation.kmPerDay must be at least 200');
   count('outstation.averageKmh', o.averageKmh, 80);
   if (o.averageKmh < 20) problems.push('outstation.averageKmh must be at least 20');
-  count('outstation.returnKmPerDay', o.returnKmPerDay, 2000);
-  if (o.returnKmPerDay < 200) problems.push('outstation.returnKmPerDay must be at least 200');
+  count('outstation.busKmh', o.busKmh, 100);
+  if (o.busKmh < 20) problems.push('outstation.busKmh must be at least 20');
+  count('outstation.stationHours', o.stationHours, 6);
   count('outstation.localWithinKm', o.localWithinKm, 150);
   count('outstation.minProfitPercent', o.minProfitPercent, 60);
   if (o.extraHour * o.hoursPerDay > s.prices.outstation.to * 2)
     problems.push('outstation.extraHour looks too high for the day price — is a 0 too many?');
-  if (o.returnDay.to > s.prices.outstation.to)
-    problems.push('outstation.returnDay (a day of the driver travelling home) should not cost more than a driving day');
+  if (o.returnMaxPerDay > s.prices.outstation.to)
+    problems.push('outstation.returnMaxPerDay (a day of the driver travelling home) should not cost more than a driving day');
 
   problems.push(...checkDriverCosts(s, driverCosts));
 

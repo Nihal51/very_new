@@ -113,7 +113,7 @@ function inr(n) {
 
 /**
  * The trip on an outstation booking or one-way drop, in one line:
- * "Raipur → Nagpur · one-way drop · ~284 km · 1 driving day + 1 return day · est. ₹2,450–2,650"
+ * "Raipur → Delhi · one-way drop · ~1214 km · 3 days + 11 h getting home · est. ₹5,550–6,150"
  * The estimate is what the customer was shown on the form; the team quotes the
  * exact price on the call. '' when the booking has no trip.
  */
@@ -124,9 +124,8 @@ function tripLine(b) {
   var parts = [String(b.city || '?') + ' → ' + String(t.to) + (t.destId ? '' : ' (not in our list)')];
   parts.push(t.kind === 'round' ? 'round trip' : 'one-way drop');
   if (t.km > 0) parts.push('~' + t.km + ' km');
-  parts.push(t.kind === 'round'
-    ? plural(t.days, 'day')
-    : plural(t.days, 'driving day') + (t.returnDays > 0 ? ' + ' + plural(t.returnDays, 'return day') : ''));
+  // returnHours: hours the driver is still travelling home after the paid days.
+  parts.push(plural(t.days, 'day') + (t.kind !== 'round' && t.returnHours > 0 ? ' + ' + t.returnHours + ' h getting home' : ''));
   parts.push(t.estFrom > 0
     ? 'est. ₹' + inr(t.estFrom) + (t.estTo > t.estFrom ? '–' + inr(t.estTo) : '')
     : 'quote on the call');

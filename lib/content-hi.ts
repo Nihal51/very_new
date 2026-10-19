@@ -218,7 +218,11 @@ export const pricesHi: { name: string; price: string; unit: string }[] = [
     price: priceText.premium,
     unit: m.premiumJoiningFeePercent > 0 ? 'प्रति माह + एक बार जॉइनिंग फ़ीस' : 'प्रति माह, कोई जॉइनिंग फ़ीस नहीं',
   },
-  { name: 'वन-वे ड्रॉप के बाद ड्राइवर की वापसी (बस/ट्रेन)', price: priceText.outstationReturnDay, unit: 'प्रति दिन + टिकट' },
+  {
+    name: 'वन-वे ड्रॉप के बाद ड्राइवर की वापसी (बस/ट्रेन) — सिर्फ़ आख़िरी दिन के बाद के घंटे',
+    price: `${priceText.outstationReturnHour}/घंटा`,
+    unit: `दिन में अधिकतम ${priceText.outstationReturnMax} + टिकट`,
+  },
   { name: 'शादी / इवेंट', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
 ];
 

@@ -25,7 +25,7 @@ export function TripEstimate({
 }) {
   const oneWay = view.kind === 'one-way';
   const dayRate = `${priceText.outstation} a day`;
-  const returnRate = `${priceText.outstationReturnDay} for each day the driver needs to get home`;
+  const returnRate = `${priceText.outstationReturnHour} an hour if the driver is still travelling home after the last day (max ${priceText.outstationReturnMax} a day)`;
 
   let body: ReactNode;
   if (!city) {
@@ -81,10 +81,12 @@ export function TripEstimate({
     >
       {body}
       <p className="text-fg-subtle mt-3 text-xs leading-relaxed">
-        An estimate: we confirm the exact price on the call, before the driver leaves. Up to{' '}
-        {priceText.outstationHours} of driving a day, {rupees(tripRules.extraHour)} an hour beyond.
-        Fuel, tolls and parking{oneWay ? ', and the driver’s bus or train ticket home,' : ''} are extra.
-        Please give the driver his meals, or {rupees(settings.outstation.mealAllowance)} a meal.
+        An estimate: we confirm the exact price on the call, before the driver leaves. Each day
+        covers the driver&apos;s 24 hours from the start, with up to {priceText.outstationHours} of
+        driving ({rupees(tripRules.extraHour)} an hour beyond)
+        {oneWay ? ' and his way home' : ''}. Fuel, tolls and parking
+        {oneWay ? ', and his bus or train ticket,' : ''} are extra. Please give the driver his meals,
+        or {rupees(settings.outstation.mealAllowance)} a day.
       </p>
     </div>
   );

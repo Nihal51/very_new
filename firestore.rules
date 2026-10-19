@@ -116,15 +116,16 @@ service cloud.firestore {
     // call. destId '' = a place not in our list (km and estimate 0).
     function isTrip(t, pkg) {
       return t is map
-        && t.keys().hasOnly(['to', 'destId', 'kind', 'km', 'days', 'returnDays', 'estFrom', 'estTo'])
-        && t.keys().hasAll(['to', 'destId', 'kind', 'km', 'days', 'returnDays', 'estFrom', 'estTo'])
+        && t.keys().hasOnly(['to', 'destId', 'kind', 'km', 'days', 'returnHours', 'estFrom', 'estTo'])
+        && t.keys().hasAll(['to', 'destId', 'kind', 'km', 'days', 'returnHours', 'estFrom', 'estTo'])
         && isText(t.to, 2, 60)
         && t.destId is string && t.destId.matches('^[a-z]{0,30}$')
         && ((pkg == 'outstation' && t.kind == 'round') || (pkg == 'one-way-drop' && t.kind == 'one-way'))
         && t.km is int && t.km >= 0 && t.km <= 5000
         && t.days is int && t.days >= 1 && t.days <= 60
-        && t.returnDays is int && t.returnDays >= 0 && t.returnDays <= 10
-        && (t.kind == 'one-way' || t.returnDays == 0)
+        // Hours the driver is still travelling home after the paid days.
+        && t.returnHours is int && t.returnHours >= 0 && t.returnHours <= 200
+        && (t.kind == 'one-way' || t.returnHours == 0)
         && t.estFrom is int && t.estFrom >= 0 && t.estFrom <= 1000000
         && t.estTo is int && t.estTo >= t.estFrom && t.estTo <= 1000000;
     }
@@ -135,17 +136,19 @@ service cloud.firestore {
     // admin-only timeline, never here.
     function isQuote(q) {
       return q is map
-        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnDays', 'returnDay', 'extraHours', 'extraHourRate', 'ticket', 'at'])
-        && q.keys().hasAll(['amount', 'dayRate', 'days', 'returnDays', 'returnDay', 'extraHours', 'extraHourRate', 'ticket', 'at'])
+        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'ticket', 'at'])
+        && q.keys().hasAll(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'ticket', 'at'])
         && q.amount is int && q.amount > 0 && q.amount <= 1000000
         && q.dayRate is int && q.dayRate > 0 && q.dayRate <= 100000
         && q.days is int && q.days >= 1 && q.days <= 60
-        && q.returnDays is int && q.returnDays >= 0 && q.returnDays <= 10
-        && q.returnDay is int && q.returnDay >= 0 && q.returnDay <= 100000
+        && q.returnHours is int && q.returnHours >= 0 && q.returnHours <= 200
+        && q.returnHourRate is int && q.returnHourRate >= 0 && q.returnHourRate <= 10000
+        // The daily maximum can only lower the return charge, never raise it.
+        && q.returnCharge is int && q.returnCharge >= 0 && q.returnCharge <= q.returnHourRate * q.returnHours
         && q.extraHours is int && q.extraHours >= 0 && q.extraHours <= 200
         && q.extraHourRate is int && q.extraHourRate >= 0 && q.extraHourRate <= 10000
         && q.ticket is int && q.ticket >= 0 && q.ticket <= 100000
-        && q.amount == q.dayRate * q.days + q.returnDay * q.returnDays + q.extraHourRate * q.extraHours + q.ticket
+        && q.amount == q.dayRate * q.days + q.returnCharge + q.extraHourRate * q.extraHours + q.ticket
         && q.at == request.time;
     }
 

@@ -39,7 +39,8 @@ export type TripView = {
   minDays: number;
   /** The days to charge. */
   days: number;
-  returnDays: number;
+  /** One-way: hours the driver is still travelling home after the paid days. */
+  returnHours: number;
   plan?: TripPlan;
   est?: Estimate;
   /** The pickup city itself was chosen as the destination. */
@@ -56,7 +57,7 @@ export function tripFor(pkg: TripPackage, city: string, destId: string, bookedDa
   const sameCity = Boolean(dest && dest.name === city);
   if (!dest || !isPickupCity(city) || sameCity) {
     const days = Math.min(60, Math.max(1, Math.floor(bookedDays) || 1));
-    return { kind, dest, km: 0, minDays: 1, days, returnDays: 0, sameCity };
+    return { kind, dest, km: 0, minDays: 1, days, returnHours: 0, sameCity };
   }
   const plan = planTrip(tripRules, roadKm(city, dest), kind, bookedDays);
   return {
@@ -65,7 +66,7 @@ export function tripFor(pkg: TripPackage, city: string, destId: string, bookedDa
     km: plan.km,
     minDays: plan.minDays,
     days: plan.days,
-    returnDays: plan.returnDays,
+    returnHours: plan.returnHours,
     plan,
     est: estimate(tripRules, plan),
     sameCity,
@@ -80,7 +81,7 @@ export function tripRecord(view: TripView, typedPlace: string): BookingTrip {
     kind: view.kind,
     km: view.km,
     days: view.days,
-    returnDays: view.returnDays,
+    returnHours: view.returnHours,
     estFrom: view.est?.from ?? 0,
     estTo: view.est?.to ?? 0,
   };
@@ -91,10 +92,10 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 /** 1214 → "1,214 km" */
 export const kmText = (km: number) => `${new Intl.NumberFormat('en-IN').format(km)} km`;
 
-/** "1 driving day + 1 return day" / "2 days". */
-export function tripDays(t: Pick<BookingTrip, 'kind' | 'days' | 'returnDays'>): string {
-  if (t.kind === 'round') return plural(t.days, 'day');
-  return plural(t.days, 'driving day') + (t.returnDays > 0 ? ` + ${plural(t.returnDays, 'return day')}` : '');
+/** "2 days" / "3 days + 11 h for the driver to get home". */
+export function tripDays(t: Pick<BookingTrip, 'kind' | 'days' | 'returnHours'>): string {
+  const days = plural(t.days, 'day');
+  return t.kind === 'one-way' && t.returnHours > 0 ? `${days} + ${t.returnHours} h for the driver to get home` : days;
 }
 
 /** One line for WhatsApp, the confirmation and the account page. */
@@ -116,23 +117,27 @@ export function estimateLines(view: TripView): { label: string; amount: string }
   const rate = rupeeRange(tripRules.dayRate.from, tripRules.dayRate.to);
   const lines = [
     {
-      label: `${plural(view.days, view.kind === 'round' ? 'day' : 'driving day')} × ${rate}`,
+      label: `${plural(view.days, 'day')} × ${rate}`,
       amount: rupeeRange(view.est.driving.from, view.est.driving.to),
     },
   ];
-  if (view.returnDays > 0)
-    lines.push({
-      label: `${plural(view.returnDays, 'day')} for the driver to get home × ${rupeeRange(tripRules.returnDay.from, tripRules.returnDay.to)}`,
-      amount: rupeeRange(view.est.returnCharge.from, view.est.returnCharge.to),
-    });
+  if (view.kind === 'one-way')
+    lines.push(
+      view.returnHours > 0
+        ? {
+            label: `Driver still on his way home ${plural(view.returnHours, 'hour')} after the last day × ${rupees(tripRules.returnHour)} (max ${rupees(tripRules.returnMaxPerDay)} a day)`,
+            amount: rupees(view.est.returnCharge),
+          }
+        : { label: 'Driver’s bus/train home: within the paid days', amount: 'No charge' },
+    );
   return lines;
 }
 
-/** "₹1,550 × 2 days + ₹1,000 × 1 return day + ₹650 ticket" — the agreed price, itemised. */
+/** "₹1,550 × 3 days + ₹1,200 return (11 h) + ₹650 ticket" — the agreed price, itemised. */
 export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
   return [
     `${rupees(q.dayRate)} × ${plural(q.days, 'day')}`,
-    q.returnDays > 0 ? `${rupees(q.returnDay)} × ${plural(q.returnDays, 'return day')}` : null,
+    q.returnHours > 0 ? `${rupees(q.returnCharge)} return (${q.returnHours} h)` : null,
     q.extraHours > 0 ? `${rupees(q.extraHourRate)} × ${plural(q.extraHours, 'extra hour')}` : null,
     q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
   ]

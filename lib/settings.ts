@@ -41,7 +41,9 @@ export const priceText = {
   fullDay: rupeeRange(p.fullDay.from, p.fullDay.to),
   /** Per day of an outstation trip or one-way drop. */
   outstation: rupeeRange(p.outstation.from, p.outstation.to),
-  outstationReturnDay: rupeeRange(settings.outstation.returnDay.from, settings.outstation.returnDay.to),
+  /** Per hour the driver is still travelling home after the paid days, and the daily maximum. */
+  outstationReturnHour: rupees(settings.outstation.returnHour),
+  outstationReturnMax: rupees(settings.outstation.returnMaxPerDay),
   outstationExtraHour: rupees(settings.outstation.extraHour),
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
   mealAllowance: rupees(settings.outstation.mealAllowance),
@@ -80,11 +82,13 @@ export { joiningFee as joiningFeeAmount };
 /** The trip rules for lib/outstation.ts, from the checked settings. */
 export const tripRules: TripRules = {
   dayRate: { from: p.outstation.from, to: p.outstation.to },
-  returnDay: { ...settings.outstation.returnDay },
+  returnHour: settings.outstation.returnHour,
+  returnMaxPerDay: settings.outstation.returnMaxPerDay,
   extraHour: settings.outstation.extraHour,
   hoursPerDay: settings.outstation.hoursPerDay,
   kmPerDay: settings.outstation.kmPerDay,
   averageKmh: settings.outstation.averageKmh,
-  returnKmPerDay: settings.outstation.returnKmPerDay,
+  busKmh: settings.outstation.busKmh,
+  stationHours: settings.outstation.stationHours,
   localWithinKm: settings.outstation.localWithinKm,
 };

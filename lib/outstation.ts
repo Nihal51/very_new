@@ -11,38 +11,41 @@
  * How a trip is priced (decided with the owner, 19 Oct 2026):
  *   - One-way distance from the pickup city decides everything. Most trips are
  *     one-way drops: the driver delivers the car and comes home by bus/train.
- *   - Driving days: at least one-way km ÷ kmPerDay (≈ 400 km a day, with
- *     breaks; up to 40 km over doesn't add a day), or the days the customer
- *     books if more (resting, sightseeing).
- *     A round trip drives the distance twice.
- *   - Return days (one-way only): the days the driver spends getting home by
- *     bus or train, charged at a flat non-driving rate. None if the drive and
- *     the ride home fit in one working day (a short drop).
- *   - The customer sees a range; the team quotes the exact price on the call,
- *     from the driver's real cost plus at least the minimum profit.
+ *   - Days: at least one-way km ÷ kmPerDay (≈ 400 km a day, with breaks; up to
+ *     40 km over doesn't add a day), or the days the customer books if more
+ *     (resting, sightseeing). A round trip drives the distance twice.
+ *   - Each paid day covers the driver's whole 24 hours, counted from the start
+ *     — up to hoursPerDay of driving, and his way home by bus/train too.
+ *   - Return hours (one-way only): only if he is still travelling home after
+ *     the last paid day ends — e.g. start 6 AM, home by 6 AM next day: none;
+ *     home at 10 AM: 4 hours. Charged per hour, at most returnMaxPerDay in any
+ *     24 hours.
+ *   - The customer sees an estimate; the team quotes the exact price on the
+ *     call, from the driver's real cost plus at least the minimum profit.
  */
 
 /* ------------------------------------------------------------- rules ---- */
 
 /** The trip rules from site-settings.ts (`outstation`), plus the per-day price range. */
 export type TripRules = {
-  /** Customer price per driving day — the range customers are shown. */
+  /** Customer price per day (24 h from the start, up to hoursPerDay driving) — the range customers are shown. */
   dayRate: { from: number; to: number };
-  /**
-   * Customer price per return day (the driver travelling home by bus/train,
-   * not driving) — a range, as what the driver asks for varies.
-   */
-  returnDay: { from: number; to: number };
-  /** Customer price per hour beyond hoursPerDay on a driving day. */
+  /** Customer price per hour the driver is still travelling home after the paid days. */
+  returnHour: number;
+  /** The most those return hours cost in any 24 hours. */
+  returnMaxPerDay: number;
+  /** Customer price per hour beyond hoursPerDay of driving in a day. */
   extraHour: number;
-  /** Hours on duty in one outstation day. */
+  /** Driving hours in one outstation day. */
   hoursPerDay: number;
   /** Planning distance one driver covers in a day, with breaks. */
   kmPerDay: number;
-  /** Average highway speed including stops — for "does it fit in one day". */
+  /** Average highway speed including stops. */
   averageKmh: number;
-  /** How far a driver gets home by bus or train in one day of travel. */
-  returnKmPerDay: number;
+  /** Average bus/train speed on the way home, including stops. */
+  busKmh: number;
+  /** Getting to the bus stand or station and waiting, hours. */
+  stationHours: number;
   /** A destination closer than this (one way) is a local trip, not outstation. */
   localWithinKm: number;
 };
@@ -156,12 +159,12 @@ export type TripPlan = {
   kind: TripKind;
   /** Closer than localWithinKm: book a local package instead. */
   local: boolean;
-  /** The fewest driving days the distance allows. */
+  /** The fewest days the distance allows. */
   minDays: number;
-  /** Driving days charged: minDays, or more if the customer booked more. */
+  /** Days charged: minDays, or more if the customer booked more. */
   days: number;
-  /** Days the driver spends getting home by bus/train (one-way only). */
-  returnDays: number;
+  /** One-way only: hours the driver is still travelling home after the last paid day (0 = home in time). */
+  returnHours: number;
 };
 
 /**
@@ -184,31 +187,44 @@ export function planTrip(rules: TripRules, km: number, kind: TripKind, bookedDay
     local: oneWay < rules.localWithinKm,
     minDays,
     days,
-    returnDays: kind === 'one-way' ? returnDays(rules, oneWay) : 0,
+    returnHours: kind === 'one-way' ? returnHours(rules, oneWay) : 0,
   };
 }
 
 /**
- * Days the driver spends getting home after a one-way drop. None when the
- * drive and the ride home together fit in one working day (e.g. Bilaspur);
- * otherwise about one day per returnKmPerDay of bus/train travel.
+ * Hours the driver is still on his way home after the paid days end, on a
+ * one-way drop. He drives the last stretch on the last day (km beyond the
+ * full days), then takes the bus or train: if that gets him home within the
+ * day, nothing is due. The same whatever extra days the customer books — each
+ * extra day moves the drop and the end of the paid time together.
+ *
+ *   Nagpur, 284 km: drive ~6 h, home ~7 h later → within 24 h → 0
+ *   Delhi, 1,214 km (3 days): last day ~9 h, train ~25 h → ~11 h after → 11
  */
-export function returnDays(rules: TripRules, km: number): number {
+export function returnHours(rules: TripRules, km: number): number {
   if (km <= 0) return 0;
-  const sameDay = drivingDays(rules, km) === 1 && (2 * km) / rules.averageKmh <= rules.hoursPerDay;
-  return sameDay ? 0 : Math.max(1, Math.ceil(km / rules.returnKmPerDay));
+  const lastDayKm = km - (drivingDays(rules, km) - 1) * rules.kmPerDay;
+  const homeAfter = lastDayKm / rules.averageKmh + km / rules.busKmh + rules.stationHours;
+  return Math.max(0, Math.ceil(homeAfter - 24 - 1e-9));
+}
+
+/** What `hours` of return travel cost at `rate` an hour, at most `maxPerDay` in any 24 hours. */
+export function returnCost(hours: number, rate: number, maxPerDay: number): number {
+  const h = Math.max(0, Math.round(hours));
+  const fullDays = Math.floor(h / 24);
+  return fullDays * Math.min(24 * rate, maxPerDay) + Math.min((h - 24 * fullDays) * rate, maxPerDay);
 }
 
 /* ----------------------------------------------------------- estimate ---- */
 
 type Money = { from: number; to: number };
-export type Estimate = { from: number; to: number; driving: Money; returnCharge: Money };
+export type Estimate = { from: number; to: number; driving: Money; returnCharge: number };
 
-/** What the customer sees: a range, from the per-day price range. */
-export function estimate(rules: TripRules, plan: Pick<TripPlan, 'days' | 'returnDays'>): Estimate {
+/** What the customer sees: a range, from the per-day price range, plus any return hours. */
+export function estimate(rules: TripRules, plan: Pick<TripPlan, 'days' | 'returnHours'>): Estimate {
   const driving = { from: plan.days * rules.dayRate.from, to: plan.days * rules.dayRate.to };
-  const returnCharge = { from: plan.returnDays * rules.returnDay.from, to: plan.returnDays * rules.returnDay.to };
-  return { from: driving.from + returnCharge.from, to: driving.to + returnCharge.to, driving, returnCharge };
+  const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay);
+  return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, returnCharge };
 }
 
 /* -------------------------------------------------------------- quote ---- */
@@ -216,11 +232,12 @@ export function estimate(rules: TripRules, plan: Pick<TripPlan, 'days' | 'return
 export type QuoteInput = {
   /** What this driver charges for one outstation day. */
   driverDayCost: number;
-  /** What the driver gets for each return day. */
-  driverReturnPay: number;
+  /** What the driver gets per return hour after the paid days. */
+  driverReturnHourPay: number;
   days: number;
-  returnDays: number;
-  /** Hours beyond hoursPerDay, summed over the trip. */
+  /** Hours he is still travelling home after the paid days (one-way). */
+  returnHours: number;
+  /** Hours beyond hoursPerDay of driving, summed over the trip. */
   extraHours: number;
   /** Bus/train ticket home — passed straight through, no profit on it. */
   ticket: number;
@@ -232,8 +249,10 @@ export type QuoteInput = {
 
 export type Quote = {
   dayRate: number;
-  /** What the customer pays per return day: the driver's return pay plus the profit, never below returnDay.from. */
-  returnDayRate: number;
+  /** Customer price per return hour: the driver's pay plus the profit, never below returnHour. */
+  returnHourRate: number;
+  /** What the return hours cost the customer, with the daily maximum applied. */
+  returnCharge: number;
   extraHourRate: number;
   /** Driver charges the customer pays, before the ticket. */
   charges: number;
@@ -246,7 +265,7 @@ export type Quote = {
   profitPercent: number;
   /** profitPercent >= minProfitPercent. */
   ok: boolean;
-  /** The day or return-day rate is above the range customers were shown. */
+  /** The day or return-hour rate is above what customers were shown. */
   aboveShownRange: boolean;
 };
 
@@ -255,15 +274,16 @@ const whole = (n: number) => Math.max(0, Math.round(Number.isFinite(n) ? n : 0))
 
 /**
  * The exact price for the call: the driver's real day cost plus the minimum
- * profit, rounded up to the next ₹50 a day (₹10 an hour for overtime). A
- * return day is priced the same way from what the driver gets for it, but
- * never below the lowest return-day price customers were shown.
+ * profit, rounded up to the next ₹50 a day (₹10 an hour for overtime and
+ * return hours). Return hours keep the same daily maximum in hours as
+ * customers were shown (returnMaxPerDay ÷ returnHour).
  */
 export function quote(rules: TripRules, input: QuoteInput): Quote {
   const days = Math.max(1, whole(input.days));
-  const back = whole(input.returnDays);
+  const back = whole(input.returnHours);
   const hours = whole(input.extraHours);
   const cost = whole(input.driverDayCost);
+  const backPay = whole(input.driverReturnHourPay);
   const margin = Math.min(90, Math.max(0, input.minProfitPercent)) / 100;
   const partner = Math.min(50, Math.max(0, input.partnerPercent)) / 100;
 
@@ -272,16 +292,19 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
   const dayRate = roundUpTo(cost / keep, 50);
   const hourCost = cost / rules.hoursPerDay;
   const extraHourRate = Math.max(rules.extraHour, roundUpTo(hourCost / keep, 10));
-  const returnDayRate = Math.max(rules.returnDay.from, roundUpTo(whole(input.driverReturnPay) / keep, 50));
+  const returnHourRate = Math.max(rules.returnHour, roundUpTo(backPay / keep, 10));
+  const capHours = rules.returnMaxPerDay / rules.returnHour;
+  const returnCharge = returnCost(back, returnHourRate, returnHourRate * capHours);
 
-  const charges = days * dayRate + back * returnDayRate + hours * extraHourRate;
-  const driverPay = Math.round(days * cost + back * whole(input.driverReturnPay) + hours * hourCost);
+  const charges = days * dayRate + returnCharge + hours * extraHourRate;
+  const driverPay = Math.round(days * cost + returnCost(back, backPay, backPay * capHours) + hours * hourCost);
   const partnerPay = Math.round(charges * partner);
   const profit = charges - driverPay - partnerPay;
   const profitPercent = charges > 0 ? Math.round((profit / charges) * 1000) / 10 : 0;
   return {
     dayRate,
-    returnDayRate,
+    returnHourRate,
+    returnCharge,
     extraHourRate,
     charges,
     total: charges + whole(input.ticket),
@@ -290,7 +313,7 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
     profit,
     profitPercent,
     ok: profitPercent + 1e-9 >= input.minProfitPercent,
-    aboveShownRange: dayRate > rules.dayRate.to || (back > 0 && returnDayRate > rules.returnDay.to),
+    aboveShownRange: dayRate > rules.dayRate.to || (back > 0 && returnHourRate > rules.returnHour),
   };
 }
 
@@ -299,7 +322,8 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
 /**
  * Everything the mobile app needs for its estimate, worked out here once so
  * the app and the website can never disagree: for each destination and each
- * pickup city, the km, and the days for a one-way drop and a round trip.
+ * pickup city, the km, the fewest days for a one-way drop (with the return
+ * hours after them) and for a round trip.
  */
 export function destinationTable(rules: TripRules) {
   return destinations.map((d) => ({
@@ -312,8 +336,8 @@ export function destinationTable(rules: TripRules) {
         const km = roadKm(city, d);
         const one = planTrip(rules, km, 'one-way');
         const round = planTrip(rules, km, 'round');
-        return [city, { km, oneWay: { days: one.minDays, returnDays: one.returnDays }, roundDays: round.minDays }];
+        return [city, { km, oneWay: { days: one.minDays, returnHours: one.returnHours }, roundDays: round.minDays }];
       }),
-    ) as Record<PickupCity, { km: number; oneWay: { days: number; returnDays: number }; roundDays: number }>,
+    ) as Record<PickupCity, { km: number; oneWay: { days: number; returnHours: number }; roundDays: number }>,
   }));
 }

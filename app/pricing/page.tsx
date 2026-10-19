@@ -35,7 +35,7 @@ const notIncluded = [
   'The vehicle — you drive in your own car',
   'Fuel, tolls and parking charges',
   'Overnight stay costs on outstation trips',
-  `The driver's meals on outstation trips — or ${priceText.mealAllowance} a meal`,
+  `The driver's meals on outstation trips — or ${priceText.mealAllowance} a day`,
   'His bus or train ticket home after a one-way drop',
 ];
 
@@ -91,11 +91,13 @@ export default function PricingPage() {
               ))}
             </ul>
             <p className="text-fg-subtle mt-6 text-sm">
-              Outstation trips and one-way drops are charged by the day: up to{' '}
-              {priceText.outstationHours} of driving, {priceText.outstationExtraHour} for each
-              hour beyond, and {priceText.outstationReturnDay} for each day the driver needs to
-              get home after a one-way drop. Pick your destination on the booking form for an
-              estimate — we confirm the total on the call, before the driver leaves.
+              Outstation trips and one-way drops are charged by the day: each day covers the
+              driver's 24 hours from the start, with up to {priceText.outstationHours} of driving
+              ({priceText.outstationExtraHour} for each hour beyond) and his way home included. If
+              he is still travelling home after the last paid day, those hours are{' '}
+              {priceText.outstationReturnHour} each, at most {priceText.outstationReturnMax} a day.
+              Pick your destination on the booking form for an estimate — we confirm the total on
+              the call, before the driver leaves.
             </p>
           </Card>
         </div>

@@ -302,9 +302,8 @@ if (missing.length) {
     if (typeof cfg.app?.minVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(cfg.app.minVersion)) issues.push('app.minVersion');
     // The trip estimate (lib/outstation.ts). Never the minimum profit or any cost.
     const o = cfg.outstation;
-    for (const k of ['hoursPerDay', 'extraHour', 'mealAllowance', 'kmPerDay', 'localWithinKm'])
+    for (const k of ['hoursPerDay', 'extraHour', 'returnHour', 'returnMaxPerDay', 'mealAllowance', 'kmPerDay', 'localWithinKm'])
       if (!money(o?.[k])) issues.push(`outstation.${k}`);
-    if (!range(o?.returnDay)) issues.push('outstation.returnDay');
     if (o && ('minProfitPercent' in o || Object.keys(o).some((k) => /cost|profit|margin/i.test(k))))
       issues.push('outstation publishes profit or cost — those stay private');
     const cities = ['Raipur', 'Bhilai', 'Durg', 'Bilaspur'];
@@ -312,7 +311,7 @@ if (missing.length) {
       r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.nameHi === 'string' && ['cg', 'india'].includes(r.region) &&
       cities.every((c) => {
         const t = r.from?.[c];
-        return t && Number.isInteger(t.km) && t.km >= 0 && t.oneWay?.days >= 1 && Number.isInteger(t.oneWay?.returnDays) && t.roundDays >= 1;
+        return t && Number.isInteger(t.km) && t.km >= 0 && t.oneWay?.days >= 1 && Number.isInteger(t.oneWay?.returnHours) && t.roundDays >= 1;
       });
     if (!Array.isArray(cfg.destinations) || cfg.destinations.length < 10) issues.push('destinations missing');
     else {

@@ -16,8 +16,8 @@ import { quoteBreakdown } from '@/lib/trip';
 
 const MIN_PROFIT = settings.outstation.minProfitPercent;
 const PARTNER = settings.partners.commissionPercent;
-/** What a driver usually gets for a return day: the return-day price less the minimum profit, to ₹50. */
-const DEFAULT_RETURN_PAY = Math.floor((tripRules.returnDay.from * (1 - MIN_PROFIT / 100)) / 50) * 50;
+/** What a driver usually gets per return hour: the customer's rate less the minimum profit, to ₹10. */
+const DEFAULT_RETURN_PAY = Math.floor((tripRules.returnHour * (1 - MIN_PROFIT / 100)) / 10) * 10;
 
 const int = (v: string) => {
   const n = Math.round(Number(v));
@@ -36,7 +36,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
   const [open, setOpen] = useState(!b.quote);
   const [cost, setCost] = useState('');
   const [days, setDays] = useState(String(b.quote?.days ?? b.trip?.days ?? 1));
-  const [back, setBack] = useState(String(b.quote?.returnDays ?? (oneWay ? (b.trip?.returnDays ?? 0) : 0)));
+  const [back, setBack] = useState(String(b.quote?.returnHours ?? (oneWay ? (b.trip?.returnHours ?? 0) : 0)));
   const [returnPay, setReturnPay] = useState(String(DEFAULT_RETURN_PAY));
   const [extraHours, setExtraHours] = useState(String(b.quote?.extraHours ?? 0));
   const [ticket, setTicket] = useState(String(b.quote?.ticket ?? 0));
@@ -49,9 +49,9 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
     int(cost) > 0
       ? workOut(tripRules, {
           driverDayCost: int(cost),
-          driverReturnPay: int(returnPay),
+          driverReturnHourPay: int(returnPay),
           days: Math.max(1, int(days)),
-          returnDays: int(back),
+          returnHours: int(back),
           extraHours: int(extraHours),
           ticket: int(ticket),
           partnerPercent: partner ? PARTNER : 0,
@@ -63,8 +63,9 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
     amount: q.total,
     dayRate: q.dayRate,
     days: Math.max(1, int(days)),
-    returnDays: int(back),
-    returnDay: q.returnDayRate,
+    returnHours: int(back),
+    returnHourRate: q.returnHourRate,
+    returnCharge: q.returnCharge,
     extraHours: int(extraHours),
     extraHourRate: q.extraHourRate,
     ticket: int(ticket),
@@ -78,7 +79,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
       const note =
         `Price ${rupees(q.total)} (${quoteBreakdown(agreed)}). ` +
         `Driver ${rupees(int(cost))} a day` +
-        (agreed.returnDays ? `, ${rupees(int(returnPay))} a return day` : '') +
+        (agreed.returnHours ? `, ${rupees(int(returnPay))} a return hour` : '') +
         ` → driver gets ${rupees(q.driverPay)}` +
         (q.partnerPay ? `, partner ${rupees(q.partnerPay)}` : '') +
         `, profit ${rupees(q.profit)} (${q.profitPercent}%).`;
@@ -141,8 +142,14 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
           <div className="grid grid-cols-2 gap-3">
             {num('Driver’s cost a day', cost, setCost, 'What this driver asked for')}
             {num('Driving days', days, setDays)}
-            {oneWay && num('Return days', back, setBack, `${priceText.outstationReturnDay} each to the customer`)}
-            {oneWay && num('Driver’s pay a return day', returnPay, setReturnPay)}
+            {oneWay &&
+              num(
+                'Return hours after the last day',
+                back,
+                setBack,
+                `Hours he is still travelling home after the paid days end. ${priceText.outstationReturnHour} each to the customer, max ${priceText.outstationReturnMax} a day`,
+              )}
+            {oneWay && num('Driver’s pay a return hour', returnPay, setReturnPay)}
             {num('Extra hours (whole trip)', extraHours, setExtraHours, `Beyond ${priceText.outstationHours} a day`)}
             {oneWay && num('Bus/train ticket', ticket, setTicket, 'Passed on at cost')}
           </div>
@@ -186,14 +193,14 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
               </dl>
               {!q.ok && (
                 <p className="text-error mt-2">
-                  Below the {MIN_PROFIT}% minimum. Check the driver’s return-day pay, or find another
+                  Below the {MIN_PROFIT}% minimum. Check the driver’s return-hour pay, or find another
                   driver.
                 </p>
               )}
               {q.aboveShownRange && (
                 <p className="text-fg-muted mt-2">
                   Above the range customers are shown ({priceText.outstation} a day,{' '}
-                  {priceText.outstationReturnDay} a return day). Tell the customer why before you confirm.
+                  {priceText.outstationReturnHour} a return hour). Tell the customer why before you confirm.
                 </p>
               )}
             </div>

@@ -55,7 +55,8 @@ export type BookingTrip = {
   kind: 'one-way' | 'round';
   km: number;
   days: number;
-  returnDays: number;
+  /** One-way: hours the driver is still travelling home after the paid days. */
+  returnHours: number;
   estFrom: number;
   estTo: number;
 };
@@ -65,8 +66,10 @@ export type BookingQuote = {
   amount: number;
   dayRate: number;
   days: number;
-  returnDays: number;
-  returnDay: number;
+  /** Return hours charged (after the paid days) and the rate; returnCharge has the daily maximum applied. */
+  returnHours: number;
+  returnHourRate: number;
+  returnCharge: number;
   extraHours: number;
   extraHourRate: number;
   ticket: number;

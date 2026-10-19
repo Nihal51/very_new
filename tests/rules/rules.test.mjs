@@ -145,18 +145,18 @@ describe('bookings — creating', () => {
   });
 
   const trip = (extra = {}) => ({
-    to: 'Nagpur', destId: 'nagpur', kind: 'one-way', km: 284, days: 1, returnDays: 1, estFrom: 2450, estTo: 2650, ...extra,
+    to: 'Delhi', destId: 'delhi', kind: 'one-way', km: 1214, days: 3, returnHours: 11, estFrom: 5550, estTo: 6150, ...extra,
   });
 
   test('an outstation trip or one-way drop can carry its trip and estimate', async () => {
     const db = guest();
     await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: trip() })));
     await assertSucceeds(
-      addDoc(collection(db, 'bookings'), booking({ package: 'outstation', trip: trip({ kind: 'round', days: 2, returnDays: 0 }) })),
+      addDoc(collection(db, 'bookings'), booking({ package: 'outstation', trip: trip({ kind: 'round', days: 6, returnHours: 0 }) })),
     );
     // A place not in the list: no km, no estimate.
     await assertSucceeds(
-      addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: trip({ to: 'Jaipur', destId: '', km: 0, returnDays: 0, estFrom: 0, estTo: 0 }) })),
+      addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: trip({ to: 'Jaipur', destId: '', km: 0, returnHours: 0, estFrom: 0, estTo: 0 }) })),
     );
     // Optional: older app versions send no trip.
     await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop' })));
@@ -167,8 +167,9 @@ describe('bookings — creating', () => {
     const bad = (pkg, t) => assertFails(addDoc(collection(db, 'bookings'), booking({ package: pkg, trip: t })));
     await bad('3-hours-600', trip()); // only trip packages
     await bad('outstation', trip()); // outstation is a round trip
-    await bad('one-way-drop', trip({ kind: 'round', returnDays: 0 }));
-    await bad('outstation', trip({ kind: 'round', returnDays: 1 })); // round trips have no return days
+    await bad('one-way-drop', trip({ kind: 'round', returnHours: 0 }));
+    await bad('outstation', trip({ kind: 'round', returnHours: 3 })); // the driver comes back with the customer
+    await bad('one-way-drop', trip({ returnHours: 2.5 }));
     await bad('one-way-drop', trip({ days: 0 }));
     await bad('one-way-drop', trip({ days: 1.5 }));
     await bad('one-way-drop', trip({ estFrom: 3000, estTo: 2000 }));
@@ -247,7 +248,7 @@ describe('bookings — admin workflow', () => {
   });
 
   const agreed = (extra = {}) => ({
-    amount: 2 * 1550 + 1000 + 650, dayRate: 1550, days: 2, returnDays: 1, returnDay: 1000, extraHours: 0, extraHourRate: 120, ticket: 650,
+    amount: 3 * 1550 + 1200 + 650, dayRate: 1550, days: 3, returnHours: 11, returnHourRate: 120, returnCharge: 1200, extraHours: 0, extraHourRate: 120, ticket: 650,
     at: serverTimestamp(), ...extra,
   });
 
@@ -264,7 +265,7 @@ describe('bookings — admin workflow', () => {
     await assertSucceeds(updateDoc(doc(db, 'bookings', 'b1'), stamp({ status: 'confirmed' })));
     // The customer sees the price.
     const seen = await getDoc(doc(customer('cust1'), 'bookings', 'b1'));
-    if (seen.data().quote.amount !== 4750) throw new Error('customer should see the agreed amount');
+    if (seen.data().quote.amount !== 6500) throw new Error('customer should see the agreed amount');
   });
 
   test('a quote cannot hide a cost, add up wrong or be backdated', async () => {
@@ -272,6 +273,8 @@ describe('bookings — admin workflow', () => {
     const db = admin();
     await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ driverCost: 1300 }) })));
     await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ amount: 9999 }) })));
+    // The daily maximum can lower the return charge, never raise it above hours × rate.
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ returnCharge: 2000, amount: 3 * 1550 + 2000 + 650 }) })));
     await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ at: new Date(2020, 0, 1) }) })));
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { quote: agreed() }));
   });
