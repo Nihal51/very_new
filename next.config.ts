@@ -1,4 +1,14 @@
 import type { NextConfig } from 'next';
+import { checkSettings } from './lib/settings-schema';
+import { settings } from './site-settings';
+
+/**
+ * The profit guard: with the DRIVER_COSTS secret set (GitHub → Settings →
+ * Secrets → Actions; see lib/settings-schema.ts), a price below the minimum
+ * profit stops the deploy. Checked here, on the build machine only, so the
+ * costs never reach the browser. Without the secret nothing is checked.
+ */
+checkSettings(settings, process.env.DRIVER_COSTS);
 
 /**
  * When the site is served from a sub-path rather than a domain root — which is

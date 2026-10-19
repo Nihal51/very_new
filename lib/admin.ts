@@ -6,7 +6,7 @@
 
 import type { User } from 'firebase/auth';
 
-import type { BookingStatus, DriverRef, DriverStatus } from './bookings';
+import type { BookingQuote, BookingStatus, DriverRef, DriverStatus } from './bookings';
 import { getFirebaseApp } from './firebase';
 
 async function fs() {
@@ -69,6 +69,31 @@ export async function addBookingNote(user: User, bookingId: string, note: string
     by: user.email ?? '',
     at: serverTimestamp(),
   });
+}
+
+/**
+ * Save the price agreed on the call. The booking gets only what the customer
+ * pays (they can read it — My account, the app); `privateNote` — the driver's
+ * cost and the profit — goes in the admin-only timeline in the same batch.
+ */
+export async function saveQuote(user: User, bookingId: string, quote: Omit<BookingQuote, 'at'>, privateNote: string) {
+  const { db, doc, collection, writeBatch, serverTimestamp } = await fs();
+  const ref = doc(db, 'bookings', bookingId);
+  const batch = writeBatch(db);
+  batch.update(ref, {
+    quote: { ...quote, at: serverTimestamp() },
+    updatedAt: serverTimestamp(),
+    updatedBy: user.uid,
+  });
+  batch.set(doc(collection(ref, 'events')), {
+    type: 'quote',
+    from: null,
+    to: null,
+    note: privateNote.slice(0, 500),
+    by: user.email ?? '',
+    at: serverTimestamp(),
+  });
+  await batch.commit();
 }
 
 export async function changeDriverStatus(user: User, driverId: string, status: DriverStatus, adminNote?: string) {

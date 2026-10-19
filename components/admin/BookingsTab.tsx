@@ -27,16 +27,19 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
+import { QuoteCalculator } from '@/components/admin/QuoteCalculator';
 import { WhatsappIcon } from '@/components/icons';
 import { addBookingNote, blockPhone, changeBookingStatus, isPhoneBlocked, unblockPhone } from '@/lib/admin';
 import { driverAssignedMessage, type MessageLanguage } from '@/lib/customer-messages';
 import { site } from '@/lib/site';
+import { tripSummary } from '@/lib/trip';
 import {
   BOOKING_STATUS,
   DATE_RANGES,
   formatDateTime,
   formatPreferred,
   inDateRange,
+  isTripPackage,
   packageName,
   prettyPhone,
   refLabel,
@@ -610,6 +613,11 @@ function BookingDetail({
             {b.pickup}
           </Detail>
           <Detail label="Trip time">{formatPreferred(b.preferredTime)}</Detail>
+          {b.trip && (
+            <Detail label="Trip" wide>
+              {tripSummary(b.trip, b.city)}
+            </Detail>
+          )}
           <Detail label="Customer">
             {b.isReturning ? 'Returning' : 'New'}
             {b.customerUid ? ' · logged in' : ''}
@@ -729,6 +737,8 @@ function BookingDetail({
           )}
         </div>
 
+        {isTripPackage(b.package) && <QuoteCalculator key={b.id} b={b} user={user} />}
+
         <div className="border-border mt-5 border-t pt-5">
           <SectionTitle>History &amp; internal notes</SectionTitle>
           <History bookingId={b.id} user={user} />
@@ -790,6 +800,8 @@ function History({ bookingId, user }: { bookingId: string; user: User }) {
                   ? 'Booking received'
                   : ev.type === 'note'
                     ? 'Note'
+                    : ev.type === 'quote'
+                      ? 'Price agreed (admins only)'
                     : `${statusLabel(ev.from)} → ${statusLabel(ev.to)}`}
               </p>
               {ev.note && <p className="text-fg-muted">{ev.note}</p>}

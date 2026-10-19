@@ -19,7 +19,7 @@ const trail = [{ name: 'Pricing', path: '/pricing/' }];
 export const metadata: Metadata = pageMeta({
   title: 'Driver Charges & Hourly Rates in Chhattisgarh',
   description:
-    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.outstation} outstation, from ${priceText.nightFrom} at night. No surge, no hidden fees.`,
+    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.outstation} a day outstation, from ${priceText.nightFrom} at night. No surge, no hidden fees.`,
   path: '/pricing/',
 });
 
@@ -35,6 +35,8 @@ const notIncluded = [
   'The vehicle — you drive in your own car',
   'Fuel, tolls and parking charges',
   'Overnight stay costs on outstation trips',
+  `The driver's meals on outstation trips — or ${priceText.mealAllowance} a meal`,
+  'His bus or train ticket home after a one-way drop',
 ];
 
 /** The pricing-specific questions, reused from the main FAQ set. */
@@ -89,8 +91,11 @@ export default function PricingPage() {
               ))}
             </ul>
             <p className="text-fg-subtle mt-6 text-sm">
-              For a long outstation trip, call us first — we will quote the whole journey
-              including any halt, so you know the total before the driver leaves.
+              Outstation trips and one-way drops are charged by the day: up to{' '}
+              {priceText.outstationHours} of driving, {priceText.outstationExtraHour} for each
+              hour beyond, and {priceText.outstationReturnDay} for each day the driver needs to
+              get home after a one-way drop. Pick your destination on the booking form for an
+              estimate — we confirm the total on the call, before the driver leaves.
             </p>
           </Card>
         </div>

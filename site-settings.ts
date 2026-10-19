@@ -78,8 +78,27 @@ export const settings = {
     oneHour: 300,
     threeHours: 600,
     fullDay: { from: 1000, to: 1200 }, //     Local Full Day, 8 hours
-    outstation: { from: 1200, to: 1500 }, //  per trip
+    outstation: { from: 1450, to: 1650 }, //  per DAY of an outstation trip or one-way drop (rules below)
     nightFrom: 500, //                        Night driver, 8 PM – 6 AM, "from ₹500"
+  },
+
+  /* ------------------------------------- outstation trips & one-way drops --
+     How the trip estimate is worked out on the booking form and in the app.
+     The customer picks a destination; the site counts the one-way km, the
+     driving days and the days the driver needs to get home by bus or train,
+     and shows a range: days × prices.outstation + return days × returnDay.
+     The team confirms the exact price on the call (the quote calculator in
+     /admin works it out from what the driver costs). */
+  outstation: {
+    hoursPerDay: 12, //        driving hours in one outstation day
+    extraHour: 120, //         each hour beyond hoursPerDay
+    returnDay: { from: 1000, to: 1200 }, //  each day the driver spends getting home by bus/train after a one-way drop
+    mealAllowance: 100, //     per meal, only if the customer does not give the driver his meals
+    kmPerDay: 400, //          how far one driver drives in a day, with breaks
+    averageKmh: 45, //         highway average with stops: decides if a short drop needs no return day
+    returnKmPerDay: 800, //    how far a bus or train gets the driver home in one day
+    localWithinKm: 60, //      closer than this, the form suggests a local package instead
+    minProfitPercent: 15, //   the /admin quote calculator never quotes below this profit
   },
 
   /* ---------------------------------------------------- monthly driver -----

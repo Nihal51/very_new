@@ -104,6 +104,35 @@ function packageName(id) {
   return PACKAGE_NAMES[id] || String(id == null ? '—' : id);
 }
 
+/** 2450 → "2,450"; 125000 → "1,25,000" (Indian grouping). */
+function inr(n) {
+  var d = String(Math.max(0, Math.round(Number(n) || 0)));
+  if (d.length <= 3) return d;
+  return d.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + d.slice(-3);
+}
+
+/**
+ * The trip on an outstation booking or one-way drop, in one line:
+ * "Raipur → Nagpur · one-way drop · ~284 km · 1 driving day + 1 return day · est. ₹2,450–2,650"
+ * The estimate is what the customer was shown on the form; the team quotes the
+ * exact price on the call. '' when the booking has no trip.
+ */
+function tripLine(b) {
+  var t = b && b.trip;
+  if (!t || typeof t !== 'object' || !t.to) return '';
+  var plural = function (n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); };
+  var parts = [String(b.city || '?') + ' → ' + String(t.to) + (t.destId ? '' : ' (not in our list)')];
+  parts.push(t.kind === 'round' ? 'round trip' : 'one-way drop');
+  if (t.km > 0) parts.push('~' + t.km + ' km');
+  parts.push(t.kind === 'round'
+    ? plural(t.days, 'day')
+    : plural(t.days, 'driving day') + (t.returnDays > 0 ? ' + ' + plural(t.returnDays, 'return day') : ''));
+  parts.push(t.estFrom > 0
+    ? 'est. ₹' + inr(t.estFrom) + (t.estTo > t.estFrom ? '–' + inr(t.estTo) : '')
+    : 'quote on the call');
+  return parts.join(' · ');
+}
+
 /** 42 → "DB-1042" */
 function bookingRef(n) {
   return 'DB-' + (1000 + n);
@@ -175,6 +204,8 @@ var DRIVER_COLUMNS = ['Name', 'Status', 'Phone', 'City', 'Experience (years)', '
 function bookingRecord(id, b) {
   var driver = b.assignedDriver || null;
   var notes = b.notes || '';
+  var trip = tripLine(b);
+  if (trip) notes = 'Trip: ' + trip + (notes ? ' | ' + notes : '');
   if (b.status === 'cancelled' && b.cancelReason) notes = (notes ? notes + ' | ' : '') + 'Cancelled: ' + b.cancelReason;
   return {
     Ref: b.ref || '',
@@ -237,6 +268,8 @@ function bookingTelegram(c) {
     '<b>Pickup:</b> ' + escapeHtml(b.pickup),
     '<b>When:</b> ' + escapeHtml(formatWhen(b.preferredTime)),
   ];
+  var trip = tripLine(b);
+  if (trip) lines.push('<b>Trip:</b> ' + escapeHtml(trip));
   if (b.notes) lines.push('<b>Notes:</b> ' + escapeHtml(b.notes));
   lines.push('', c.previousBookings > 0
     ? '🔁 Returning customer (' + c.previousBookings + ' earlier booking' + (c.previousBookings === 1 ? '' : 's') + ')'
@@ -266,9 +299,13 @@ function bookingEmail(c) {
     ['Package', packageName(b.package)],
     ['Pickup', b.pickup],
     ['When', formatWhen(b.preferredTime)],
-    ['Notes', b.notes || '—'],
-    ['Customer', c.previousBookings > 0 ? 'Returning (' + c.previousBookings + ' earlier)' : 'New customer'],
   ];
+  var trip = tripLine(b);
+  if (trip) rows.push(['Trip', trip]);
+  rows.push(
+    ['Notes', b.notes || '—'],
+    ['Customer', c.previousBookings > 0 ? 'Returning (' + c.previousBookings + ' earlier)' : 'New customer']
+  );
   var adminUrl = c.siteUrl + '/admin/?b=' + encodeURIComponent(c.id);
   return {
     subject: (urgent ? '[PRIORITY] ' : '') + 'New booking ' + c.ref + ' – ' + b.name + ', ' + b.city + ' (' + packageName(b.package) + ')',
@@ -1185,7 +1222,7 @@ function testAlert() {
 if (typeof module !== 'undefined') {
   module.exports = {
     PACKAGE_NAMES: PACKAGE_NAMES, BOOKING_STATUS_LABELS: BOOKING_STATUS_LABELS, DRIVER_STATUS_LABELS: DRIVER_STATUS_LABELS,
-    packageName: packageName, bookingRef: bookingRef, prettyPhone: prettyPhone, sheetPhone: sheetPhone, sheetText: sheetText,
+    packageName: packageName, bookingRef: bookingRef, inr: inr, tripLine: tripLine, prettyPhone: prettyPhone, sheetPhone: sheetPhone, sheetText: sheetText,
     escapeHtml: escapeHtml, formatWhen: formatWhen, formatIst: formatIst, bookingTelegram: bookingTelegram,
     bookingEmail: bookingEmail, driverTelegram: driverTelegram, reminderTelegram: reminderTelegram,
     bookingRecord: bookingRecord, driverRecord: driverRecord, columnLetter: columnLetter,

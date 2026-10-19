@@ -1,16 +1,19 @@
 'use client';
 
-import { useEffect, useRef, useState, type ElementType } from 'react';
+import { useEffect, useMemo, useRef, useState, type ElementType } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonAnchor } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { CheckCircleIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
+import { TripEstimate } from '@/components/TripEstimate';
 import { currentUser, loadProfile, mightBeSignedIn } from '@/lib/auth';
+import { isTripPackage, type BookingTrip } from '@/lib/bookings';
 import { bookingPackages, cities } from '@/lib/content';
 import { submitDoc } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
 import { formatPhone, site, telHref, waHref } from '@/lib/site';
+import { ELSEWHERE, destinationGroups, tripFor, tripRecord, tripSummary } from '@/lib/trip';
 import {
   firstErrorField,
   isClean,
@@ -27,6 +30,12 @@ type Values = {
   phone: string;
   city: string;
   pkg: string;
+  /** Outstation trips and one-way drops only: a destination id, ELSEWHERE, or ''. */
+  dest: string;
+  /** The place typed in when dest is ELSEWHERE. */
+  destOther: string;
+  /** Days with the driver; '' = as few as the distance allows. */
+  days: string;
   pickup: string;
   when: string;
   notes: string;
@@ -40,13 +49,16 @@ const EMPTY: Values = {
   phone: '',
   city: '',
   pkg: '',
+  dest: '',
+  destOther: '',
+  days: '',
   pickup: '',
   when: '',
   notes: '',
 };
 
 /** Visual order — also the order we hunt for the first invalid field on submit. */
-const ORDER = ['name', 'phone', 'city', 'pkg', 'pickup', 'when', 'notes'] as const;
+const ORDER = ['name', 'phone', 'city', 'pkg', 'dest', 'destOther', 'days', 'pickup', 'when', 'notes'] as const;
 
 function validateField(key: keyof Values, values: Values): string | undefined {
   switch (key) {
@@ -58,6 +70,19 @@ function validateField(key: keyof Values, values: Values): string | undefined {
       return validateRequired(values.city, 'your city');
     case 'pkg':
       return validateRequired(values.pkg, 'a service');
+    case 'dest':
+      return isTripPackage(values.pkg) ? validateRequired(values.dest, 'where you are going') : undefined;
+    case 'destOther': {
+      if (!isTripPackage(values.pkg) || values.dest !== ELSEWHERE) return undefined;
+      const place = values.destOther.trim();
+      if (place.length < 2) return 'Type the city or town you are going to.';
+      return place.length > 60 ? 'Keep the place name under 60 characters.' : undefined;
+    }
+    case 'days': {
+      if (!isTripPackage(values.pkg) || !values.days.trim()) return undefined;
+      const n = Number(values.days);
+      return Number.isInteger(n) && n >= 1 && n <= 60 ? undefined : 'Enter a number of days from 1 to 60.';
+    }
     case 'pickup':
       return validateAddress(values.pickup);
     case 'notes':
@@ -71,8 +96,20 @@ function packageLabel(value: string): string {
   return bookingPackages.find((p) => p.value === value)?.label ?? value;
 }
 
+/** The trip for a trip package, as the form shows and saves it. */
+function tripOf(v: Values) {
+  if (!isTripPackage(v.pkg)) return null;
+  return tripFor(v.pkg, v.city, v.dest, Number(v.days) || 0);
+}
+
+function tripRecordOf(v: Values): BookingTrip | null {
+  const view = tripOf(v);
+  return view && v.dest ? tripRecord(view, v.destOther) : null;
+}
+
 /** Everything the customer typed, as a WhatsApp message — the outage fallback. */
 function whatsappMessage(v: Values): string {
+  const trip = tripRecordOf(v);
   return [
     `Hi ${site.name}, I would like to book a driver.`,
     '',
@@ -80,6 +117,7 @@ function whatsappMessage(v: Values): string {
     `Mobile: ${normalisePhone(v.phone) || v.phone}`,
     `City: ${v.city}`,
     `Service: ${packageLabel(v.pkg)}`,
+    trip ? `Trip: ${tripSummary(trip, v.city)}` : null,
     `Pickup: ${v.pickup}`,
     v.when ? `Preferred time: ${v.when.replace('T', ' ')}` : null,
     v.notes ? `Notes: ${v.notes}` : null,
@@ -143,6 +181,8 @@ export function BookingForm({
     if (status === 'success') successRef.current?.focus();
   }, [status]);
 
+  const trip = useMemo(() => tripOf(values), [values]);
+
   const set = (key: keyof Values) => (value: string) => {
     const next = { ...values, [key]: value };
     setValues(next);
@@ -177,6 +217,7 @@ export function BookingForm({
     }
 
     setStatus('submitting');
+    const trip = tripRecordOf(values);
     const result = await submitDoc('bookings', {
       name: values.name.trim(),
       phone: normalisePhone(values.phone),
@@ -185,6 +226,7 @@ export function BookingForm({
       pickup: values.pickup.trim(),
       preferredTime: values.when || '',
       notes: values.notes.trim(),
+      ...(trip && { trip }),
       ...(account && { customerUid: account.uid }),
     });
 
@@ -203,6 +245,7 @@ export function BookingForm({
   /* ------------------------------------------------------------- success -- */
 
   if (status === 'success') {
+    const submittedTrip = tripRecordOf(submitted);
     return (
       <Card id={id} className={cn('scroll-mt-28', className)}>
         <div ref={successRef} tabIndex={-1} className="focus:outline-none">
@@ -229,6 +272,12 @@ export function BookingForm({
               <dt className="text-fg-subtle">City</dt>
               <dd className="mt-0.5 font-semibold">{submitted.city}</dd>
             </div>
+            {submittedTrip && (
+              <div className="sm:col-span-2">
+                <dt className="text-fg-subtle">Trip</dt>
+                <dd className="mt-0.5 font-semibold">{tripSummary(submittedTrip, submitted.city)}</dd>
+              </div>
+            )}
             <div className="sm:col-span-2">
               <dt className="text-fg-subtle">Pickup</dt>
               <dd className="mt-0.5 font-semibold">{submitted.pickup}</dd>
@@ -389,6 +438,91 @@ export function BookingForm({
                 </Select>
               )}
             </Field>
+
+            {trip && (
+              <div className="border-border bg-bg-subtle grid gap-4 rounded-xl border p-4 sm:col-span-2 sm:grid-cols-2">
+                <Field
+                  label={trip.kind === 'round' ? 'Where to?' : 'Drop the car in'}
+                  name="dest"
+                  required
+                  error={errors.dest}
+                >
+                  {(p) => (
+                    <Select
+                      {...p}
+                      value={values.dest}
+                      onChange={(e) => set('dest')(e.target.value)}
+                      onBlur={blur('dest')}
+                    >
+                      <option value="">Choose a city</option>
+                      {destinationGroups.map((g) => (
+                        <optgroup key={g.label} label={g.label}>
+                          {g.items.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      ))}
+                      <option value={ELSEWHERE}>Somewhere else…</option>
+                    </Select>
+                  )}
+                </Field>
+
+                {values.dest === ELSEWHERE ? (
+                  <Field label="City or town" name="destOther" required error={errors.destOther}>
+                    {(p) => (
+                      <Input
+                        {...p}
+                        type="text"
+                        maxLength={60}
+                        placeholder="e.g. Jaipur"
+                        value={values.destOther}
+                        onChange={(e) => set('destOther')(e.target.value)}
+                        onBlur={blur('destOther')}
+                      />
+                    )}
+                  </Field>
+                ) : null}
+
+                <Field
+                  label={trip.kind === 'round' ? 'Days of the trip' : 'Driving days'}
+                  name="days"
+                  optionalLabel
+                  error={errors.days}
+                  hint={
+                    !trip.km
+                      ? 'How many days you need the driver.'
+                      : trip.kind === 'round'
+                        ? `At least ${trip.minDays} for this distance — add the days you stay.`
+                        : `At least ${trip.minDays} for this distance — add days if you stop on the way.`
+                  }
+                >
+                  {(p) => (
+                    <Input
+                      {...p}
+                      type="number"
+                      inputMode="numeric"
+                      min={trip.minDays}
+                      max={60}
+                      step={1}
+                      placeholder={String(trip.minDays)}
+                      value={values.days}
+                      onChange={(e) => set('days')(e.target.value)}
+                      onBlur={blur('days')}
+                    />
+                  )}
+                </Field>
+
+                <TripEstimate
+                  view={trip}
+                  city={values.city}
+                  elsewhere={values.dest === ELSEWHERE}
+                  onUseLocal={() => setValues((v) => ({ ...v, pkg: 'local-full-day' }))}
+                  className="sm:col-span-2"
+                />
+              </div>
+            )}
 
             <Field
               label="Pickup address"

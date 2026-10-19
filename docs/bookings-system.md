@@ -29,7 +29,7 @@ How a booking travels from a customer's phone to a driver, and how to set it up.
 
 | Collection | One document per | Written by | Read by |
 |---|---|---|---|
-| `bookings/{id}` | booking | customer, on the website or in the app (create, `source` = `website` / `app`), robot (ref, alerts, what the customer was told), admin (status, driver) | admin; the customer who made it while logged in |
+| `bookings/{id}` | booking | customer, on the website or in the app (create, `source` = `website` / `app`), robot (ref, alerts, what the customer was told), admin (status, driver, agreed price) | admin; the customer who made it while logged in |
 | `bookings/{id}/events/{id}` | change or internal note | robot, admin | admin only |
 | `drivers/{id}` | driver application | applicant (create), admin (status, note) | admin |
 | `customers/{phone}` | customer, by mobile number | robot only | admin |
@@ -45,7 +45,8 @@ Design choices, and why:
 
 - **Bookings are never deleted**, only cancelled, so the history stays complete.
 - **One customer record per phone number**, so five guest bookings from one person are one customer.
-- **Internal notes live in the admin-only timeline**, never on the booking, because a logged-in customer can read their own booking.
+- **Internal notes live in the admin-only timeline**, never on the booking, because a logged-in customer can read their own booking. The same goes for prices: the booking holds only what the customer pays (`quote`); the driver's cost and the profit go in the timeline.
+- **Outstation trips and one-way drops carry a `trip`** (destination, km, days, return days and the estimate the customer saw). See [outstation-pricing.md](outstation-pricing.md).
 - **Admin access is an entry in `admins/`**, created from the robot's `ADMIN_EMAILS` property. No email address is written in the code or the rules.
 - **Each change and its timeline entry are saved together** (one batch from the admin panel, one commit from the robot), so the history can never disagree with the booking.
 - **The robot runs under a lock** and only numbers bookings that have no number yet, so a booking is never numbered or alerted twice.
@@ -97,6 +98,7 @@ Each booking remembers what the customer was last told (`pushedKey`, `whatsappKe
 - In `/admin` the top tiles are shortcuts (*New – call now*, *Needs action*, *Booked today*). The table works like a spreadsheet: filter by status, city and date, search, click a column heading to sort, click a row for details. The **Next step** button on each row does the usual move in one click: **Confirm** → **Assign driver** → **Complete**. **Excel** downloads exactly the rows you are looking at.
 - **The Google Sheet** is a live copy kept by the robot: newest bookings on top, a colour per status, filter buttons on every column, and a **Summary** tab (today, this week, this month, by city, by package, by month). Status and driver changes from `/admin` reach it within a minute. Add your own columns (e.g. *Paid?*) anywhere; the robot never touches them. Treat the robot's columns as read-only: change bookings in `/admin`.
 - A booking left "New" for 10 minutes sends one reminder to Telegram.
+- **Outstation trip or one-way drop:** the alert shows the trip and the estimate. On the call, open the booking → **Work out the price**, type what the driver costs, read out the price, **Save this price**. Details in [outstation-pricing.md](outstation-pricing.md).
 - **Driver assigned:** in the booking's panel, tap **English** or **हिंदी** under *Tell the customer their driver is coming*, then Send in WhatsApp. App users also get a notification by themselves.
 - **New driver application:** Telegram alert and a row in the *Drivers* sheet. In the Drivers tab: Verify (after the ID and police check) → Activate.
 - To add another admin later: add the email to the `ADMIN_EMAILS` script property and run **Connect Telegram and start** again.

@@ -197,7 +197,7 @@ const planNamesHi: Record<string, { name: string; unit: string }> = {
   '1-hour': { name: '1 घंटा', unit: 'प्रति बुकिंग' },
   '3-hours': { name: '3 घंटे', unit: 'प्रति बुकिंग' },
   'full-day': { name: 'शहर में पूरा दिन (8 घंटे)', unit: 'प्रति दिन' },
-  outstation: { name: 'आउटस्टेशन ट्रिप', unit: 'प्रति ट्रिप' },
+  outstation: { name: 'आउटस्टेशन / वन-वे ड्रॉप', unit: 'प्रति दिन' },
 };
 
 /** Price rows for the Hindi pages. Figures come from `plans`, so they cannot drift. */
@@ -218,7 +218,8 @@ export const pricesHi: { name: string; price: string; unit: string }[] = [
     price: priceText.premium,
     unit: m.premiumJoiningFeePercent > 0 ? 'प्रति माह + एक बार जॉइनिंग फ़ीस' : 'प्रति माह, कोई जॉइनिंग फ़ीस नहीं',
   },
-  { name: 'शादी / इवेंट और वन-वे ड्रॉप', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
+  { name: 'वन-वे ड्रॉप के बाद ड्राइवर की वापसी (बस/ट्रेन)', price: priceText.outstationReturnDay, unit: 'प्रति दिन + टिकट' },
+  { name: 'शादी / इवेंट', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
 ];
 
 /* ------------------------------------------------------------------ trust */
@@ -256,7 +257,7 @@ const night: Faq = {
 
 const price: Faq = {
   q: 'ड्राइवर का चार्ज कितना है?',
-  a: `1 घंटे के ${priceText.oneHour}, 3 घंटे के ${priceText.threeHours}, शहर में पूरे दिन (8 घंटे) के ${priceText.fullDay} और आउटस्टेशन ट्रिप के ${priceText.outstation}। मंथली ड्राइवर बेसिक प्लान में ${priceText.basic} और प्रीमियम में ${priceText.premium} प्रति माह। यह सिर्फ़ ड्राइवर का चार्ज है — गाड़ी और ईंधन आपका। कोई सर्ज प्राइसिंग या छुपा चार्ज नहीं।`,
+  a: `1 घंटे के ${priceText.oneHour}, 3 घंटे के ${priceText.threeHours}, शहर में पूरे दिन (8 घंटे) के ${priceText.fullDay} और आउटस्टेशन ट्रिप या वन-वे ड्रॉप के ${priceText.outstation} प्रति दिन। मंथली ड्राइवर बेसिक प्लान में ${priceText.basic} और प्रीमियम में ${priceText.premium} प्रति माह। यह सिर्फ़ ड्राइवर का चार्ज है — गाड़ी और ईंधन आपका। कोई सर्ज प्राइसिंग या छुपा चार्ज नहीं।`,
 };
 
 const car: Faq = {

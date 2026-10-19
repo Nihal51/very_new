@@ -17,7 +17,8 @@ rules_version = '2';
 //                         notifications (users/{uid}/devices), and read the
 //                         bookings they made while logged in. Never anyone else's.
 //    An admin             read everything; move bookings and drivers through
-//                         their statuses; assign drivers; add notes. An admin is
+//                         their statuses; assign drivers; add notes; save the
+//                         price agreed on the call. An admin is
 //                         a Google account with a verified email that has a
 //                         document in admins/{email}. Only the alerts robot
 //                         (apps-script/Code.js, from its ADMIN_EMAILS property)
@@ -108,6 +109,46 @@ service cloud.firestore {
         && isMobile(d.phone);
     }
 
+    // The trip on an outstation booking ('round': the driver stays with the
+    // customer and drives back) or a one-way drop (the driver comes home by
+    // bus/train). Written by the booking form from lib/outstation.ts; the
+    // estimate is only what the customer was shown — the team quotes on the
+    // call. destId '' = a place not in our list (km and estimate 0).
+    function isTrip(t, pkg) {
+      return t is map
+        && t.keys().hasOnly(['to', 'destId', 'kind', 'km', 'days', 'returnDays', 'estFrom', 'estTo'])
+        && t.keys().hasAll(['to', 'destId', 'kind', 'km', 'days', 'returnDays', 'estFrom', 'estTo'])
+        && isText(t.to, 2, 60)
+        && t.destId is string && t.destId.matches('^[a-z]{0,30}$')
+        && ((pkg == 'outstation' && t.kind == 'round') || (pkg == 'one-way-drop' && t.kind == 'one-way'))
+        && t.km is int && t.km >= 0 && t.km <= 5000
+        && t.days is int && t.days >= 1 && t.days <= 60
+        && t.returnDays is int && t.returnDays >= 0 && t.returnDays <= 10
+        && (t.kind == 'one-way' || t.returnDays == 0)
+        && t.estFrom is int && t.estFrom >= 0 && t.estFrom <= 1000000
+        && t.estTo is int && t.estTo >= t.estFrom && t.estTo <= 1000000;
+    }
+
+    // The price the team agreed with the customer on the call, from the quote
+    // calculator in /admin. The customer can read it (their booking), so it
+    // holds only what they pay — the driver's cost and the profit go in the
+    // admin-only timeline, never here.
+    function isQuote(q) {
+      return q is map
+        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnDays', 'returnDay', 'extraHours', 'extraHourRate', 'ticket', 'at'])
+        && q.keys().hasAll(['amount', 'dayRate', 'days', 'returnDays', 'returnDay', 'extraHours', 'extraHourRate', 'ticket', 'at'])
+        && q.amount is int && q.amount > 0 && q.amount <= 1000000
+        && q.dayRate is int && q.dayRate > 0 && q.dayRate <= 100000
+        && q.days is int && q.days >= 1 && q.days <= 60
+        && q.returnDays is int && q.returnDays >= 0 && q.returnDays <= 10
+        && q.returnDay is int && q.returnDay >= 0 && q.returnDay <= 100000
+        && q.extraHours is int && q.extraHours >= 0 && q.extraHours <= 200
+        && q.extraHourRate is int && q.extraHourRate >= 0 && q.extraHourRate <= 10000
+        && q.ticket is int && q.ticket >= 0 && q.ticket <= 100000
+        && q.amount == q.dayRate * q.days + q.returnDay * q.returnDays + q.extraHourRate * q.extraHours + q.ticket
+        && q.at == request.time;
+    }
+
     match /bookings/{bookingId} {
       // Admins see everything; a customer sees only bookings tied to their login.
       allow read: if isAdmin()
@@ -117,7 +158,7 @@ service cloud.firestore {
         request.resource.data.keys().hasOnly([
           'name', 'phone', 'city', 'package', 'pickup',
           'preferredTime', 'notes', 'createdAt', 'status', 'source',
-          'customerUid'
+          'customerUid', 'trip'
         ])
         && request.resource.data.keys().hasAll([
           'name', 'phone', 'city', 'package', 'pickup',
@@ -144,6 +185,10 @@ service cloud.firestore {
         // Guests leave customerUid out; a logged-in customer can only tag their own uid.
         && (!('customerUid' in request.resource.data)
             || (isSignedIn() && request.resource.data.customerUid == request.auth.uid))
+        // Only outstation trips and one-way drops carry a trip; it is optional
+        // (older app versions leave it out).
+        && (!('trip' in request.resource.data)
+            || isTrip(request.resource.data.trip, request.resource.data.package))
         && !isBlocked(request.resource.data.phone)
         && isServerStamped(request.resource.data);
 
@@ -152,8 +197,11 @@ service cloud.firestore {
       // Internal notes do NOT live here — the customer can read this document —
       // they go in the admin-only timeline below.
       allow update: if isAdmin()
-        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'updatedAt', 'updatedBy'])
+        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'quote', 'updatedAt', 'updatedBy'])
         && request.resource.data.status in bookingStatuses()
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['quote'])
+            || request.resource.data.get('quote', null) == null
+            || isQuote(request.resource.data.quote))
         && (request.resource.data.get('assignedDriver', null) == null
             || isDriverRef(request.resource.data.assignedDriver))
         && isOptionalText(request.resource.data.get('cancelReason', ''), 200)
@@ -162,13 +210,14 @@ service cloud.firestore {
       allow delete: if false;
 
       // The timeline: one entry per change or note, append-only, admins only.
-      // Status changes are written in the same batch as the change itself.
+      // Status changes are written in the same batch as the change itself; so
+      // is a quote, whose entry keeps the driver's cost and the profit.
       match /events/{eventId} {
         allow read: if isAdmin();
         allow create: if isAdmin()
           && request.resource.data.keys().hasOnly(['type', 'from', 'to', 'note', 'by', 'at'])
           && request.resource.data.keys().hasAll(['type', 'from', 'to', 'note', 'by', 'at'])
-          && request.resource.data.type in ['status', 'driver', 'note']
+          && request.resource.data.type in ['status', 'driver', 'note', 'quote']
           && (request.resource.data.from == null || request.resource.data.from in bookingStatuses())
           && (request.resource.data.to == null || request.resource.data.to in bookingStatuses())
           && isOptionalText(request.resource.data.note, 500)

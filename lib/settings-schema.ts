@@ -25,8 +25,23 @@ export type SiteSettings = {
     oneHour: number;
     threeHours: number;
     fullDay: Range;
+    /** Per day of an outstation trip or one-way drop. */
     outstation: Range;
     nightFrom: number;
+  };
+  /** Trip rules for the outstation estimate (lib/outstation.ts). */
+  outstation: {
+    hoursPerDay: number;
+    extraHour: number;
+    /** Per day the driver travels home by bus/train (not driving). */
+    returnDay: Range;
+    mealAllowance: number;
+    kmPerDay: number;
+    averageKmh: number;
+    returnKmPerDay: number;
+    localWithinKm: number;
+    /** Used only by the /admin quote calculator; not published to the app. */
+    minProfitPercent: number;
   };
   monthly: {
     basic: Range;
@@ -54,7 +69,13 @@ export type SiteSettings = {
   };
 };
 
-export function checkSettings(s: SiteSettings): SiteSettings {
+/**
+ * @param driverCosts optional, from the DRIVER_COSTS build secret (never in this
+ *   public repo): what drivers cost, e.g. "outstation=1000-1100; fullDay=700".
+ *   When set, a price that would earn less than outstation.minProfitPercent on
+ *   those costs fails the build — a typo like 1150 for 1450 never goes live.
+ */
+export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettings {
   const problems: string[] = [];
   const mobile = /^[6-9]\d{9}$/;
 
@@ -121,6 +142,27 @@ export function checkSettings(s: SiteSettings): SiteSettings {
   range('prices.outstation', s.prices.outstation);
   price('prices.nightFrom', s.prices.nightFrom);
 
+  const o = s.outstation;
+  count('outstation.hoursPerDay', o.hoursPerDay, 16);
+  if (o.hoursPerDay < 8) problems.push('outstation.hoursPerDay must be at least 8');
+  price('outstation.extraHour', o.extraHour);
+  range('outstation.returnDay', o.returnDay);
+  price('outstation.mealAllowance', o.mealAllowance);
+  count('outstation.kmPerDay', o.kmPerDay, 800);
+  if (o.kmPerDay < 200) problems.push('outstation.kmPerDay must be at least 200');
+  count('outstation.averageKmh', o.averageKmh, 80);
+  if (o.averageKmh < 20) problems.push('outstation.averageKmh must be at least 20');
+  count('outstation.returnKmPerDay', o.returnKmPerDay, 2000);
+  if (o.returnKmPerDay < 200) problems.push('outstation.returnKmPerDay must be at least 200');
+  count('outstation.localWithinKm', o.localWithinKm, 150);
+  count('outstation.minProfitPercent', o.minProfitPercent, 60);
+  if (o.extraHour * o.hoursPerDay > s.prices.outstation.to * 2)
+    problems.push('outstation.extraHour looks too high for the day price — is a 0 too many?');
+  if (o.returnDay.to > s.prices.outstation.to)
+    problems.push('outstation.returnDay (a day of the driver travelling home) should not cost more than a driving day');
+
+  problems.push(...checkDriverCosts(s, driverCosts));
+
   range('monthly.basic', s.monthly.basic);
   count('monthly.joiningFeePercent', s.monthly.joiningFeePercent, 100);
   price('monthly.premium', s.monthly.premium);
@@ -147,4 +189,44 @@ export function checkSettings(s: SiteSettings): SiteSettings {
     );
   }
   return s;
+}
+
+/**
+ * The optional profit guard (see checkSettings). Format, one price per part:
+ *   outstation=1000-1100; fullDay=700-750; oneHour=200
+ * A cost range checks both ends of a price range; a single cost checks the
+ * lowest price. Unknown names and bad parts are reported, never ignored.
+ *
+ * The repo is public and so are its build logs, so the messages never print a
+ * cost — only which price is too low.
+ */
+export function checkDriverCosts(s: SiteSettings, driverCosts?: string): string[] {
+  if (!driverCosts?.trim()) return [];
+  const problems: string[] = [];
+  const keep = 1 - s.outstation.minProfitPercent / 100;
+  const prices = s.prices as Record<string, number | Range>;
+  const parts = driverCosts.split(/[;,\n]+/).map((p) => p.trim()).filter(Boolean);
+  parts.forEach((part, i) => {
+    const m = /^([a-zA-Z]+)\s*=\s*(\d+)(?:\s*-\s*(\d+))?$/.exec(part);
+    if (!m) {
+      problems.push(`DRIVER_COSTS: part ${i + 1} cannot be read — write each part like outstation=1000-1100`);
+      return;
+    }
+    const name = m[1] ?? '';
+    const a = m[2] ?? '0';
+    const b = m[3];
+    const sold = prices[name];
+    if (sold === undefined) {
+      problems.push(`DRIVER_COSTS: part ${i + 1} names "${name}", which is not one of the prices (${Object.keys(prices).join(', ')})`);
+      return;
+    }
+    const at = typeof sold === 'number' ? { from: sold, to: sold } : sold;
+    const low = (price: number, cost: number) => price * keep < cost;
+    const pct = `${s.outstation.minProfitPercent}%`;
+    if (low(at.from, Number(a)))
+      problems.push(`prices.${name}${typeof sold === 'number' ? '' : '.from'} (${at.from}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
+    if (b !== undefined && low(at.to, Number(b)))
+      problems.push(`prices.${name}.to (${at.to}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
+  });
+  return problems;
 }

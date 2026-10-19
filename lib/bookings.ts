@@ -41,6 +41,38 @@ export const BOOKING_STATUS: Record<
 
 export type DriverRef = { id: string; name: string; phone: string };
 
+/** Packages that carry a trip (lib/outstation.ts), and which kind each is. */
+export const TRIP_PACKAGES = { outstation: 'round', 'one-way-drop': 'one-way' } as const;
+export type TripPackage = keyof typeof TRIP_PACKAGES;
+export const isTripPackage = (id: string): id is TripPackage => id in TRIP_PACKAGES;
+
+/** The trip and the estimate the customer was shown (firestore.rules: isTrip). */
+export type BookingTrip = {
+  /** The destination's name, or what the customer typed. */
+  to: string;
+  /** lib/outstation.ts destination id; '' for a place not in the list. */
+  destId: string;
+  kind: 'one-way' | 'round';
+  km: number;
+  days: number;
+  returnDays: number;
+  estFrom: number;
+  estTo: number;
+};
+
+/** The price agreed on the call (firestore.rules: isQuote). Customer-visible: no costs here. */
+export type BookingQuote = {
+  amount: number;
+  dayRate: number;
+  days: number;
+  returnDays: number;
+  returnDay: number;
+  extraHours: number;
+  extraHourRate: number;
+  ticket: number;
+  at?: Date;
+};
+
 /** A booking document as stored. Fields after `source` are written by the server or an admin. */
 export type Booking = {
   id: string;
@@ -55,6 +87,8 @@ export type Booking = {
   source: string;
   createdAt?: Date;
   customerUid?: string;
+  trip?: BookingTrip;
+  quote?: BookingQuote | null;
   ref?: string;
   number?: number;
   isReturning?: boolean;

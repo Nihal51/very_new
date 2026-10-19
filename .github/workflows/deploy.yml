@@ -83,6 +83,12 @@ jobs:
 
       # Firebase config comes from the committed .env.production — nothing to set.
       - name: Build static export
+        env:
+          # Optional profit guard: what drivers cost, e.g. "outstation=1000-1100; fullDay=700".
+          # Settings → Secrets and variables → Actions → New secret DRIVER_COSTS.
+          # A price below the minimum profit then stops the deploy. Never put
+          # costs in site-settings.ts — this repository is public.
+          DRIVER_COSTS: ${{ secrets.DRIVER_COSTS }}
         run: npm run build
 
       - name: Audit the export (SEO, headings, JSON-LD, sitemap)

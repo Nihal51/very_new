@@ -1,4 +1,5 @@
-import { settings } from '@/lib/settings';
+import { destinationTable } from '@/lib/outstation';
+import { settings, tripRules } from '@/lib/settings';
 import { site } from '@/lib/site';
 
 /**
@@ -10,13 +11,15 @@ import { site } from '@/lib/site';
  * app update. The app checks every field (packages/shared/src/config.ts there)
  * and keeps its last good copy if this file is ever missing or malformed.
  *
- * Only public information — the same numbers every page already shows.
- * `schema` changes only if the shape changes in a way old apps cannot read.
+ * Only public information — the same numbers every page already shows (the
+ * minimum profit and driver costs are never published).
+ * `schema` changes only if the shape changes in a way old apps cannot read;
+ * new fields (like `outstation` and `destinations`) are added alongside.
  */
 export const dynamic = 'force-static';
 
 export function GET() {
-  const { contact, notice, prices, monthly, google, alerts, app } = settings;
+  const { contact, notice, prices, monthly, google, alerts, app, outstation } = settings;
   const body = {
     schema: 1,
     generatedAt: new Date().toISOString(),
@@ -40,6 +43,18 @@ export function GET() {
       standInPerDay: monthly.standInPerDay,
       replacementDays: monthly.replacementDays,
     },
+    /* The trip estimate: rules, and for each destination and pickup city the
+       one-way km and the fewest days (lib/outstation.ts works them out). The
+       app shows days × prices.outstation + returnDays × returnDay. */
+    outstation: {
+      hoursPerDay: outstation.hoursPerDay,
+      extraHour: outstation.extraHour,
+      returnDay: { from: outstation.returnDay.from, to: outstation.returnDay.to },
+      mealAllowance: outstation.mealAllowance,
+      kmPerDay: outstation.kmPerDay,
+      localWithinKm: outstation.localWithinKm,
+    },
+    destinations: destinationTable(tripRules),
     google: { profile: google.profile, writeReview: google.writeReview },
     alerts: { pingUrl: alerts.pingUrl },
     site: { url: site.url, privacy: `${site.url}/privacy/`, terms: `${site.url}/terms/` },

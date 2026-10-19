@@ -119,8 +119,16 @@ function useLiveCollection<T>(name: 'bookings' | 'drivers', map: (id: string, d:
   return { rows, error };
 }
 
-const mapBooking = (id: string, d: Record<string, unknown>): Booking =>
-  ({ ...(d as Omit<Booking, 'id'>), id, createdAt: toDate(d.createdAt), updatedAt: toDate(d.updatedAt) }) as Booking;
+const mapBooking = (id: string, d: Record<string, unknown>): Booking => {
+  const quote = d.quote && typeof d.quote === 'object' ? (d.quote as NonNullable<Booking['quote']>) : null;
+  return {
+    ...(d as Omit<Booking, 'id'>),
+    id,
+    createdAt: toDate(d.createdAt),
+    updatedAt: toDate(d.updatedAt),
+    quote: quote && { ...quote, at: toDate(quote.at) },
+  } as Booking;
+};
 const mapDriver = (id: string, d: Record<string, unknown>): Driver =>
   ({ ...(d as Omit<Driver, 'id'>), id, createdAt: toDate(d.createdAt) }) as Driver;
 

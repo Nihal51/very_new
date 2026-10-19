@@ -9,6 +9,7 @@
  */
 
 import { settings as raw } from '@/site-settings';
+import type { TripRules } from './outstation';
 import { checkSettings, type SiteSettings } from './settings-schema';
 
 export const settings: SiteSettings = checkSettings(raw);
@@ -38,7 +39,12 @@ export const priceText = {
   oneHour: rupees(p.oneHour),
   threeHours: rupees(p.threeHours),
   fullDay: rupeeRange(p.fullDay.from, p.fullDay.to),
+  /** Per day of an outstation trip or one-way drop. */
   outstation: rupeeRange(p.outstation.from, p.outstation.to),
+  outstationReturnDay: rupeeRange(settings.outstation.returnDay.from, settings.outstation.returnDay.to),
+  outstationExtraHour: rupees(settings.outstation.extraHour),
+  outstationHours: `${settings.outstation.hoursPerDay} hours`,
+  mealAllowance: rupees(settings.outstation.mealAllowance),
   nightFrom: rupees(p.nightFrom),
   /** The lowest price on the site, for "from ₹300" lines. */
   startingFrom: rupees(Math.min(p.oneHour, p.threeHours, p.fullDay.from, p.nightFrom)),
@@ -70,3 +76,15 @@ export const priceBounds = {
 };
 
 export { joiningFee as joiningFeeAmount };
+
+/** The trip rules for lib/outstation.ts, from the checked settings. */
+export const tripRules: TripRules = {
+  dayRate: { from: p.outstation.from, to: p.outstation.to },
+  returnDay: { ...settings.outstation.returnDay },
+  extraHour: settings.outstation.extraHour,
+  hoursPerDay: settings.outstation.hoursPerDay,
+  kmPerDay: settings.outstation.kmPerDay,
+  averageKmh: settings.outstation.averageKmh,
+  returnKmPerDay: settings.outstation.returnKmPerDay,
+  localWithinKm: settings.outstation.localWithinKm,
+};

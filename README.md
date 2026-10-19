@@ -107,7 +107,8 @@ the top of the repo: [`site-settings.ts`](site-settings.ts).
 | `notice` | A one-line message across the top of every page. `show: true` turns it on |
 | `contact` | Both phone numbers, the WhatsApp number and the email, everywhere they appear |
 | `google` | Your Google Business Profile link and (optional) direct review link, used by the "Write a review on Google" button under the testimonials |
-| `prices` | Hourly, 3-hour, full-day, outstation and night rates |
+| `prices` | Hourly, 3-hour, full-day, outstation (per day) and night rates |
+| `outstation` | How trip estimates work: hours a day, extra hour, the driver's return day, km a day, the minimum profit for the `/admin` quote calculator ([docs/outstation-pricing.md](docs/outstation-pricing.md)) |
 | `monthly` | The Basic and Premium plans: prices, joining fee %, hours, extra-hour rate, days off, stand-in rate, replacement time |
 
 Change a number there and every page follows — English and Hindi pages, the
@@ -123,6 +124,12 @@ quotes. If you edit on GitHub, run `git pull` on your laptop before working ther
 Actions tab shows why, in plain words — for example `contact.phone must be a
 10-digit mobile number` or `prices.fullDay: "from" (1300) is bigger than "to"
 (1200)`. Fix the line and commit again.
+
+**Never put driver costs in `site-settings.ts`** — this repository is public.
+To have the deploy stop if a price ever falls below your minimum profit, add
+the costs as a GitHub secret instead: Settings → Secrets and variables →
+Actions → New secret `DRIVER_COSTS`, value like `outstation=1000-1100; fullDay=700`
+(your real figures). Error messages name the price, never the cost.
 
 To keep that one-file promise true, `npm run lint` (which the deploy runs) fails
 if a ₹ figure or a phone number is typed anywhere in `app/`, `components/` or
@@ -331,6 +338,8 @@ components/
 site-settings.ts        prices, phone numbers, notice bar  ← the file you edit
 lib/
   settings.ts           checks site-settings.ts, formats every price (priceText)
+  outstation.ts         trip distances, days, the estimate and the /admin quote
+  trip.ts               the trip as the booking form, account page and /admin show it
   site.ts               company details + the domain
   content.ts            every word of marketing copy, typed
   schema.ts             JSON-LD builders

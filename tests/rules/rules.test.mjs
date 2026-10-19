@@ -143,6 +143,40 @@ describe('bookings — creating', () => {
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ city: 'Mumbai' })));
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ package: 'free-ride' })));
   });
+
+  const trip = (extra = {}) => ({
+    to: 'Nagpur', destId: 'nagpur', kind: 'one-way', km: 284, days: 1, returnDays: 1, estFrom: 2450, estTo: 2650, ...extra,
+  });
+
+  test('an outstation trip or one-way drop can carry its trip and estimate', async () => {
+    const db = guest();
+    await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: trip() })));
+    await assertSucceeds(
+      addDoc(collection(db, 'bookings'), booking({ package: 'outstation', trip: trip({ kind: 'round', days: 2, returnDays: 0 }) })),
+    );
+    // A place not in the list: no km, no estimate.
+    await assertSucceeds(
+      addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: trip({ to: 'Jaipur', destId: '', km: 0, returnDays: 0, estFrom: 0, estTo: 0 }) })),
+    );
+    // Optional: older app versions send no trip.
+    await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop' })));
+  });
+
+  test('a trip must match its package and stay in shape', async () => {
+    const db = guest();
+    const bad = (pkg, t) => assertFails(addDoc(collection(db, 'bookings'), booking({ package: pkg, trip: t })));
+    await bad('3-hours-600', trip()); // only trip packages
+    await bad('outstation', trip()); // outstation is a round trip
+    await bad('one-way-drop', trip({ kind: 'round', returnDays: 0 }));
+    await bad('outstation', trip({ kind: 'round', returnDays: 1 })); // round trips have no return days
+    await bad('one-way-drop', trip({ days: 0 }));
+    await bad('one-way-drop', trip({ days: 1.5 }));
+    await bad('one-way-drop', trip({ estFrom: 3000, estTo: 2000 }));
+    await bad('one-way-drop', trip({ destId: 'Nagpur!' }));
+    await bad('one-way-drop', trip({ driverCost: 1000 }));
+    const { km: _km, ...noKm } = trip();
+    await bad('one-way-drop', noKm);
+  });
 });
 
 describe('bookings — reading', () => {
@@ -210,6 +244,36 @@ describe('bookings — admin workflow', () => {
     // Internal notes go to the admin-only timeline, never onto the booking the customer can read.
     await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ adminNote: 'difficult customer' })));
     await assertFails(deleteDoc(doc(db, 'bookings', 'b1')));
+  });
+
+  const agreed = (extra = {}) => ({
+    amount: 2 * 1550 + 1000 + 650, dayRate: 1550, days: 2, returnDays: 1, returnDay: 1000, extraHours: 0, extraHourRate: 120, ticket: 650,
+    at: serverTimestamp(), ...extra,
+  });
+
+  test('an admin saves the agreed price; the cost and profit go only in the timeline', async () => {
+    await seedBooking('b1', { package: 'one-way-drop', customerUid: 'cust1' });
+    const db = admin();
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'bookings', 'b1'), stamp({ quote: agreed() }));
+    batch.set(doc(collection(db, 'bookings', 'b1', 'events')), {
+      type: 'quote', from: null, to: null, note: 'Driver cost and profit here', by: 'owner@example.com', at: serverTimestamp(),
+    });
+    await assertSucceeds(batch.commit());
+    // A later status change leaves the quote alone.
+    await assertSucceeds(updateDoc(doc(db, 'bookings', 'b1'), stamp({ status: 'confirmed' })));
+    // The customer sees the price.
+    const seen = await getDoc(doc(customer('cust1'), 'bookings', 'b1'));
+    if (seen.data().quote.amount !== 4750) throw new Error('customer should see the agreed amount');
+  });
+
+  test('a quote cannot hide a cost, add up wrong or be backdated', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    const db = admin();
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ driverCost: 1300 }) })));
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ amount: 9999 }) })));
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ at: new Date(2020, 0, 1) }) })));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { quote: agreed() }));
   });
 
   test('customers and guests cannot change a booking', async () => {

@@ -23,6 +23,8 @@ import {
   type Booking,
 } from '@/lib/bookings';
 import { getFirebaseApp, isFirebaseConfigured } from '@/lib/firebase';
+import { rupees } from '@/lib/settings';
+import { quoteBreakdown, tripSummary } from '@/lib/trip';
 import { normalisePhone, validateName, validatePhone } from '@/lib/validate';
 
 type State =
@@ -303,6 +305,21 @@ function BookingRow({ b }: { b: Booking }) {
           <dt className="text-fg-subtle text-xs">When</dt>
           <dd>{formatPreferred(b.preferredTime)}</dd>
         </div>
+        {b.trip && (
+          <div className="sm:col-span-2">
+            <dt className="text-fg-subtle text-xs">Trip</dt>
+            <dd>{tripSummary(b.trip, b.city)}</dd>
+          </div>
+        )}
+        {b.quote && (
+          <div className="sm:col-span-2">
+            <dt className="text-fg-subtle text-xs">Agreed price</dt>
+            <dd>
+              <strong className="text-fg tabular">{rupees(b.quote.amount)}</strong>{' '}
+              <span className="text-fg-subtle text-sm">({quoteBreakdown(b.quote)})</span>
+            </dd>
+          </div>
+        )}
       </dl>
       {b.assignedDriver && b.status === 'assigned' && (
         <div className="border-border mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">

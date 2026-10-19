@@ -574,6 +574,27 @@ describe('formatting', () => {
     assert.ok(msg.text.includes('&lt;b&gt;x&lt;/b&gt;'));
     assert.equal(msg.reply_markup.inline_keyboard[0][0].url, 'https://thedrivebuddy.in/admin/?b=i');
   });
+  test('rupees in Indian grouping', () => {
+    assert.equal(ctx.inr(950), '950');
+    assert.equal(ctx.inr(2450), '2,450');
+    assert.equal(ctx.inr(125000), '1,25,000');
+  });
+  test('an outstation trip shows in the alert, the email and the Sheet', () => {
+    const trip = { to: 'Nagpur', destId: 'nagpur', kind: 'one-way', km: 284, days: 1, returnDays: 1, estFrom: 2450, estTo: 2650 };
+    const booking = { name: 'A', phone: '9111473929', city: 'Raipur', package: 'one-way-drop', pickup: 'a', preferredTime: '', notes: 'Swift', trip };
+    const line = 'Raipur → Nagpur · one-way drop · ~284 km · 1 driving day + 1 return day · est. ₹2,450–2,650';
+    assert.equal(ctx.tripLine(booking), line);
+    const c = { booking, id: 'i', ref: 'DB-1001', previousBookings: 0, siteUrl: 'https://thedrivebuddy.in' };
+    assert.ok(ctx.bookingTelegram(c).text.includes('<b>Trip:</b> ' + line));
+    assert.ok(ctx.bookingEmail(c).body.includes('Trip: ' + line + '\nNotes: Swift'));
+    assert.equal(ctx.bookingRecord('i', booking)['Customer notes'], 'Trip: ' + line + ' | Swift');
+
+    const round = { ...booking, package: 'outstation', trip: { ...trip, kind: 'round', days: 2, returnDays: 0, estFrom: 2900, estTo: 3300 } };
+    assert.equal(ctx.tripLine(round), 'Raipur → Nagpur · round trip · ~284 km · 2 days · est. ₹2,900–3,300');
+    const elsewhere = { ...booking, trip: { ...trip, to: 'Jaipur', destId: '', km: 0, returnDays: 0, estFrom: 0, estTo: 0 } };
+    assert.equal(ctx.tripLine(elsewhere), 'Raipur → Jaipur (not in our list) · one-way drop · 1 driving day · quote on the call');
+    assert.equal(ctx.tripLine({ ...booking, trip: undefined }), '');
+  });
   test('column letters', () => {
     assert.equal(ctx.columnLetter(1), 'A');
     assert.equal(ctx.columnLetter(15), 'O');
