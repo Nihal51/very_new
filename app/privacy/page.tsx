@@ -6,7 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Container } from '@/components/ui/Section';
 import { breadcrumbSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
-import { mailHref, site } from '@/lib/site';
+import { formatPhone, mailHref, site } from '@/lib/site';
 
 const trail = [{ name: 'Privacy', path: '/privacy/' }];
 
@@ -36,13 +36,15 @@ export default function PrivacyPage() {
           </Alert>
 
           <div className="prose-legal mt-10">
-            <p className="text-fg-subtle text-sm">Last updated: 12 October 2026</p>
+            <p className="text-fg-subtle text-sm">Last updated: 19 October 2026</p>
 
             <h2 id="what-we-collect">What we collect</h2>
             <p>
               We only collect what you type into our forms (on this website or in the DriveBuddy
               app), plus the few account details listed below if you choose to log in. There are no
-              tracking pixels, advertising cookies or analytics scripts on this site or in the app.
+              tracking pixels, advertising cookies or analytics scripts on this website. The app can
+              send the two kinds of technical data described under &ldquo;The DriveBuddy app&rdquo;,
+              and neither is used for advertising.
             </p>
             <h3>Booking form</h3>
             <ul>
@@ -74,9 +76,23 @@ export default function PrivacyPage() {
                 assigned
               </li>
             </ul>
+            <h3>Crash reports and usage statistics (app only)</h3>
+            <ul>
+              <li>
+                <strong>Crash reports:</strong> if the app crashes, a technical report (the error,
+                the app version and the phone model and Android or iOS version) is sent to Sentry so
+                we can fix the fault. It contains no name, phone number, address or booking details.
+              </li>
+              <li>
+                <strong>Anonymous usage statistics:</strong> counts of actions such as &ldquo;app
+                opened&rdquo; or &ldquo;booking sent&rdquo;, with the app language and version, sent
+                to PostHog under a random ID that is not linked to your name, number or account. You
+                can switch this off in the app under Account → <em>Anonymous usage stats</em>.
+              </li>
+            </ul>
             <p>
-              The app does not access your location, contacts, photos or files, and shows no
-              advertising.
+              The app does not access your location, contacts, photos or files, does not use the
+              advertising ID, and shows no advertising.
             </p>
 
             <h2 id="how-we-use-it">How we use it</h2>
@@ -95,8 +111,9 @@ export default function PrivacyPage() {
             </p>
             <p>
               Service providers that handle data for us: Google Firebase (storage and login), Expo
-              with Google and Apple (delivering app notifications), and Meta&apos;s WhatsApp (when we
-              message you there about your booking).
+              with Google and Apple (delivering app notifications), Sentry (app crash reports),
+              PostHog (anonymous app usage statistics) and Meta&apos;s WhatsApp (when we message you
+              there about your booking).
             </p>
 
             <h2 id="how-long">How long we keep it</h2>
@@ -113,12 +130,31 @@ export default function PrivacyPage() {
               request within 30 days. Deletion requests are honoured except where we are required to
               retain a record by law.
             </p>
+
+            <h2 id="delete-account">Deleting your DriveBuddy account</h2>
             <p>
-              <strong>Deleting your account:</strong> in the DriveBuddy app, open Account →
-              <em> Delete my account</em>. This removes your login, your saved details and your
-              phones&apos; notification tokens at once. Past bookings are kept for the period above
-              for accounts and safety, no longer linked to a login. Without the app, email or
-              WhatsApp us and we will delete it for you.
+              This applies to the <strong>DriveBuddy</strong> app (by {site.legalName}) and to
+              logins on this website. There are two ways to delete your account:
+            </p>
+            <ol>
+              <li>
+                <strong>In the app:</strong> open the <em>Account</em> tab → <em>Delete my account</em>{' '}
+                → confirm. It happens at once.
+              </li>
+              <li>
+                <strong>Without the app:</strong> email <a href={mailHref}>{site.email}</a> from the
+                email address you log in with (or call or WhatsApp {formatPhone(site.phone)}) and write
+                &ldquo;Delete my DriveBuddy account&rdquo;. We delete it within 7 days and confirm
+                by reply.
+              </li>
+            </ol>
+            <p>
+              <strong>Deleted straight away:</strong> your login (Google account link), the name and
+              mobile number saved in your profile, and your phones&apos; notification tokens.{' '}
+              <strong>Kept:</strong> records of past bookings, for up to 24 months for accounts,
+              disputes and safety, no longer linked to any login; then they are deleted. Anonymous
+              usage statistics are not linked to you, so there is nothing to connect them to your
+              account. To have past booking records removed sooner, say so in your email.
             </p>
 
             <h2 id="cookies">Cookies</h2>
