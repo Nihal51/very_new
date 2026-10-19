@@ -27,13 +27,26 @@ at 10 AM → 4 hours × ₹120 = ₹480.
   Durg and Bilaspur they are worked out from those. "Somewhere else" shows the
   daily rate and the team works out the distance on the call.
 - **Days:** about `kmPerDay` (400 km) of driving a day. Up to 40 km over a
-  full day does not add a day (Raipur → Delhi, 1,214 km, is 3 days). A round
-  trip drives the distance twice. The customer can book more days (resting,
-  sightseeing); every day booked is charged.
+  full day does not add a day (Raipur → Delhi, 1,214 km, is 3 days). The
+  customer can book more days (resting, sightseeing); every day booked is
+  charged.
+- **Round trips follow the same 24-hour rule:** if the driver is back home
+  within the 24 hours — there and back in up to `sameDayMaxHours` (16) of
+  driving, about 360 km each way — it is **one day** (Raipur → Jharsuguda →
+  Raipur, 640 km: 1 day). Longer round trips need a night away and drive the
+  distance twice (Jabalpur and back: 2 days; Bhopal: 4).
 - **Return hours** (one-way drops only): the last day's drive (km beyond the
-  full days ÷ `averageKmh`) + the bus/train home (km ÷ `busKmh`, plus
-  `stationHours` to reach the station and wait), minus 24. If that is zero or
-  less, nothing is due. Charged at `returnHour` (₹120) an hour, at most
+  full days ÷ `averageKmh`) + `stationHours` (1 h to reach the station and
+  wait) + **the real train or bus time home**, minus 24. If that is zero or
+  less, nothing is due. The time home is checked for every destination in
+  the timetables (erail.in, redBus, AbhiBus — 20 Oct 2026): the regular daily
+  trains or buses a driver gets on short notice, not weekly premium trains,
+  separately to Raipur, Durg (also used for Bhilai) and Bilaspur — e.g.
+  Delhi → Raipur ~22½ h, Mumbai ~18 h, Kolkata ~13¼ h (but ~11¼ h to
+  Bilaspur, which those trains reach first), Hyderabad ~15 h, Lucknow ~20 h
+  (no daily train; via Prayagraj). They live next to each place in
+  `destinations` in `lib/outstation.ts` — check them once a year. A place
+  typed in by hand falls back to km ÷ `busKmh`. Charged at `returnHour` (₹120) an hour, at most
   `returnMaxPerDay` (₹1,200) in any 24 hours. Booking extra days does not
   change them: the drop and the end of the paid time move together.
 - Small print: up to 12 hours of driving a day, the extra-hour rate beyond;
@@ -49,12 +62,15 @@ at most ₹1,200 a day):
 | --- | --- | --- | --- |
 | Bilaspur, one-way | 1 | 0 | ₹1,450–1,650 |
 | Nagpur, one-way | 1 | 0 (home the same evening) | ₹1,450–1,650 |
-| Nagpur, round trip | 2 | — | ₹2,900–3,300 |
+| Nagpur, round trip | 1 | — (home the same night) | ₹1,450–1,650 |
+| Jharsuguda, round trip | 1 | — (home the same night) | ₹1,450–1,650 |
 | Bhopal, one-way | 2 | 0 | ₹2,900–3,300 |
-| Hyderabad, one-way | 2 | 2 → ₹240 | ₹3,140–3,540 |
-| Mumbai, one-way | 3 | 7 → ₹840 | ₹5,190–5,790 |
-| Delhi, one-way | 3 | 11 → ₹1,200 (the daily maximum) | ₹5,550–6,150 |
-| Delhi, one-way, 5 days booked | 5 | 11 → ₹1,200 | ₹8,450–9,450 |
+| Hyderabad, one-way | 2 | 1 → ₹120 (train ~15 h) | ₹3,020–3,420 |
+| Kolkata, one-way | 2 | 0 (train ~13 h) | ₹2,900–3,300 |
+| Lucknow, one-way | 2 | 6 → ₹720 (train ~20 h) | ₹3,620–4,020 |
+| Mumbai, one-way | 3 | 3 → ₹360 (train ~18 h) | ₹4,710–5,310 |
+| Delhi, one-way | 3 | 9 → ₹1,080 (train ~22½ h) | ₹5,430–6,030 |
+| Delhi, one-way, 5 days booked | 5 | 9 → ₹1,080 | ₹8,330–9,330 |
 
 The booking saves the trip and the estimate, and the Telegram alert, email
 and Sheet show them.

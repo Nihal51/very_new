@@ -8,6 +8,7 @@ import {
   destinations,
   estimate,
   findDestination,
+  homeTravelHours,
   pickupCities,
   planTrip,
   roadKm,
@@ -41,6 +42,8 @@ export type TripView = {
   days: number;
   /** One-way: hours the driver is still travelling home after the paid days. */
   returnHours: number;
+  /** How the driver gets home and the hours on board (timetables in lib/outstation.ts). */
+  home?: { by: Destination['home']['by']; hours: number };
   plan?: TripPlan;
   est?: Estimate;
   /** The pickup city itself was chosen as the destination. */
@@ -59,7 +62,8 @@ export function tripFor(pkg: TripPackage, city: string, destId: string, bookedDa
     const days = Math.min(60, Math.max(1, Math.floor(bookedDays) || 1));
     return { kind, dest, km: 0, minDays: 1, days, returnHours: 0, sameCity };
   }
-  const plan = planTrip(tripRules, roadKm(city, dest), kind, bookedDays);
+  const homeHours = homeTravelHours(dest, city) ?? 0;
+  const plan = planTrip(tripRules, roadKm(city, dest), kind, bookedDays, homeHours);
   return {
     kind,
     dest,
@@ -67,6 +71,7 @@ export function tripFor(pkg: TripPackage, city: string, destId: string, bookedDa
     minDays: plan.minDays,
     days: plan.days,
     returnHours: plan.returnHours,
+    home: { by: dest.home.by, hours: homeHours },
     plan,
     est: estimate(tripRules, plan),
     sameCity,
@@ -88,6 +93,10 @@ export function tripRecord(view: TripView, typedPlace: string): BookingTrip {
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** "train, about 23 h" — the driver's way home, rounded to the hour. */
+export const homeText = (home: NonNullable<TripView['home']>) =>
+  `${home.by}, about ${Math.max(1, Math.round(home.hours))} h`;
 
 /** 1214 → "1,214 km" */
 export const kmText = (km: number) => `${new Intl.NumberFormat('en-IN').format(km)} km`;
@@ -121,15 +130,17 @@ export function estimateLines(view: TripView): { label: string; amount: string }
       amount: rupeeRange(view.est.driving.from, view.est.driving.to),
     },
   ];
-  if (view.kind === 'one-way')
+  if (view.kind === 'one-way') {
+    const way = view.home ? ` (${homeText(view.home)})` : '';
     lines.push(
       view.returnHours > 0
         ? {
-            label: `Driver still on his way home ${plural(view.returnHours, 'hour')} after the last day × ${rupees(tripRules.returnHour)} (max ${rupees(tripRules.returnMaxPerDay)} a day)`,
+            label: `Driver’s way home${way}: still travelling ${plural(view.returnHours, 'hour')} after the last day × ${rupees(tripRules.returnHour)} (max ${rupees(tripRules.returnMaxPerDay)} a day)`,
             amount: rupees(view.est.returnCharge),
           }
-        : { label: 'Driver’s bus/train home: within the paid days', amount: 'No charge' },
+        : { label: `Driver’s way home${way}: within the paid days`, amount: 'No charge' },
     );
+  }
   return lines;
 }
 

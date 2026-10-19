@@ -13,7 +13,7 @@ import { breadcrumbSchema, faqSchema, oneWayDropSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
 import { priceText, rupeeRange, rupees, settings } from '@/lib/settings';
 import { formatPhone, site, telHref } from '@/lib/site';
-import { kmText, tripFor } from '@/lib/trip';
+import { homeText, kmText, tripFor } from '@/lib/trip';
 
 const trail = [{ name: 'One-Way Drop', path: '/one-way-drop/' }];
 const day = `${priceText.outstation} a day`;
@@ -176,7 +176,7 @@ export default function OneWayDropPage() {
         id="routes"
         eyebrow="Popular routes"
         title="One-way drops from Raipur"
-        lede="Estimates for the drop alone. From Bhilai, Durg or Bilaspur, use the price checker above."
+        lede="Estimates for the drop alone, with the driver’s real train or bus time home. From Bhilai, Durg or Bilaspur, use the price checker above."
       >
         <div className="border-border overflow-x-auto rounded-xl border">
           <table className="w-full text-left text-[0.9375rem]">
@@ -213,7 +213,10 @@ export default function OneWayDropPage() {
                   </th>
                   <td className="tabular hidden px-4 py-3 sm:table-cell">{t.days}</td>
                   <td className="text-fg-muted hidden px-4 py-3 sm:table-cell">
-                    {t.returnHours > 0 ? `+${t.returnHours} h · ${rupees(t.est?.returnCharge ?? 0)}` : 'Included'}
+                    {t.home ? <span className="block">{homeText(t.home)}</span> : null}
+                    <span className="text-fg text-xs">
+                      {t.returnHours > 0 ? `+${t.returnHours} h after the last day · ${rupees(t.est?.returnCharge ?? 0)}` : 'Within the paid days'}
+                    </span>
                   </td>
                   <td className="tabular px-4 py-3 text-right font-semibold whitespace-nowrap">
                     {t.est ? rupeeRange(t.est.from, t.est.to) : ''}

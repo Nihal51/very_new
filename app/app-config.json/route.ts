@@ -50,6 +50,7 @@ export function GET() {
        returnMaxPerDay in any 24 h). */
     outstation: {
       hoursPerDay: outstation.hoursPerDay,
+      sameDayMaxHours: outstation.sameDayMaxHours,
       extraHour: outstation.extraHour,
       returnHour: outstation.returnHour,
       returnMaxPerDay: outstation.returnMaxPerDay,

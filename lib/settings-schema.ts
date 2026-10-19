@@ -32,6 +32,8 @@ export type SiteSettings = {
   /** Trip rules for the outstation estimate (lib/outstation.ts). */
   outstation: {
     hoursPerDay: number;
+    /** A round trip with up to this many hours of driving there and back is back within the 24 hours: one day. */
+    sameDayMaxHours: number;
     extraHour: number;
     /** Per hour the driver is still travelling home after the paid days. */
     returnHour: number;
@@ -149,6 +151,9 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   const o = s.outstation;
   count('outstation.hoursPerDay', o.hoursPerDay, 16);
   if (o.hoursPerDay < 8) problems.push('outstation.hoursPerDay must be at least 8');
+  count('outstation.sameDayMaxHours', o.sameDayMaxHours, 20);
+  if (o.sameDayMaxHours < o.hoursPerDay)
+    problems.push('outstation.sameDayMaxHours must be at least hoursPerDay');
   price('outstation.extraHour', o.extraHour);
   price('outstation.returnHour', o.returnHour);
   price('outstation.returnMaxPerDay', o.returnMaxPerDay);

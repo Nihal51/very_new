@@ -92,13 +92,14 @@ export const settings = {
      call (the quote calculator in /admin works it out from the driver's cost). */
   outstation: {
     hoursPerDay: 12, //        driving hours in one outstation day
+    sameDayMaxHours: 16, //    a round trip with up to this much driving there and back is home within the 24 h: ONE day
     extraHour: 120, //         each hour of driving beyond hoursPerDay
     returnHour: 120, //        each hour the driver is still travelling home after the paid days
     returnMaxPerDay: 1200, //  the most those return hours cost in any 24 hours
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 400, //          how far one driver drives in a day, with breaks
     averageKmh: 45, //         highway average with stops
-    busKmh: 50, //             bus/train average on the way home, with stops
+    busKmh: 50, //             way home for a place not in the list: bus/train average, with stops
     stationHours: 1, //        getting to the bus stand or station and waiting
     localWithinKm: 60, //      closer than this, the form suggests a local package instead
     minProfitPercent: 15, //   the /admin quote calculator never quotes below this profit

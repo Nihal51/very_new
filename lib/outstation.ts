@@ -13,7 +13,10 @@
  *     one-way drops: the driver delivers the car and comes home by bus/train.
  *   - Days: at least one-way km ÷ kmPerDay (≈ 400 km a day, with breaks; up to
  *     40 km over doesn't add a day), or the days the customer books if more
- *     (resting, sightseeing). A round trip drives the distance twice.
+ *     (resting, sightseeing). A round trip follows the same 24-hour rule: if
+ *     the driver is back home within the 24 hours (there and back in up to
+ *     sameDayMaxHours of driving — Raipur → Jharsuguda → Raipur, 640 km), it
+ *     is ONE day. Longer round trips drive the distance twice.
  *   - Each paid day covers the driver's whole 24 hours, counted from the start
  *     — up to hoursPerDay of driving, and his way home by bus/train too.
  *   - Return hours (one-way only): only if he is still travelling home after
@@ -38,6 +41,8 @@ export type TripRules = {
   extraHour: number;
   /** Driving hours in one outstation day. */
   hoursPerDay: number;
+  /** A round trip with up to this many hours of driving in all is back within the 24 hours: one day. */
+  sameDayMaxHours: number;
   /** Planning distance one driver covers in a day, with breaks. */
   kmPerDay: number;
   /** Average highway speed including stops. */
@@ -63,54 +68,64 @@ export type Destination = {
   lng: number;
   /** One-way road and straight-line distance from Raipur, in km. */
   fromRaipur: { road: number; air: number };
+  /**
+   * The driver's way home after a one-way drop: how he usually travels, and
+   * hours on board to Raipur, to Durg (also used for Bhilai) and to Bilaspur —
+   * the regular daily trains or buses a driver can get on short notice (not
+   * weekly premium trains), from erail.in, redBus and AbhiBus timetables.
+   * Getting to the station and waiting (stationHours) is added on top.
+   */
+  home: { by: 'train' | 'bus' | 'bus + train'; raipur: number; durg: number; bilaspur: number };
 };
 
 /**
  * Popular destinations. Road distances from Raipur: distancebetween2.com,
- * checked 19 Oct 2026 — check a few against Google Maps once a year. Add a
- * place by copying a line; the other pickup cities are worked out from these.
+ * checked 19 Oct 2026 — check a few against Google Maps once a year. Train and
+ * bus times home: erail.in, redBus, AbhiBus, ixigo, checked 20 Oct 2026 — check
+ * them once a year too (new trains, new Vande Bharats). Add a place by copying
+ * a line; the other pickup cities' distances are worked out from these.
  */
 export const destinations: readonly Destination[] = [
   // Chhattisgarh and just across the border
-  { id: 'raipur', name: 'Raipur', nameHi: 'रायपुर', region: 'cg', lat: 21.2514, lng: 81.6296, fromRaipur: { road: 0, air: 0 } },
-  { id: 'bhilai', name: 'Bhilai', nameHi: 'भिलाई', region: 'cg', lat: 21.1938, lng: 81.3509, fromRaipur: { road: 33, air: 29.6 } },
-  { id: 'durg', name: 'Durg', nameHi: 'दुर्ग', region: 'cg', lat: 21.1904, lng: 81.2849, fromRaipur: { road: 40, air: 36.4 } },
-  { id: 'mahasamund', name: 'Mahasamund', nameHi: 'महासमुंद', region: 'cg', lat: 21.1074, lng: 82.0948, fromRaipur: { road: 55, air: 51.1 } },
-  { id: 'dhamtari', name: 'Dhamtari', nameHi: 'धमतरी', region: 'cg', lat: 20.7076, lng: 81.5494, fromRaipur: { road: 67, air: 61.6 } },
-  { id: 'rajnandgaon', name: 'Rajnandgaon', nameHi: 'राजनांदगांव', region: 'cg', lat: 21.0974, lng: 81.0337, fromRaipur: { road: 74, air: 64.5 } },
-  { id: 'dongargarh', name: 'Dongargarh', nameHi: 'डोंगरगढ़', region: 'cg', lat: 21.1891, lng: 80.755, fromRaipur: { road: 108, air: 90.5 } },
-  { id: 'bilaspur', name: 'Bilaspur', nameHi: 'बिलासपुर', region: 'cg', lat: 22.0797, lng: 82.1409, fromRaipur: { road: 113, air: 106.1 } },
-  { id: 'kawardha', name: 'Kawardha', nameHi: 'कवर्धा', region: 'cg', lat: 22.0086, lng: 81.2318, fromRaipur: { road: 116, air: 94.1 } },
-  { id: 'kanker', name: 'Kanker', nameHi: 'कांकेर', region: 'cg', lat: 20.2719, lng: 81.492, fromRaipur: { road: 127, air: 109.8 } },
-  { id: 'janjgir', name: 'Janjgir', nameHi: 'जांजगीर', region: 'cg', lat: 22.009, lng: 82.5772, fromRaipur: { road: 160, air: 128.9 } },
-  { id: 'amarkantak', name: 'Amarkantak', nameHi: 'अमरकंटक', region: 'cg', lat: 22.673, lng: 81.7536, fromRaipur: { road: 209, air: 159.7 } },
-  { id: 'korba', name: 'Korba', nameHi: 'कोरबा', region: 'cg', lat: 22.3595, lng: 82.7501, fromRaipur: { road: 216, air: 169 } },
-  { id: 'raigarh', name: 'Raigarh', nameHi: 'रायगढ़', region: 'cg', lat: 21.8974, lng: 83.395, fromRaipur: { road: 258, air: 196.2 } },
-  { id: 'jagdalpur', name: 'Jagdalpur', nameHi: 'जगदलपुर', region: 'cg', lat: 19.0748, lng: 82.008, fromRaipur: { road: 287, air: 245.3 } },
-  { id: 'ambikapur', name: 'Ambikapur', nameHi: 'अंबिकापुर', region: 'cg', lat: 23.1355, lng: 83.182, fromRaipur: { road: 334, air: 263.6 } },
+  { id: 'raipur', name: 'Raipur', nameHi: 'रायपुर', region: 'cg', lat: 21.2514, lng: 81.6296, fromRaipur: { road: 0, air: 0 }, home: { by: 'train', raipur: 0, durg: 0.75, bilaspur: 1.5 } },
+  { id: 'bhilai', name: 'Bhilai', nameHi: 'भिलाई', region: 'cg', lat: 21.1938, lng: 81.3509, fromRaipur: { road: 33, air: 29.6 }, home: { by: 'train', raipur: 0.75, durg: 0.3, bilaspur: 2.75 } },
+  { id: 'durg', name: 'Durg', nameHi: 'दुर्ग', region: 'cg', lat: 21.1904, lng: 81.2849, fromRaipur: { road: 40, air: 36.4 }, home: { by: 'train', raipur: 0.75, durg: 0, bilaspur: 2.75 } },
+  { id: 'mahasamund', name: 'Mahasamund', nameHi: 'महासमुंद', region: 'cg', lat: 21.1074, lng: 82.0948, fromRaipur: { road: 55, air: 51.1 }, home: { by: 'bus', raipur: 1.5, durg: 2.5, bilaspur: 3.5 } },
+  { id: 'dhamtari', name: 'Dhamtari', nameHi: 'धमतरी', region: 'cg', lat: 20.7076, lng: 81.5494, fromRaipur: { road: 67, air: 61.6 }, home: { by: 'bus', raipur: 2, durg: 2.25, bilaspur: 4 } },
+  { id: 'rajnandgaon', name: 'Rajnandgaon', nameHi: 'राजनांदगांव', region: 'cg', lat: 21.0974, lng: 81.0337, fromRaipur: { road: 74, air: 64.5 }, home: { by: 'train', raipur: 1.5, durg: 0.75, bilaspur: 3 } },
+  { id: 'dongargarh', name: 'Dongargarh', nameHi: 'डोंगरगढ़', region: 'cg', lat: 21.1891, lng: 80.755, fromRaipur: { road: 108, air: 90.5 }, home: { by: 'train', raipur: 2, durg: 1.25, bilaspur: 3.75 } },
+  { id: 'bilaspur', name: 'Bilaspur', nameHi: 'बिलासपुर', region: 'cg', lat: 22.0797, lng: 82.1409, fromRaipur: { road: 113, air: 106.1 }, home: { by: 'train', raipur: 1.5, durg: 2.5, bilaspur: 0 } },
+  { id: 'kawardha', name: 'Kawardha', nameHi: 'कवर्धा', region: 'cg', lat: 22.0086, lng: 81.2318, fromRaipur: { road: 116, air: 94.1 }, home: { by: 'bus', raipur: 3, durg: 2.75, bilaspur: 3.25 } },
+  { id: 'kanker', name: 'Kanker', nameHi: 'कांकेर', region: 'cg', lat: 20.2719, lng: 81.492, fromRaipur: { road: 127, air: 109.8 }, home: { by: 'bus', raipur: 3.5, durg: 3.75, bilaspur: 5.5 } },
+  { id: 'janjgir', name: 'Janjgir', nameHi: 'जांजगीर', region: 'cg', lat: 22.009, lng: 82.5772, fromRaipur: { road: 160, air: 128.9 }, home: { by: 'train', raipur: 3, durg: 3.5, bilaspur: 1 } },
+  { id: 'amarkantak', name: 'Amarkantak', nameHi: 'अमरकंटक', region: 'cg', lat: 22.673, lng: 81.7536, fromRaipur: { road: 209, air: 159.7 }, home: { by: 'bus + train', raipur: 5.5, durg: 6.5, bilaspur: 3 } },
+  { id: 'korba', name: 'Korba', nameHi: 'कोरबा', region: 'cg', lat: 22.3595, lng: 82.7501, fromRaipur: { road: 216, air: 169 }, home: { by: 'train', raipur: 4, durg: 4.75, bilaspur: 2 } },
+  { id: 'raigarh', name: 'Raigarh', nameHi: 'रायगढ़', region: 'cg', lat: 21.8974, lng: 83.395, fromRaipur: { road: 258, air: 196.2 }, home: { by: 'train', raipur: 4, durg: 4.5, bilaspur: 2.25 } },
+  { id: 'jagdalpur', name: 'Jagdalpur', nameHi: 'जगदलपुर', region: 'cg', lat: 19.0748, lng: 82.008, fromRaipur: { road: 287, air: 245.3 }, home: { by: 'bus', raipur: 7, durg: 8, bilaspur: 9 } },
+  { id: 'ambikapur', name: 'Ambikapur', nameHi: 'अंबिकापुर', region: 'cg', lat: 23.1355, lng: 83.182, fromRaipur: { road: 334, air: 263.6 }, home: { by: 'bus', raipur: 7.5, durg: 8.5, bilaspur: 5.25 } },
   // Other states
-  { id: 'gondia', name: 'Gondia', nameHi: 'गोंदिया', region: 'india', lat: 21.4624, lng: 80.192, fromRaipur: { road: 201, air: 147.9 } },
-  { id: 'sambalpur', name: 'Sambalpur', nameHi: 'संबलपुर', region: 'india', lat: 21.4669, lng: 83.9812, fromRaipur: { road: 275, air: 244.8 } },
-  { id: 'nagpur', name: 'Nagpur', nameHi: 'नागपुर', region: 'india', lat: 21.1458, lng: 79.0882, fromRaipur: { road: 284, air: 263.8 } },
-  { id: 'jharsuguda', name: 'Jharsuguda', nameHi: 'झारसुगुड़ा', region: 'india', lat: 21.8554, lng: 84.0062, fromRaipur: { road: 320, air: 254.9 } },
-  { id: 'jabalpur', name: 'Jabalpur', nameHi: 'जबलपुर', region: 'india', lat: 23.1815, lng: 79.9864, fromRaipur: { road: 383, air: 273.5 } },
-  { id: 'visakhapatnam', name: 'Visakhapatnam', nameHi: 'विशाखापत्तनम', region: 'india', lat: 17.6868, lng: 83.2185, fromRaipur: { road: 546, air: 430 } },
-  { id: 'bhubaneswar', name: 'Bhubaneswar', nameHi: 'भुवनेश्वर', region: 'india', lat: 20.2961, lng: 85.8245, fromRaipur: { road: 547, air: 449 } },
-  { id: 'puri', name: 'Puri', nameHi: 'पुरी', region: 'india', lat: 19.8135, lng: 85.8312, fromRaipur: { road: 577, air: 465.9 } },
-  { id: 'prayagraj', name: 'Prayagraj', nameHi: 'प्रयागराज', region: 'india', lat: 25.4358, lng: 81.8463, fromRaipur: { road: 578, air: 465.9 } },
-  { id: 'ranchi', name: 'Ranchi', nameHi: 'रांची', region: 'india', lat: 23.3441, lng: 85.3096, fromRaipur: { road: 616, air: 444 } },
-  { id: 'bhopal', name: 'Bhopal', nameHi: 'भोपाल', region: 'india', lat: 23.2599, lng: 77.4126, fromRaipur: { road: 628, air: 488 } },
-  { id: 'varanasi', name: 'Varanasi', nameHi: 'वाराणसी', region: 'india', lat: 25.3176, lng: 82.9739, fromRaipur: { road: 644, air: 472.7 } },
-  { id: 'indore', name: 'Indore', nameHi: 'इंदौर', region: 'india', lat: 22.7196, lng: 75.8577, fromRaipur: { road: 727, air: 617.2 } },
-  { id: 'patna', name: 'Patna', nameHi: 'पटना', region: 'india', lat: 25.5941, lng: 85.1376, fromRaipur: { road: 739, air: 601 } },
-  { id: 'lucknow', name: 'Lucknow', nameHi: 'लखनऊ', region: 'india', lat: 26.8467, lng: 80.9462, fromRaipur: { road: 779, air: 626.2 } },
-  { id: 'hyderabad', name: 'Hyderabad', nameHi: 'हैदराबाद', region: 'india', lat: 17.385, lng: 78.4867, fromRaipur: { road: 780, air: 542 } },
-  { id: 'kolkata', name: 'Kolkata', nameHi: 'कोलकाता', region: 'india', lat: 22.5726, lng: 88.3639, fromRaipur: { road: 831, air: 710 } },
-  { id: 'pune', name: 'Pune', nameHi: 'पुणे', region: 'india', lat: 18.5204, lng: 73.8567, fromRaipur: { road: 1007, air: 867 } },
-  { id: 'mumbai', name: 'Mumbai', nameHi: 'मुंबई', region: 'india', lat: 19.076, lng: 72.8777, fromRaipur: { road: 1118, air: 945 } },
-  { id: 'delhi', name: 'Delhi', nameHi: 'दिल्ली', region: 'india', lat: 28.6139, lng: 77.209, fromRaipur: { road: 1214, air: 946 } },
-  { id: 'bengaluru', name: 'Bengaluru', nameHi: 'बेंगलुरु', region: 'india', lat: 12.9716, lng: 77.5946, fromRaipur: { road: 1370, air: 1015.7 } },
-  { id: 'chennai', name: 'Chennai', nameHi: 'चेन्नई', region: 'india', lat: 13.0827, lng: 80.2707, fromRaipur: { road: 1405, air: 920 } },
+  { id: 'gondia', name: 'Gondia', nameHi: 'गोंदिया', region: 'india', lat: 21.4624, lng: 80.192, fromRaipur: { road: 201, air: 147.9 }, home: { by: 'train', raipur: 3, durg: 2.25, bilaspur: 4.5 } },
+  { id: 'sambalpur', name: 'Sambalpur', nameHi: 'संबलपुर', region: 'india', lat: 21.4669, lng: 83.9812, fromRaipur: { road: 275, air: 244.8 }, home: { by: 'bus', raipur: 6, durg: 6.5, bilaspur: 4.5 } },
+  { id: 'nagpur', name: 'Nagpur', nameHi: 'नागपुर', region: 'india', lat: 21.1458, lng: 79.0882, fromRaipur: { road: 284, air: 263.8 }, home: { by: 'train', raipur: 5, durg: 4.25, bilaspur: 6.5 } },
+  { id: 'jharsuguda', name: 'Jharsuguda', nameHi: 'झारसुगुड़ा', region: 'india', lat: 21.8554, lng: 84.0062, fromRaipur: { road: 320, air: 254.9 }, home: { by: 'train', raipur: 5, durg: 6, bilaspur: 3.25 } },
+  { id: 'jabalpur', name: 'Jabalpur', nameHi: 'जबलपुर', region: 'india', lat: 23.1815, lng: 79.9864, fromRaipur: { road: 383, air: 273.5 }, home: { by: 'train', raipur: 9, durg: 8.5, bilaspur: 8.5 } },
+  { id: 'visakhapatnam', name: 'Visakhapatnam', nameHi: 'विशाखापत्तनम', region: 'india', lat: 17.6868, lng: 83.2185, fromRaipur: { road: 546, air: 430 }, home: { by: 'train', raipur: 10, durg: 11, bilaspur: 12 } },
+  { id: 'bhubaneswar', name: 'Bhubaneswar', nameHi: 'भुवनेश्वर', region: 'india', lat: 20.2961, lng: 85.8245, fromRaipur: { road: 547, air: 449 }, home: { by: 'bus', raipur: 11.5, durg: 12.25, bilaspur: 13.5 } },
+  { id: 'puri', name: 'Puri', nameHi: 'पुरी', region: 'india', lat: 19.8135, lng: 85.8312, fromRaipur: { road: 577, air: 465.9 }, home: { by: 'bus', raipur: 13, durg: 13.75, bilaspur: 15 } },
+  { id: 'prayagraj', name: 'Prayagraj', nameHi: 'प्रयागराज', region: 'india', lat: 25.4358, lng: 81.8463, fromRaipur: { road: 578, air: 465.9 }, home: { by: 'train', raipur: 13.5, durg: 14.5, bilaspur: 11.5 } },
+  { id: 'ranchi', name: 'Ranchi', nameHi: 'रांची', region: 'india', lat: 23.3441, lng: 85.3096, fromRaipur: { road: 616, air: 444 }, home: { by: 'bus', raipur: 12, durg: 12.5, bilaspur: 10 } },
+  { id: 'bhopal', name: 'Bhopal', nameHi: 'भोपाल', region: 'india', lat: 23.2599, lng: 77.4126, fromRaipur: { road: 628, air: 488 }, home: { by: 'bus', raipur: 11.75, durg: 12, bilaspur: 13 } },
+  { id: 'varanasi', name: 'Varanasi', nameHi: 'वाराणसी', region: 'india', lat: 25.3176, lng: 82.9739, fromRaipur: { road: 644, air: 472.7 }, home: { by: 'train', raipur: 17, durg: 18, bilaspur: 15 } },
+  { id: 'indore', name: 'Indore', nameHi: 'इंदौर', region: 'india', lat: 22.7196, lng: 75.8577, fromRaipur: { road: 727, air: 617.2 }, home: { by: 'bus', raipur: 16.5, durg: 17.25, bilaspur: 18.5 } },
+  { id: 'patna', name: 'Patna', nameHi: 'पटना', region: 'india', lat: 25.5941, lng: 85.1376, fromRaipur: { road: 739, air: 601 }, home: { by: 'bus', raipur: 19, durg: 19.75, bilaspur: 21 } },
+  { id: 'lucknow', name: 'Lucknow', nameHi: 'लखनऊ', region: 'india', lat: 26.8467, lng: 80.9462, fromRaipur: { road: 779, air: 626.2 }, home: { by: 'train', raipur: 20, durg: 21, bilaspur: 18 } },
+  { id: 'hyderabad', name: 'Hyderabad', nameHi: 'हैदराबाद', region: 'india', lat: 17.385, lng: 78.4867, fromRaipur: { road: 780, air: 542 }, home: { by: 'train', raipur: 15, durg: 15, bilaspur: 16.5 } },
+  { id: 'kolkata', name: 'Kolkata', nameHi: 'कोलकाता', region: 'india', lat: 22.5726, lng: 88.3639, fromRaipur: { road: 831, air: 710 }, home: { by: 'train', raipur: 13.25, durg: 14.25, bilaspur: 11.25 } },
+  { id: 'pune', name: 'Pune', nameHi: 'पुणे', region: 'india', lat: 18.5204, lng: 73.8567, fromRaipur: { road: 1007, air: 867 }, home: { by: 'train', raipur: 20, durg: 19.5, bilaspur: 22 } },
+  { id: 'mumbai', name: 'Mumbai', nameHi: 'मुंबई', region: 'india', lat: 19.076, lng: 72.8777, fromRaipur: { road: 1118, air: 945 }, home: { by: 'train', raipur: 18, durg: 17.25, bilaspur: 20.5 } },
+  { id: 'delhi', name: 'Delhi', nameHi: 'दिल्ली', region: 'india', lat: 28.6139, lng: 77.209, fromRaipur: { road: 1214, air: 946 }, home: { by: 'train', raipur: 22.5, durg: 22, bilaspur: 21 } },
+  { id: 'bengaluru', name: 'Bengaluru', nameHi: 'बेंगलुरु', region: 'india', lat: 12.9716, lng: 77.5946, fromRaipur: { road: 1370, air: 1015.7 }, home: { by: 'train', raipur: 28, durg: 27.25, bilaspur: 30 } },
+  { id: 'chennai', name: 'Chennai', nameHi: 'चेन्नई', region: 'india', lat: 13.0827, lng: 80.2707, fromRaipur: { road: 1405, air: 920 }, home: { by: 'train', raipur: 23, durg: 22.25, bilaspur: 25 } },
 ];
 
 /** The four pickup cities — booking `city` values — and where they are. */
@@ -176,10 +191,37 @@ export function drivingDays(rules: Pick<TripRules, 'kmPerDay'>, km: number): num
   return Math.max(1, Math.ceil(km / rules.kmPerDay - 0.1));
 }
 
-export function planTrip(rules: TripRules, km: number, kind: TripKind, bookedDays = 0): TripPlan {
+/** Hours of driving for a distance, at averageKmh. */
+export const driveHours = (rules: Pick<TripRules, 'averageKmh'>, km: number) => km / rules.averageKmh;
+
+/**
+ * The fewest days for a round trip. Each day covers the driver's 24 hours from
+ * the start, so a round trip he finishes within them is ONE day: there and back
+ * in up to sameDayMaxHours of driving (Jharsuguda, 320 km each way, ~14 h →
+ * 1 day; Nagpur → 1 day). Longer ones need a night away: the driving days for
+ * twice the distance (Bhopal and back: 4 days).
+ */
+export function roundTripDays(rules: TripRules, km: number): number {
+  return driveHours(rules, 2 * km) <= rules.sameDayMaxHours + 1e-9 ? 1 : drivingDays(rules, 2 * km);
+}
+
+/**
+ * Hours on the train/bus home from a destination to a pickup city (Bhilai uses
+ * the Durg times — the next station). Undefined for an unknown place.
+ */
+export function homeTravelHours(dest: Destination | undefined, city: PickupCity): number | undefined {
+  if (!dest) return undefined;
+  return city === 'Raipur' ? dest.home.raipur : city === 'Bilaspur' ? dest.home.bilaspur : dest.home.durg;
+}
+
+/**
+ * `homeHours`: the train/bus time home for this route (homeTravelHours). Left
+ * out, it is estimated from the distance at busKmh.
+ */
+export function planTrip(rules: TripRules, km: number, kind: TripKind, bookedDays = 0, homeHours?: number): TripPlan {
   const oneWay = Math.max(0, Math.round(km));
-  const driveKm = kind === 'round' ? oneWay * 2 : oneWay;
-  const minDays = drivingDays(rules, driveKm);
+  const round = kind === 'round';
+  const minDays = round ? roundTripDays(rules, oneWay) : drivingDays(rules, oneWay);
   const days = Math.min(60, Math.max(minDays, Math.floor(bookedDays) || 0));
   return {
     km: oneWay,
@@ -187,24 +229,26 @@ export function planTrip(rules: TripRules, km: number, kind: TripKind, bookedDay
     local: oneWay < rules.localWithinKm,
     minDays,
     days,
-    returnHours: kind === 'one-way' ? returnHours(rules, oneWay) : 0,
+    returnHours: round ? 0 : returnHours(rules, oneWay, homeHours),
   };
 }
 
 /**
  * Hours the driver is still on his way home after the paid days end, on a
  * one-way drop. He drives the last stretch on the last day (km beyond the
- * full days), then takes the bus or train: if that gets him home within the
- * day, nothing is due. The same whatever extra days the customer books — each
- * extra day moves the drop and the end of the paid time together.
+ * full days), gets to the station (stationHours) and takes the train or bus
+ * home (`homeHours`, from the timetables in `destinations`): if he is home
+ * within the day, nothing is due. The same whatever extra days the customer
+ * books — each extra day moves the drop and the end of the paid time together.
  *
- *   Nagpur, 284 km: drive ~6 h, home ~7 h later → within 24 h → 0
- *   Delhi, 1,214 km (3 days): last day ~9 h, train ~25 h → ~11 h after → 11
+ *   Nagpur, 284 km: drive ~6 h, 1 h, train 5 h → home within 24 h → 0
+ *   Delhi, 1,214 km (3 days): last day ~9 h, 1 h, train ~22½ h → 9 h after
  */
-export function returnHours(rules: TripRules, km: number): number {
+export function returnHours(rules: TripRules, km: number, homeHours?: number): number {
   if (km <= 0) return 0;
   const lastDayKm = km - (drivingDays(rules, km) - 1) * rules.kmPerDay;
-  const homeAfter = lastDayKm / rules.averageKmh + km / rules.busKmh + rules.stationHours;
+  const travel = homeHours ?? km / rules.busKmh;
+  const homeAfter = lastDayKm / rules.averageKmh + travel + rules.stationHours;
   return Math.max(0, Math.ceil(homeAfter - 24 - 1e-9));
 }
 
@@ -334,7 +378,7 @@ export function destinationTable(rules: TripRules) {
     from: Object.fromEntries(
       pickupCities.map((city) => {
         const km = roadKm(city, d);
-        const one = planTrip(rules, km, 'one-way');
+        const one = planTrip(rules, km, 'one-way', 0, homeTravelHours(d, city));
         const round = planTrip(rules, km, 'round');
         return [city, { km, oneWay: { days: one.minDays, returnHours: one.returnHours }, roundDays: round.minDays }];
       }),

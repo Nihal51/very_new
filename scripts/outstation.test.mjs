@@ -14,6 +14,7 @@ import {
   destinations,
   estimate,
   findDestination,
+  homeTravelHours,
   pickupCities,
   planTrip,
   quote,
@@ -31,6 +32,7 @@ const rules = {
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   extraHour: settings.outstation.extraHour,
   hoursPerDay: settings.outstation.hoursPerDay,
+  sameDayMaxHours: settings.outstation.sameDayMaxHours,
   kmPerDay: settings.outstation.kmPerDay,
   averageKmh: settings.outstation.averageKmh,
   busKmh: settings.outstation.busKmh,
@@ -40,6 +42,9 @@ const rules = {
 const { from: lo, to: hi } = rules.dayRate;
 
 const fromRaipur = (id) => roadKm('Raipur', findDestination(id));
+/** A trip from Raipur as the booking form plans it: with the real train/bus time home. */
+const trip = (id, kind = 'one-way', days = 0) =>
+  planTrip(rules, fromRaipur(id), kind, days, homeTravelHours(findDestination(id), 'Raipur'));
 
 /* ------------------------------------------------------- distances ---- */
 
@@ -78,8 +83,8 @@ test('road km: measured from Raipur, worked out from the other pickup cities', (
 /* ------------------------------------------------------ the examples ---- */
 
 test('Raipur → Nagpur one-way: the driver is home the same day, so one day is all', () => {
-  // Start 6 AM, drop ~12:30 PM, home by bus ~7 h later: inside the 24 hours paid for.
-  const plan = planTrip(rules, fromRaipur('nagpur'), 'one-way');
+  // Start 6 AM, drop ~12:30 PM, 1 h to the station, ~5 h by train: inside the 24 hours paid for.
+  const plan = trip('nagpur');
   assert.deepEqual([plan.days, plan.returnHours, plan.local], [1, 0, false]);
   const e = estimate(rules, plan);
   assert.deepEqual([e.from, e.to, e.returnCharge], [lo, hi, 0]);
@@ -87,24 +92,51 @@ test('Raipur → Nagpur one-way: the driver is home the same day, so one day is 
 });
 
 test('Raipur → Bhopal one-way: 2 days, home before they end', () => {
-  const plan = planTrip(rules, fromRaipur('bhopal'), 'one-way');
+  const plan = trip('bhopal');
   assert.deepEqual([plan.days, plan.returnHours], [2, 0]);
 });
 
-test('Raipur → Delhi one-way: 3 days + the hours he is still on the train, at most ₹1,200 a day', () => {
-  // Last day ~9 h of driving, then ~25 h by train: ~11 h after the 72 paid hours.
-  const plan = planTrip(rules, fromRaipur('delhi'), 'one-way');
-  assert.deepEqual([plan.minDays, plan.days, plan.returnHours], [3, 3, 11]);
+test('Raipur → Delhi one-way: 3 days + the hours he is still on the train', () => {
+  // Last day ~9 h of driving, 1 h to the station, ~22½ h by train: ~9 h after the 72 paid hours.
+  const plan = trip('delhi');
+  assert.deepEqual([plan.minDays, plan.days, plan.returnHours], [3, 3, 9]);
   const e = estimate(rules, plan);
-  assert.equal(e.returnCharge, rules.returnMaxPerDay, '11 h × ₹120 = ₹1,320, capped at ₹1,200');
-  assert.deepEqual([e.from, e.to], [3 * lo + 1200, 3 * hi + 1200]);
-  assert.deepEqual([e.from, e.to], [5550, 6150]);
+  assert.equal(e.returnCharge, 9 * 120);
+  assert.deepEqual([e.from, e.to], [3 * lo + 1080, 3 * hi + 1080]);
+  assert.deepEqual([e.from, e.to], [5430, 6030]);
 });
 
-test('Raipur → Mumbai one-way: 7 hours after the last day, ₹840', () => {
-  const plan = planTrip(rules, fromRaipur('mumbai'), 'one-way');
-  assert.deepEqual([plan.days, plan.returnHours], [3, 7]);
-  assert.equal(estimate(rules, plan).returnCharge, 7 * 120);
+test('Raipur → Mumbai one-way: ~18 h by train, 3 hours after the last day, ₹360', () => {
+  const plan = trip('mumbai');
+  assert.deepEqual([plan.days, plan.returnHours], [3, 3]);
+  assert.equal(estimate(rules, plan).returnCharge, 3 * 120);
+});
+
+test('the train/bus time home comes from the timetables, per pickup city', () => {
+  const delhi = findDestination('delhi');
+  assert.deepEqual(
+    pickupCities.map((c) => homeTravelHours(delhi, c)),
+    [delhi.home.raipur, delhi.home.durg, delhi.home.durg, delhi.home.bilaspur],
+    'Bhilai uses the Durg times',
+  );
+  // Kolkata trains reach Bilaspur ~2 h before Raipur: a Bilaspur driver is home sooner.
+  const kolkata = findDestination('kolkata');
+  assert.ok(homeTravelHours(kolkata, 'Bilaspur') < homeTravelHours(kolkata, 'Raipur'));
+  // Every place has a time home, and none is silly.
+  for (const d of destinations) {
+    for (const c of pickupCities) {
+      const h = homeTravelHours(d, c);
+      assert.ok(Number.isFinite(h) && h >= 0 && h <= 40, `${d.id} → ${c}: ${h}`);
+    }
+  }
+  // Without a timetable (a place typed in), the distance at busKmh is the fallback.
+  assert.equal(returnHours(rules, 1214), planTrip(rules, 1214, 'one-way').returnHours);
+});
+
+test('a ~20 h train home from Lucknow costs more than a ~13 h one from Kolkata, though Kolkata is further', () => {
+  assert.ok(fromRaipur('kolkata') > fromRaipur('lucknow'));
+  assert.ok(trip('lucknow').returnHours > trip('kolkata').returnHours);
+  assert.equal(trip('kolkata').returnHours, 0);
 });
 
 test('the return hours are measured from the end of the paid days, as the owner explained', () => {
@@ -127,19 +159,28 @@ test('a little over a full day of driving does not add a day', () => {
 });
 
 test('the customer books more days (resting, sightseeing): every day is charged, the return hours stay the same', () => {
-  const plan = planTrip(rules, fromRaipur('delhi'), 'one-way', 5);
-  assert.deepEqual([plan.minDays, plan.days, plan.returnHours], [3, 5, 11]);
-  assert.equal(estimate(rules, plan).from, 5 * lo + 1200);
+  const plan = trip('delhi', 'one-way', 5);
+  assert.deepEqual([plan.minDays, plan.days, plan.returnHours], [3, 5, 9]);
+  assert.equal(estimate(rules, plan).from, 5 * lo + 1080);
   // Fewer days than the distance allows are not possible.
   assert.equal(planTrip(rules, 1200, 'one-way', 1).days, 3);
   // A typo like 500 days is capped.
   assert.equal(planTrip(rules, 300, 'one-way', 500).days, 60);
 });
 
-test('a round trip drives the distance twice and has no return hours', () => {
-  const plan = planTrip(rules, fromRaipur('nagpur'), 'round');
-  assert.deepEqual([plan.days, plan.returnHours], [2, 0]);
-  assert.equal(planTrip(rules, fromRaipur('delhi'), 'round').returnHours, 0);
+test('a round trip back home within the 24 hours is ONE day, like a one-way drop', () => {
+  // Raipur → Jharsuguda → Raipur: 640 km, ~14 h of driving — out at 6 AM, home that night.
+  const jharsuguda = trip('jharsuguda', 'round');
+  assert.deepEqual([jharsuguda.days, jharsuguda.returnHours], [1, 0]);
+  assert.deepEqual([estimate(rules, jharsuguda).from, estimate(rules, jharsuguda).to], [1450, 1650]);
+  assert.equal(trip('nagpur', 'round').days, 1);
+  // Too far to be back the same day: the distance twice, with a night away.
+  assert.equal(trip('jabalpur', 'round').days, 2, '766 km, ~17 h of driving');
+  assert.equal(trip('bhopal', 'round').days, 4);
+  assert.equal(trip('delhi', 'round').days, 6);
+  assert.equal(trip('delhi', 'round').returnHours, 0);
+  // Booking more days is still allowed.
+  assert.equal(trip('jharsuguda', 'round', 2).days, 2);
 });
 
 test('closer than localWithinKm is flagged as a local trip', () => {
@@ -229,9 +270,11 @@ test('the app table has every destination from every pickup city', () => {
     }
   }
   const nagpur = table.find((r) => r.id === 'nagpur');
-  assert.deepEqual(nagpur.from.Raipur, { km: 284, oneWay: { days: 1, returnHours: 0 }, roundDays: 2 });
+  assert.deepEqual(nagpur.from.Raipur, { km: 284, oneWay: { days: 1, returnHours: 0 }, roundDays: 1 });
   const delhi = table.find((r) => r.id === 'delhi');
-  assert.deepEqual(delhi.from.Raipur, { km: 1214, oneWay: { days: 3, returnHours: 11 }, roundDays: 6 });
+  assert.deepEqual(delhi.from.Raipur, { km: 1214, oneWay: { days: 3, returnHours: 9 }, roundDays: 6 });
+  // The table uses the timetable for each pickup city, as the booking form does.
+  assert.equal(delhi.from.Bilaspur.oneWay.returnHours, trip('delhi').returnHours - 3);
 });
 
 /* ------------------------------------------------- the profit guard ---- */

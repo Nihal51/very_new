@@ -86,6 +86,7 @@ export const tripRules: TripRules = {
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   extraHour: settings.outstation.extraHour,
   hoursPerDay: settings.outstation.hoursPerDay,
+  sameDayMaxHours: settings.outstation.sameDayMaxHours,
   kmPerDay: settings.outstation.kmPerDay,
   averageKmh: settings.outstation.averageKmh,
   busKmh: settings.outstation.busKmh,
