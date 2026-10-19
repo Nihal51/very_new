@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, Plus_Jakarta_Sans } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 
 import { Footer } from '@/components/Footer';
@@ -11,21 +11,31 @@ import { localBusinessSchema, websiteSchema } from '@/lib/schema';
 import { asset, site } from '@/lib/site';
 
 /**
- * Fonts are downloaded at build time and served from our own origin, so there is
- * no blocking request to fonts.googleapis.com and no layout shift on first paint.
+ * Fonts are committed in app/fonts (Latin, from Fontsource; SIL Open Font
+ * License) and served from our own origin: no request to fonts.googleapis.com,
+ * no layout shift on first paint, and the build never depends on Google Fonts
+ * being reachable — a failed font download used to stop the whole deploy.
  */
-const inter = Inter({
-  subsets: ['latin'],
+const inter = localFont({
+  src: [
+    { path: './fonts/inter-latin-400-normal.woff2', weight: '400', style: 'normal' },
+    { path: './fonts/inter-latin-500-normal.woff2', weight: '500', style: 'normal' },
+    { path: './fonts/inter-latin-600-normal.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/inter-latin-700-normal.woff2', weight: '700', style: 'normal' },
+  ],
   display: 'swap',
   variable: '--font-inter',
-  weight: ['400', '500', '600', '700'],
+  fallback: ['system-ui', 'Arial', 'sans-serif'],
 });
 
-const jakarta = Plus_Jakarta_Sans({
-  subsets: ['latin'],
+const jakarta = localFont({
+  src: [
+    { path: './fonts/plus-jakarta-sans-latin-600-normal.woff2', weight: '600', style: 'normal' },
+    { path: './fonts/plus-jakarta-sans-latin-700-normal.woff2', weight: '700', style: 'normal' },
+  ],
   display: 'swap',
   variable: '--font-jakarta',
-  weight: ['600', '700'],
+  fallback: ['system-ui', 'Arial', 'sans-serif'],
 });
 
 function siteVerification(): Metadata['verification'] {

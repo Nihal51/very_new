@@ -404,9 +404,10 @@ WCAG AA. If you add a component, use the tokens and that stays true.
 
 Deliberate choices worth keeping if you edit this:
 
-- **Fonts are self-hosted** through `next/font`. No request to
-  `fonts.googleapis.com`, so no blocking third-party round trip and no layout
-  shift when the font swaps in.
+- **Fonts are self-hosted** from `app/fonts` through `next/font/local`. No
+  request to `fonts.googleapis.com`, so no blocking third-party round trip, no
+  layout shift when the font swaps in, and the build never stops because
+  Google Fonts could not be downloaded.
 - **The Firebase SDK (~100 KB) is `import()`ed inside the submit handler.**
   Someone reading the pricing page never downloads it.
 - **The mobile menu is a native `<dialog>`** — the browser supplies the focus
