@@ -271,6 +271,24 @@ describe('the alerts robot', () => {
     assert.equal(env.store.docs.get('bookings/old').ref, undefined);
   });
 
+  test('a flood of bookings is numbered in full but alerted once, not 15 times', () => {
+    for (let i = 0; i < 15; i++) seedBooking(env.store, `spam${i}`, { msAgo: 60_000 - i, phone: `98765000${String(i).padStart(2, '0')}` });
+    env.ctx.processBookings_();
+    const numbered = [...env.store.docs.keys()].filter((p) => /^bookings\/spam\d+$/.test(p) && env.store.docs.get(p).ref);
+    assert.equal(numbered.length, 15, 'every booking still gets a DB-number and reaches the admin panel');
+    assert.equal(env.telegram.length, 3 + 1, 'three individual alerts and one summary');
+    assert.ok(env.telegram[3].text.includes('15 new bookings at once'));
+    assert.equal(env.mail.length, 3 + 1);
+    const held = env.store.docs.get('bookings/spam14').alerts.mapValue.fields.telegram.stringValue;
+    assert.equal(held, 'held-flood');
+  });
+
+  test('normal traffic is alerted one by one', () => {
+    for (let i = 0; i < 5; i++) seedBooking(env.store, `b${i}`, { msAgo: 60_000 - i });
+    env.ctx.processBookings_();
+    assert.equal(env.telegram.length, 5);
+  });
+
   test('a booking still new after 10 minutes gets exactly one reminder', () => {
     seedBooking(env.store, 'late', { msAgo: 15 * 60_000, extra: { ref: s('DB-1009') } });
     seedBooking(env.store, 'handled', { msAgo: 15 * 60_000, extra: { ref: s('DB-1008'), status: s('confirmed') } });

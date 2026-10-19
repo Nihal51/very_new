@@ -80,3 +80,26 @@ export async function changeDriverStatus(user: User, driverId: string, status: D
     updatedBy: user.uid,
   });
 }
+
+/* ------------------------------------------------------------- blocked list */
+
+/** Whether this number is blocked from booking and applying (admins only can read the list). */
+export async function isPhoneBlocked(phone: string): Promise<boolean> {
+  const { db, doc, getDoc } = await fs();
+  return (await getDoc(doc(db, 'blocked', phone))).exists();
+}
+
+/**
+ * Stop a number from booking or applying again — for spam or abuse. Bookings it
+ * already made stay as they are (cancel them as usual). firestore.rules refuses
+ * new ones from both the website and the app.
+ */
+export async function blockPhone(user: User, phone: string, reason: string) {
+  const { db, doc, setDoc, serverTimestamp } = await fs();
+  await setDoc(doc(db, 'blocked', phone), { reason: reason.trim().slice(0, 200), by: user.uid, at: serverTimestamp() });
+}
+
+export async function unblockPhone(phone: string) {
+  const { db, doc, deleteDoc } = await fs();
+  await deleteDoc(doc(db, 'blocked', phone));
+}

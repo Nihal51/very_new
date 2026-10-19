@@ -65,6 +65,12 @@ service cloud.firestore {
       return value in ['Raipur', 'Bhilai', 'Durg', 'Bilaspur'];
     }
 
+    // Numbers an admin blocked from /admin (spam, abuse): no new bookings or
+    // driver applications with them, from the website or the app.
+    function isBlocked(phone) {
+      return exists(/databases/$(database)/documents/blocked/$(phone));
+    }
+
     // Clients cannot backdate a submission, invent a source, or create a lead
     // that is already marked as handled. 'app' = the DriveBuddy mobile app
     // (Nihal51/drivebuddy-mobile), which writes exactly the website's shape.
@@ -138,6 +144,7 @@ service cloud.firestore {
         // Guests leave customerUid out; a logged-in customer can only tag their own uid.
         && (!('customerUid' in request.resource.data)
             || (isSignedIn() && request.resource.data.customerUid == request.auth.uid))
+        && !isBlocked(request.resource.data.phone)
         && isServerStamped(request.resource.data);
 
       // Admins move a booking through its lifecycle. The customer's own details
@@ -194,6 +201,7 @@ service cloud.firestore {
         && request.resource.data.experienceYears <= 60
         && request.resource.data.licence in ['commercial', 'lmv', 'both']
         && isOptionalText(request.resource.data.about, 500)
+        && !isBlocked(request.resource.data.phone)
         && isServerStamped(request.resource.data);
 
       // new → verified → active ⇄ inactive, or rejected.
@@ -260,6 +268,24 @@ service cloud.firestore {
     match /customers/{phone} {
       allow read: if isAdmin();
       allow write: if false;
+    }
+
+    /* ----------------------------------------------------------- blocked -- */
+    //  blocked/{phone}: numbers that may not book or apply (spam, abuse).
+    //  Added and removed by an admin from a booking in /admin. Never readable
+    //  by customers, so a blocked number cannot tell why.
+
+    match /blocked/{phone} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && isMobile(phone)
+        && request.resource.data.keys().hasOnly(['reason', 'by', 'at'])
+        && request.resource.data.keys().hasAll(['reason', 'by', 'at'])
+        && isOptionalText(request.resource.data.reason, 200)
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.at == request.time;
+      allow delete: if isAdmin();
+      allow update: if false;
     }
 
     /* ------------------------------------------------------------ admins -- */

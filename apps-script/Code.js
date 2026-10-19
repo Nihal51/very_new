@@ -702,11 +702,33 @@ function ping_() {
   return ContentService.createTextOutput('ok');
 }
 
+/**
+ * Flood guard: more than FLOOD_LIMIT new bookings in one run is not normal
+ * traffic (it is a script or a prank). They are all still numbered and copied
+ * to the Sheet, but only the first FLOOD_ALERTS get their own Telegram + email;
+ * the rest are summed up in one message, at most every 10 minutes. Block the
+ * numbers from /admin.
+ */
+var FLOOD_LIMIT = 8;
+var FLOOD_ALERTS = 3;
+
+function floodTelegram(c) {
+  return {
+    text: '⚠️ <b>' + c.count + ' new bookings at once</b> — that is not normal. Possibly spam.\n' +
+      'Only the first ' + c.alerted + ' were sent here one by one; all are in the admin panel and the Sheet.\n' +
+      'Spam? Open a booking → <b>Block this number</b>.',
+    reply_markup: { inline_keyboard: [[{ text: 'Open admin panel', url: c.siteUrl + '/admin/' }]] },
+  };
+}
+
 function processBookings_() {
   var props = PropertiesService.getScriptProperties();
   var since = new Date(Number(props.getProperty('lastBookingMs') || Date.now() - 15 * 60 * 1000));
   var rows = fsQuery_('bookings', fieldFilter_('createdAt', 'GREATER_THAN_OR_EQUAL', since), 'ASCENDING', 20);
   var siteUrl = prop_('SITE_URL');
+  var fresh = rows.filter(function (r) { return !r.data.ref && r.data.createdAt; }).length;
+  var flood = fresh > FLOOD_LIMIT;
+  var alerted = 0;
 
   rows.forEach(function (row) {
     var b = row.data;
@@ -723,7 +745,13 @@ function processBookings_() {
     var previous = customer ? customer.bookingsCount || 0 : 0;
 
     var ctx = { booking: b, id: row.id, ref: ref, previousBookings: previous, siteUrl: siteUrl };
-    var alerts = { telegram: sendTelegram_(bookingTelegram(ctx)), email: sendEmail_(bookingEmail(ctx)) };
+    var alerts;
+    if (flood && alerted >= FLOOD_ALERTS) {
+      alerts = { telegram: 'held-flood', email: 'held-flood' };
+    } else {
+      alerts = { telegram: sendTelegram_(bookingTelegram(ctx)), email: sendEmail_(bookingEmail(ctx)) };
+      alerted++;
+    }
 
     var now = new Date();
     var customerFields = {
@@ -762,6 +790,14 @@ function processBookings_() {
 
     props.setProperty('lastBookingMs', String(b.createdAt.getTime()));
   });
+
+  var cache = CacheService.getScriptCache();
+  if (flood && !cache.get('floodNotified')) {
+    cache.put('floodNotified', '1', 600);
+    var summary = floodTelegram({ count: fresh, alerted: alerted, siteUrl: siteUrl });
+    sendTelegram_(summary);
+    sendEmail_({ subject: 'DriveBuddy: ' + fresh + ' bookings at once — possibly spam', body: summary.text.replace(/<[^>]+>/g, ''), htmlBody: summary.text.replace(/\n/g, '<br>') });
+  }
 }
 
 function processDrivers_() {
@@ -1154,6 +1190,6 @@ if (typeof module !== 'undefined') {
     bookingEmail: bookingEmail, driverTelegram: driverTelegram, reminderTelegram: reminderTelegram,
     bookingRecord: bookingRecord, driverRecord: driverRecord, columnLetter: columnLetter,
     toValue: toValue, fromValue: fromValue, toFields: toFields, fromFields: fromFields,
-    updateKey: updateKey, customerPush: customerPush, whatsappAssigned: whatsappAssigned,
+    updateKey: updateKey, customerPush: customerPush, whatsappAssigned: whatsappAssigned, floodTelegram: floodTelegram,
   };
 }

@@ -45,7 +45,30 @@ export function isFirebaseConfigured(): boolean {
  */
 export async function getFirebaseApp() {
   const { initializeApp, getApps, getApp } = await import('firebase/app');
-  return getApps().length ? getApp() : initializeApp(firebaseConfig);
+  const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+  await startAppCheck(app);
+  return app;
+}
+
+let appCheckStarted = false;
+
+/**
+ * Firebase App Check: proves to Firestore that a booking comes from this
+ * website (via an invisible reCAPTCHA v3 check), not from a script. Off until
+ * NEXT_PUBLIC_RECAPTCHA_SITE_KEY is set — see docs/spam-protection.md, which
+ * also says why it must stay in "monitor" mode until the mobile app sends App
+ * Check tokens too. Best-effort: a failure here never blocks a booking.
+ */
+async function startAppCheck(app: Parameters<typeof import('firebase/app-check').initializeAppCheck>[0]) {
+  const siteKey = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY;
+  if (!siteKey || appCheckStarted || typeof window === 'undefined') return;
+  appCheckStarted = true;
+  try {
+    const { initializeAppCheck, ReCaptchaV3Provider } = await import('firebase/app-check');
+    initializeAppCheck(app, { provider: new ReCaptchaV3Provider(siteKey), isTokenAutoRefreshEnabled: true });
+  } catch (err) {
+    if (process.env.NODE_ENV !== 'production') console.warn('[drivebuddy] App Check not started', err);
+  }
 }
 
 /**

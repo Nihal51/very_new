@@ -28,7 +28,7 @@ import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
 import { WhatsappIcon } from '@/components/icons';
-import { addBookingNote, changeBookingStatus } from '@/lib/admin';
+import { addBookingNote, blockPhone, changeBookingStatus, isPhoneBlocked, unblockPhone } from '@/lib/admin';
 import { driverAssignedMessage, type MessageLanguage } from '@/lib/customer-messages';
 import { site } from '@/lib/site';
 import {
@@ -420,6 +420,83 @@ function Row({
   );
 }
 
+/* --------------------------------------------------------------- blocking */
+
+/**
+ * For spam or abuse: stop this number from booking or applying again (website
+ * and app). Two steps on purpose, with a reason, and undoable.
+ */
+function BlockNumber({ phone, user }: { phone: string; user: User }) {
+  const [blocked, setBlocked] = useState<boolean | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    isPhoneBlocked(phone)
+      .then((v) => alive && setBlocked(v))
+      .catch(() => alive && setBlocked(false));
+    return () => {
+      alive = false;
+    };
+  }, [phone]);
+
+  async function run(action: () => Promise<void>, next: boolean) {
+    setBusy(true);
+    setErr('');
+    try {
+      await action();
+      setBlocked(next);
+      setAsking(false);
+      setReason('');
+    } catch {
+      setErr('Could not save. Check your internet and try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (blocked === null) return null;
+  return (
+    <div className="border-border mt-5 border-t pt-5">
+      <SectionTitle>Spam or abuse</SectionTitle>
+      {blocked ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-error text-sm font-semibold">{prettyPhone(phone)} is blocked from booking and applying.</p>
+          <Button size="sm" variant="secondary" disabled={busy} onClick={() => run(() => unblockPhone(phone), false)}>
+            Unblock
+          </Button>
+        </div>
+      ) : asking ? (
+        <div className="grid gap-2">
+          <Input
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="Why? e.g. fake bookings, abusive calls"
+            maxLength={200}
+            aria-label="Reason for blocking"
+          />
+          <div className="flex gap-2">
+            <Button size="sm" disabled={busy} onClick={() => run(() => blockPhone(user, phone, reason), true)}>
+              Block {prettyPhone(phone)}
+            </Button>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => setAsking(false)}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button size="sm" variant="secondary" onClick={() => setAsking(true)}>
+          Block this number
+        </Button>
+      )}
+      {err && <p className="text-error mt-2 text-sm">{err}</p>}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------- tell the customer */
 
 /**
@@ -656,6 +733,8 @@ function BookingDetail({
           <SectionTitle>History &amp; internal notes</SectionTitle>
           <History bookingId={b.id} user={user} />
         </div>
+
+        <BlockNumber phone={b.phone} user={user} />
       </div>
     </>
   );

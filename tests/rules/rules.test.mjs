@@ -116,6 +116,28 @@ describe('bookings — creating', () => {
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ source: 'admin' })));
   });
 
+  test('a number blocked by an admin can no longer book or apply', async () => {
+    await assertSucceeds(
+      setDoc(doc(admin(), 'blocked', '9111473929'), { reason: 'spam', by: 'admin1', at: serverTimestamp() }),
+    );
+    await assertFails(addDoc(collection(guest(), 'bookings'), booking()));
+    await assertFails(addDoc(collection(guest(), 'bookings'), booking({ source: 'app' })));
+    await assertFails(addDoc(collection(guest(), 'drivers'), { ...driverApp(), phone: '9111473929' }));
+    await assertSucceeds(addDoc(collection(guest(), 'bookings'), booking({ phone: '9876543210' })));
+    await assertSucceeds(deleteDoc(doc(admin(), 'blocked', '9111473929')));
+    await assertSucceeds(addDoc(collection(guest(), 'bookings'), booking()));
+  });
+
+  test('only an admin can see or change the blocked list', async () => {
+    const entry = { reason: 'spam', by: 'google1', at: serverTimestamp() };
+    await assertFails(setDoc(doc(notAdmin(), 'blocked', '9111473929'), entry));
+    await assertFails(setDoc(doc(guest(), 'blocked', '9111473929'), entry));
+    await assertFails(setDoc(doc(admin(), 'blocked', 'not-a-number'), { ...entry, by: 'admin1' }));
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'blocked', '9111473929'), { reason: 'x' }));
+    await assertFails(getDoc(doc(customer(), 'blocked', '9111473929')));
+    await assertSucceeds(getDoc(doc(admin(), 'blocked', '9111473929')));
+  });
+
   test('bad phone, city or package is refused', async () => {
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ phone: '12345' })));
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ city: 'Mumbai' })));
