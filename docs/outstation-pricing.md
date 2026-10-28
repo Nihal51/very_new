@@ -30,7 +30,7 @@ full days × prices.outstation          each hoursPerDay (12 h, ~600 km) of driv
    gives the drop time. Then `stationHours` (1 h) to the station, and the
    first regular train home he can catch **on a day it runs** that gets him
    home soonest (`home.trains` next to each long route in `lib/outstation.ts`,
-   with running days and connections, e.g. Bengaluru via Nagpur). Routes
+   with running days and connections, e.g. Hyderabad and Bengaluru via Nagpur). Routes
    without a list (buses, short routes with a service every hour or two) use
    the average time home. Trains are timed to Raipur; Durg (also Bhilai) and
    Bilaspur add the difference in the averages. A place typed in by hand
@@ -64,13 +64,13 @@ the form suggests the Local Full Day instead.
 | Visakhapatnam | 11 h | day 1, 5:55 PM | 18518 at 9:00 PM → home day 2, 7:00 AM | 14 h | ₹2,520 |
 | Bhopal | 1 day + 1 h | day 1, 7:35 PM | bus ~12 h → home day 2, 8:20 AM | 13 h | ₹2,870–2,970 |
 | Kolkata | 1 day + 5 h | day 2, 11:35 AM | 12860 at 1:40 PM → home day 3, 2:40 AM | 16 h | ₹3,350–3,450 |
-| Hyderabad | 1 day + 4 h | day 2, 10:35 AM | 12771 at 10:40 PM → home day 3, 1:20 PM | 27 h | ₹3,590–3,690 |
+| Hyderabad | 1 day + 4 h | day 2, 10:35 AM | 12721 via Nagpur at 11:25 PM → home day 3, 3:50 PM | 30 h | ₹3,950–4,050 |
 | Pune | 1 day + 9 h | day 2, 3:10 PM | 12129 at 6:35 PM → home day 3, 2:35 PM | 24 h | ₹3,830–3,930 |
 | Mumbai | 1 day + 11 h | day 2, 5:20 PM | 12809 at 9:10 PM → home day 3, 4:05 PM | 23 h | ₹4,070–4,170 |
 | Mumbai, day and night | 1 day + 11 h | day 2, 5:20 AM | 12809 at 9:10 PM → home day 3, 4:05 PM | 35 h | ₹5,270–5,370 |
 | Delhi | 2 days + 1 h | day 2, 7:15 PM | 18238 at 4:25 AM → home day 4, 8:25 AM | 38 h | ₹5,620–5,820 |
 | Delhi, leaving Sun | 2 days + 1 h | Mon 7:15 PM | 12808 at 7:00 AM → home Wed 5:50 AM | 35 h | ₹5,620–5,820 |
-| Bengaluru, leaving Mon | 2 days + 4 h | Wed 10:25 AM | 12975 via Nagpur at 1:00 PM → home Thu 5:35 PM | 32 h | ₹5,740–5,940 |
+| Bengaluru, leaving Mon | 2 days + 4 h | Wed 10:25 AM | 22366 via Nagpur at 11:50 PM → home Fri 7:30 AM | 46 h | ₹5,980–6,180 |
 | Chennai | 2 days + 5 h | day 3, 11:05 AM | train ~23 h → home day 4, 11:05 AM | 24 h | ₹4,900–5,100 |
 
 Day and night can cost more in the end: Mumbai non-stop arrives at 5:20 AM,

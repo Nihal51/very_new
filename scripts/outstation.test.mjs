@@ -108,13 +108,28 @@ test('Raipur → Mumbai one-way: 1 day + 11 h of driving, the 9:10 PM Mail, 23 h
   assert.deepEqual(price(plan), [4070, 4170]);
 });
 
-test('Raipur → Hyderabad: drops ~10:30 AM day 2 and waits ~11 h for the 10:40 PM train — paid as way home', () => {
-  const plan = trip('hyderabad');
-  assert.deepEqual([plan.fullDays, plan.extraHours], [1, 4]);
-  assert.equal(plan.train.no, '12771');
-  assert.ok(plan.leaveAt - plan.dropAt > 11);
-  assert.equal(plan.returnHours, 27);
-  assert.deepEqual(price(plan), [1550 + 480 + 1200 + 360, 1650 + 480 + 1200 + 360]);
+test('Raipur → Hyderabad: the direct train runs Mon, Wed & Fri; other days the daily Dakshin Exp via Nagpur', () => {
+  // Leaving on a Sunday: drops the car Monday ~10:30 AM, waits ~11 h for the 10:40 PM direct train.
+  const sunday = trip('hyderabad', 'one-way', 0, { hour: 7, weekday: 0 });
+  assert.deepEqual([sunday.fullDays, sunday.extraHours], [1, 4]);
+  assert.equal(sunday.train.no, '12771');
+  assert.ok(sunday.leaveAt - sunday.dropAt > 11);
+  assert.equal(sunday.returnHours, 27);
+  assert.deepEqual(price(sunday), [1550 + 480 + 1200 + 360, 1650 + 480 + 1200 + 360]);
+  // Leaving on a Monday: no direct train on Tuesday — the Dakshin Exp, changing at Nagpur.
+  const monday = trip('hyderabad', 'one-way', 0, { hour: 7, weekday: 1 });
+  assert.equal(monday.train.no, '12721');
+  assert.equal(monday.train.via, 'Nagpur');
+  // No date: only the daily trains count.
+  assert.equal(trip('hyderabad').train.no, '12721');
+});
+
+test('Raipur → Bengaluru, leaving Thursday 7:30 AM day and night: drops Friday morning, the Friday-only Wainganga Exp', () => {
+  // The owner's check: 12975 does not run on Fridays (Thu & Sat only), so it is never offered then.
+  const plan = trip('bengaluru', 'one-way', 0, { hour: 7.5, weekday: 4 }, true);
+  assert.equal(plan.train.no, '12251');
+  const leavesOn = (4 + Math.floor((7.5 + plan.leaveAt) / 24)) % 7;
+  assert.equal(leavesOn, 5, 'leaves on the Friday');
 });
 
 test('Raipur → Delhi: 2 days + 1 h of driving; the trains that do not run that day are skipped', () => {
