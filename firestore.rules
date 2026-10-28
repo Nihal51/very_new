@@ -123,7 +123,7 @@ service cloud.firestore {
         && ((pkg == 'outstation' && t.kind == 'round') || (pkg == 'one-way-drop' && t.kind == 'one-way'))
         && t.km is int && t.km >= 0 && t.km <= 5000
         && t.days is int && t.days >= 1 && t.days <= 60
-        // Hours the driver is still travelling home after the paid days.
+        // One-way: hours from the drop until the driver is home (his way home).
         && t.returnHours is int && t.returnHours >= 0 && t.returnHours <= 200
         && (t.kind == 'one-way' || t.returnHours == 0)
         && t.estFrom is int && t.estFrom >= 0 && t.estFrom <= 1000000
@@ -140,7 +140,8 @@ service cloud.firestore {
         && q.keys().hasAll(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'ticket', 'at'])
         && q.amount is int && q.amount > 0 && q.amount <= 1000000
         && q.dayRate is int && q.dayRate > 0 && q.dayRate <= 100000
-        && q.days is int && q.days >= 1 && q.days <= 60
+        // Full days at the day rate; 0 for a drive shorter than a day, priced by the hour.
+        && q.days is int && q.days >= 0 && q.days <= 60 && (q.days >= 1 || q.extraHours >= 1)
         && q.returnHours is int && q.returnHours >= 0 && q.returnHours <= 200
         && q.returnHourRate is int && q.returnHourRate >= 0 && q.returnHourRate <= 10000
         // The daily maximum can only lower the return charge, never raise it.

@@ -1,86 +1,81 @@
 # Outstation trips and one-way drops: how the price works
 
-Decided with the owner on 19 Oct 2026; the return day, 600 km a day and the
-start time on 28 Oct 2026. The code is in
-[`lib/outstation.ts`](../lib/outstation.ts); every rupee figure is in
-[`site-settings.ts`](../site-settings.ts) (`prices.outstation` and the
-`outstation` block), so a change there updates the website, the app and the
-`/admin` calculator together.
+Decided with the owner on 19 Oct 2026; the timings and the hourly rules on
+28 Oct 2026. The code is in [`lib/outstation.ts`](../lib/outstation.ts); every
+rupee figure is in [`site-settings.ts`](../site-settings.ts)
+(`prices.outstation` and the `outstation` block), so a change there updates
+the website, the app and the `/admin` calculator together.
 
 ## What the customer sees
 
-On the booking form the customer picks **Outstation Trip** or **One-Way Car
-Drop**, where they are going and **when the driver leaves** (date and time;
-blank = 7 AM). The form shows an estimate straight away:
+On the booking form (and in the app) the customer picks **One-Way Car Drop**
+or **Outstation Trip**, where to, and **when the driver leaves** (date and
+time; blank = 7 AM). The estimate shows straight away, with the driver's trip
+hour by hour.
+
+### One-way drops
 
 ```
-driving days × prices.outstation
-  + one return day (returnMaxPerDay)      — one-way, if he is not home when the driving days end
-  + late hours × returnHour               — if he is still travelling after the return day (max returnMaxPerDay a day)
+full days × prices.outstation          each hoursPerDay (12 h, ~600 km) of driving
++ extra hours × outstation.extraHour   the driving left over (a drive under 12 h: all of it)
++ way home × outstation.returnHour     from the drop until he is home, waiting included
+                                       (at most returnMaxPerDay in any 24 h)
 ```
 
-In the owner's words: **a driving day is a driving day, and the trip home is
-its own day.** Raipur → Mumbai is 2 driving days + 1 return day =
-₹3,100 + ₹1,200 = ₹4,300 (plus late hours if he gets home late).
+1. **Driving:** the one-way km at `averageKmh` (50). Raipur → Mumbai, 1,118 km
+   = 22.4 h = 1 day + 11 h.
+2. **Timings, from the start date and time:** he drives 12 hours and rests 12
+   (up to an hour more he finishes that evening) — or, if the customer ticks
+   **Drive day and night**, straight through (the same driving price). That
+   gives the drop time. Then `stationHours` (1 h) to the station, and the
+   first regular train home he can catch **on a day it runs** that gets him
+   home soonest (`home.trains` next to each long route in `lib/outstation.ts`,
+   with running days and connections, e.g. Bengaluru via Nagpur). Routes
+   without a list (buses, short routes with a service every hour or two) use
+   the average time home. Trains are timed to Raipur; Durg (also Bhilai) and
+   Bilaspur add the difference in the averages. A place typed in by hand
+   falls back to km ÷ `busKmh`.
+3. **Way home:** every hour from the drop until he is home — waiting for the
+   train included — at `returnHour` (₹120), at most `returnMaxPerDay`
+   (₹1,200) in any 24 hours.
+4. The customer books his ticket home. The **final bill** uses the real
+   times; the estimate predicts them. Booking extra days (stops on the way)
+   charges each as a full day and moves the drop on.
 
-- **Distance** is the one-way road distance from the pickup city. Distances
-  from Raipur are measured (38 places in `lib/outstation.ts`); from Bhilai,
-  Durg and Bilaspur they are worked out from those. "Somewhere else" shows the
-  daily rate and the team works out the distance on the call.
-- **Driving days:** about `kmPerDay` (600 km, ~12 h at `averageKmh` 50) a day.
-  Up to 60 km over a full day does not add a day (Raipur → Delhi, 1,214 km,
-  is 2 days). Each driving day is the driver's 24 hours from the start time.
-  The customer can book more days (resting, sightseeing); every day booked is
-  charged, and he drops the car on the last one.
-- **Round trips:** back home within the 24 hours — there and back in up to
-  `sameDayMaxHours` (14) of driving, about 350 km each way — is **one day**
-  (Raipur → Jharsuguda → Raipur, 640 km). Longer round trips need a night
-  away and drive the distance twice (Jabalpur and back: 2 days; Delhi: 4).
-- **The start time picks the train home** (one-way). From the start time and
-  the distance the estimate works out when he drops the car (the last day's
-  km ÷ `averageKmh`), adds `stationHours` (1 h to reach the station), and
-  takes the first regular train he can catch that gets him home soonest —
-  `home.trains` next to each long-distance place in `lib/outstation.ts`
-  (ixigo, 28 Oct 2026; only trains that run daily or nearly daily). Places
-  without a list (buses, short routes with a service every hour or two) use
-  the average time home (`home.raipur`, `durg`, `bilaspur` — erail.in, redBus,
-  AbhiBus). Trains are timed to Raipur; Durg (also used for Bhilai) and
-  Bilaspur add the difference in those averages. A place typed in by hand
-  falls back to km ÷ `busKmh`. Example: Hyderabad, he drops the car around
-  10:30 AM on day 2 and waits for the 10:40 PM train — home 1:20 PM day 3,
-  after day 2 ended: a return day.
-- **Return day:** if he is home before the last driving day ends, nothing.
-  Otherwise one return day, `returnMaxPerDay` (₹1,200).
-- **Late hours:** still travelling when the return day ends (a missed train,
-  no seat): `returnHour` (₹120) an hour, at most ₹1,200 in any 24 hours.
-- **The final bill** uses the time he really gets home; the estimate predicts
-  it. The customer books and pays for his ticket home.
-- Small print: up to 12 hours of driving a day, the extra-hour rate beyond;
-  fuel, tolls and parking are extra; give the driver his meals or
-  `mealAllowance` (₹300) a day.
-- Closer than `localWithinKm` (60 km), the form suggests the Local Full Day
-  instead.
+Without a date, trains that run only on some days are left out (the daily
+ones and the connections still count) — pick the date for the exact train.
 
-Worked examples at today's settings (₹1,550–1,650 a day, ₹1,200 return day,
-₹120 a late hour), leaving Raipur at 7 AM:
+### Round trips
 
-| Trip from Raipur | Driving days | Way home | Return | Estimate |
-| --- | --- | --- | --- | --- |
-| Bilaspur, one-way | 1 | train ~1½ h → home day 1, 11:45 AM | none | ₹1,550–1,650 |
-| Raigarh, one-way | 1 | train ~4 h → home day 1, 5:10 PM | none | ₹1,550–1,650 |
-| Jagdalpur, one-way | 1 | bus ~7 h → home day 1, 8:45 PM | none | ₹1,550–1,650 |
-| Nagpur, one-way | 1 | train ~5 h → home day 1, 6:40 PM | none | ₹1,550–1,650 |
-| Nagpur, round trip | 1 | — | — | ₹1,550–1,650 |
-| Jharsuguda, round trip | 1 | — | — | ₹1,550–1,650 |
-| Bhopal, one-way | 1 | bus ~12 h → home day 2, 8:20 AM | return day | ₹2,750–2,850 |
-| Visakhapatnam, one-way | 1 | 18518 at 9 PM → home day 2, 7 AM | none | ₹1,550–1,650 |
-| Hyderabad, one-way | 2 | 12771 at 10:40 PM → home day 3, 1:20 PM | return day | ₹4,300–4,500 |
-| Kolkata, one-way | 2 | 12860 at 1:40 PM → home day 3, 2:40 AM | none | ₹3,100–3,300 |
-| Pune, one-way | 2 | 12129 at 6:35 PM → home day 3, 2:35 PM | return day | ₹4,300–4,500 |
-| Mumbai, one-way | 2 | 12809 at 9:10 PM → home day 3, 4:05 PM | return day | ₹4,300–4,500 |
-| Delhi, one-way | 2 | 12808 at 7 AM day 3 → home day 4, 5:50 AM | return day | ₹4,300–4,500 |
-| Delhi, one-way, 4 days booked | 4 | the same, two days later | return day | ₹7,400–7,800 |
-| Delhi, round trip | 4 | — | — | ₹6,200–6,600 |
+The days of the trip × `prices.outstation` (the driver is with the customer
+the whole time). Back home within the 24 hours — up to `sameDayMaxHours` (14)
+of driving there and back — is one day; longer ones drive the distance twice.
+
+Small print for both: fuel, tolls and parking are extra; give the driver his
+meals or `mealAllowance` (₹300) a day. Closer than `localWithinKm` (60 km),
+the form suggests the Local Full Day instead.
+
+### Worked examples (₹1,550–1,650 a day, ₹120 an hour), from Raipur at 7 AM
+
+| One-way drop | Driving | Drops the car | Way home | Hours home | Estimate |
+| --- | --- | --- | --- | --- | --- |
+| Nagpur | 6 h | day 1, 12:40 PM | train ~5 h → home day 1, 6:40 PM | 6 h | ₹1,440 |
+| Jagdalpur | 6 h | day 1, 12:45 PM | bus ~7 h → home day 1, 8:45 PM | 8 h | ₹1,680 |
+| Visakhapatnam | 11 h | day 1, 5:55 PM | 18518 at 9:00 PM → home day 2, 7:00 AM | 14 h | ₹2,520 |
+| Bhopal | 1 day + 1 h | day 1, 7:35 PM | bus ~12 h → home day 2, 8:20 AM | 13 h | ₹2,870–2,970 |
+| Kolkata | 1 day + 5 h | day 2, 11:35 AM | 12860 at 1:40 PM → home day 3, 2:40 AM | 16 h | ₹3,350–3,450 |
+| Hyderabad | 1 day + 4 h | day 2, 10:35 AM | 12771 at 10:40 PM → home day 3, 1:20 PM | 27 h | ₹3,590–3,690 |
+| Pune | 1 day + 9 h | day 2, 3:10 PM | 12129 at 6:35 PM → home day 3, 2:35 PM | 24 h | ₹3,830–3,930 |
+| Mumbai | 1 day + 11 h | day 2, 5:20 PM | 12809 at 9:10 PM → home day 3, 4:05 PM | 23 h | ₹4,070–4,170 |
+| Mumbai, day and night | 1 day + 11 h | day 2, 5:20 AM | 12809 at 9:10 PM → home day 3, 4:05 PM | 35 h | ₹5,270–5,370 |
+| Delhi | 2 days + 1 h | day 2, 7:15 PM | 18238 at 4:25 AM → home day 4, 8:25 AM | 38 h | ₹5,620–5,820 |
+| Delhi, leaving Sun | 2 days + 1 h | Mon 7:15 PM | 12808 at 7:00 AM → home Wed 5:50 AM | 35 h | ₹5,620–5,820 |
+| Bengaluru, leaving Mon | 2 days + 4 h | Wed 10:25 AM | 12975 via Nagpur at 1:00 PM → home Thu 5:35 PM | 32 h | ₹5,740–5,940 |
+| Chennai | 2 days + 5 h | day 3, 11:05 AM | train ~23 h → home day 4, 11:05 AM | 24 h | ₹4,900–5,100 |
+
+Day and night can cost more in the end: Mumbai non-stop arrives at 5:20 AM,
+but the train home is still the 9:10 PM one, so he waits — the estimate
+shows it.
 
 The booking saves the trip and the estimate, and the Telegram alert, email
 and Sheet show them.
@@ -90,20 +85,22 @@ and Sheet show them.
 Open the booking → **Price for the customer** → **Work out the price**:
 
 1. Type what this driver asked for one outstation day.
-2. Check the driving days, the hours after the driving days until he is home
-   (any at all = a return day; past 24 = late hours — for the final bill, use
-   when he really got home), the driver's pay per late hour (his return day
-   is 10 of them), extra driving hours, and a ticket
-   only if you bought it (usually 0: the customer books it).
+2. Check the full days (each 12 h of driving; 0 for a shorter drive), the
+   extra driving hours, the hours from the drop until he is home (for the
+   final bill, use when he really got home), the driver's pay per hour home
+   (at most 10 of them in any 24 hours), and a ticket only if you bought it
+   (usually 0: the customer books it). For a one-way drop the days and extra
+   hours start from the distance, as the estimate.
 3. Tick **A partner sent this customer** if a hotel or travel agent did; the
    commission is priced in so your profit still holds.
 4. Read out **Tell the customer**, then **Save this price**.
 
 The day rate is the driver's cost plus the minimum profit
-(`outstation.minProfitPercent`), rounded up to the next ₹50. A late hour is
-worked out the same way from what the driver gets for it (₹100 → ₹120), never
-below the ₹120 customers were shown; the return day is 10 of them (₹1,200),
-and late hours cost at most that in any 24 hours.
+(`outstation.minProfitPercent`), rounded up to the next ₹50. An hour of the
+way home is worked out the same way from what the driver gets for it, never
+below the ₹120 customers were shown, with the same daily maximum in hours
+(10); extra driving hours at the published ₹120 or the cost-based rate,
+whichever is higher.
 The panel shows what the driver gets and your profit, in red if it is under the
 minimum, and says so if a rate is above what customers were shown.
 
@@ -128,9 +125,9 @@ All in `site-settings.ts`:
 | Setting | Today | Meaning |
 | --- | --- | --- |
 | `prices.outstation` | 1550–1650 | Customer price per driving day |
-| `outstation.returnMaxPerDay` | 1200 | The return day — and the most late hours cost in any 24 hours |
-| `outstation.returnHour` | 120 | Per late hour, after the return day |
-| `outstation.extraHour` | 120 | Per hour beyond `hoursPerDay` |
+| `outstation.returnHour` | 120 | Per hour of the way home, from the drop until he is home |
+| `outstation.returnMaxPerDay` | 1200 | The most the way home costs in any 24 hours |
+| `outstation.extraHour` | 120 | Per driving hour beyond the full days |
 | `outstation.hoursPerDay` | 12 | Driving hours in a day |
 | `outstation.mealAllowance` | 300 | Per day, if the customer does not feed the driver |
 | `outstation.kmPerDay` | 600 | Planning distance per driving day |
@@ -144,5 +141,5 @@ All in `site-settings.ts`:
 To add a destination, copy a line in `destinations` in `lib/outstation.ts`
 (road and straight-line km from Raipur) and run `npm test`. For a long
 route with few trains a day, add its regular trains home (`trains`: number,
-name, departure time, hours to Raipur). Never rename an `id`: bookings store
-it.
+name, departure time, hours to Raipur, `days` it runs if not daily, `via` for
+a change of train). Never rename an `id`: bookings store it.

@@ -124,9 +124,8 @@ function tripLine(b) {
   var parts = [String(b.city || '?') + ' → ' + String(t.to) + (t.destId ? '' : ' (not in our list)')];
   parts.push(t.kind === 'round' ? 'round trip' : 'one-way drop');
   if (t.km > 0) parts.push('~' + t.km + ' km');
-  // returnHours: hours after the driving days until the driver is home — any = a return day, past 24 = late hours.
-  var late = Math.max(0, t.returnHours - 24);
-  parts.push(plural(t.days, 'day') + (t.kind !== 'round' && t.returnHours > 0 ? ' + a return day' + (late ? ' + ' + late + ' late h' : '') : ''));
+  // returnHours: one-way, hours from the drop until the driver is home (waiting included).
+  parts.push(plural(t.days, 'day') + (t.kind !== 'round' && t.returnHours > 0 ? ' + ' + t.returnHours + ' h getting home' : ''));
   parts.push(t.estFrom > 0
     ? 'est. ₹' + inr(t.estFrom) + (t.estTo > t.estFrom ? '–' + inr(t.estTo) : '')
     : 'quote on the call');

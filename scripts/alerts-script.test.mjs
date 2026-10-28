@@ -580,11 +580,10 @@ describe('formatting', () => {
     assert.equal(ctx.inr(125000), '1,25,000');
   });
   test('an outstation trip shows in the alert, the email and the Sheet', () => {
-    const trip = { to: 'Delhi', destId: 'delhi', kind: 'one-way', km: 1214, days: 2, returnHours: 11, estFrom: 4300, estTo: 4500 };
+    const trip = { to: 'Delhi', destId: 'delhi', kind: 'one-way', km: 1214, days: 2, returnHours: 38, estFrom: 5620, estTo: 5820 };
     const booking = { name: 'A', phone: '9111473929', city: 'Raipur', package: 'one-way-drop', pickup: 'a', preferredTime: '', notes: 'Swift', trip };
-    const line = 'Raipur → Delhi · one-way drop · ~1214 km · 2 days + a return day · est. ₹4,300–4,500';
+    const line = 'Raipur → Delhi · one-way drop · ~1214 km · 2 days + 38 h getting home · est. ₹5,620–5,820';
     assert.equal(ctx.tripLine(booking), line);
-    assert.equal(ctx.tripLine({ ...booking, trip: { ...trip, returnHours: 30 } }), line.replace('a return day', 'a return day + 6 late h'));
     const c = { booking, id: 'i', ref: 'DB-1001', previousBookings: 0, siteUrl: 'https://thedrivebuddy.in' };
     assert.ok(ctx.bookingTelegram(c).text.includes('<b>Trip:</b> ' + line));
     assert.ok(ctx.bookingEmail(c).body.includes('Trip: ' + line + '\nNotes: Swift'));
@@ -592,8 +591,8 @@ describe('formatting', () => {
 
     const round = { ...booking, package: 'outstation', trip: { ...trip, to: 'Nagpur', destId: 'nagpur', km: 284, kind: 'round', days: 2, returnHours: 0, estFrom: 2900, estTo: 3300 } };
     assert.equal(ctx.tripLine(round), 'Raipur → Nagpur · round trip · ~284 km · 2 days · est. ₹2,900–3,300');
-    const nagpur = { ...booking, trip: { ...trip, to: 'Nagpur', destId: 'nagpur', km: 284, days: 1, returnHours: 0, estFrom: 1450, estTo: 1650 } };
-    assert.equal(ctx.tripLine(nagpur), 'Raipur → Nagpur · one-way drop · ~284 km · 1 day · est. ₹1,450–1,650');
+    const nagpur = { ...booking, trip: { ...trip, to: 'Nagpur', destId: 'nagpur', km: 284, days: 1, returnHours: 6, estFrom: 1440, estTo: 1440 } };
+    assert.equal(ctx.tripLine(nagpur), 'Raipur → Nagpur · one-way drop · ~284 km · 1 day + 6 h getting home · est. ₹1,440');
     const elsewhere = { ...booking, trip: { ...trip, to: 'Jaipur', destId: '', km: 0, days: 1, returnHours: 0, estFrom: 0, estTo: 0 } };
     assert.equal(ctx.tripLine(elsewhere), 'Raipur → Jaipur (not in our list) · one-way drop · 1 day · quote on the call');
     assert.equal(ctx.tripLine({ ...booking, trip: undefined }), '');

@@ -17,13 +17,12 @@ import { homeText, kmText, tripFor } from '@/lib/trip';
 import { DEFAULT_START_HOUR } from '@/lib/outstation';
 
 const trail = [{ name: 'One-Way Drop', path: '/one-way-drop/' }];
-const day = `${priceText.outstation} a day`;
-const returnDay = `one return day, ${priceText.outstationReturnMax}`;
+const perDriveDay = `${priceText.outstation} for each ${priceText.outstationHours} of driving`;
 const late = `${priceText.outstationReturnHour} an hour, at most ${priceText.outstationReturnMax} a day`;
 
 export const metadata: Metadata = pageMeta({
   title: 'One-Way Drop Driver: You & Your Car to Any City',
-  description: `A verified driver takes you and your car, or just the car, from Raipur, Bhilai, Durg or Bilaspur to any city. ${day}, priced with his train home.`,
+  description: `A verified driver takes you and your car, or just the car, from Raipur, Bhilai, Durg or Bilaspur to any city — with his train home timed from your start time.`,
   path: '/one-way-drop/',
 });
 
@@ -80,34 +79,33 @@ const steps = [
   },
   {
     title: 'The drive',
-    body: `Up to ${priceText.outstationHours} of driving a day, about ${settings.outstation.kmPerDay} km, with an overnight halt on long routes.`,
+    body: `About ${priceText.outstationHours} of driving a day (${settings.outstation.kmPerDay} km), resting at night — or day and night, if you want it there sooner.`,
   },
   {
     title: 'He comes home',
-    body: `By bus or train — you book his ticket. Home before the driving days end: nothing more. Otherwise ${returnDay}; still travelling after that, ${late}.`,
+    body: `By bus or train — you book his ticket. From the drop until he is home, waiting for his train included: ${late}.`,
   },
 ];
 
 const included = [
   'A police-verified, sober, highway-experienced driver',
-  `Each day: the driver's 24 hours from the start, with up to ${priceText.outstationHours} of driving`,
-  'His way home, if he is back before the driving days end',
+  `${priceText.outstation} for each ${priceText.outstationHours} of driving, ${priceText.outstationExtraHour} an hour beyond`,
+  'The estimate times his train home from your start date and time',
   'Ride along or send the car alone — the same price',
 ];
 
 const notIncluded = [
   'Fuel, tolls and parking',
   'His bus or train ticket home — you book it',
-  `A return day (${priceText.outstationReturnMax}) if he is not home when the driving days end`,
+  `His way home: ${late}`,
   `His meals — or ${priceText.mealAllowance} a day`,
-  'Overnight stay on routes longer than a day',
-  `Driving beyond ${priceText.outstationHours} a day: ${priceText.outstationExtraHour} an hour`,
+  'His overnight stay on routes longer than a day',
 ];
 
 const faqs = [
   {
     q: 'Can I travel with the driver and my car?',
-    a: `Yes. Many one-way drops are families travelling in their own car. The driver drives you to the address you give, then comes home on his own by bus or train. The price is the same whether you ride along or send the car alone: ${day}.`,
+    a: `Yes. Many one-way drops are families travelling in their own car. The driver drives you to the address you give, then comes home on his own by bus or train. The price is the same whether you ride along or send the car alone: ${perDriveDay}.`,
   },
   {
     q: 'Can a driver take my car to another city without me?',
@@ -115,11 +113,11 @@ const faqs = [
   },
   {
     q: 'Is the driver’s way home included?',
-    a: `If he is home before the driving days end, yes — a drop from Raipur to Nagpur is one day. If not, ${returnDay}, is added: a driving day is a driving day, the trip home is its own day (Raipur → Mumbai: 2 driving days + 1 return day). Still travelling after the return day — a missed train, no seat — ${late}. The estimate uses the regular trains home and your start time; the final bill uses the time he really gets home. You book his train or bus ticket.`,
+    a: `It is charged by the hour, from the drop until he is home — waiting for his train included: ${late}. From your start date and time the estimate works out when he drops the car, the first train home he can catch that day and when he is home (Raipur → Nagpur: about 6 hours; Raipur → Mumbai: about 23). The final bill uses the real times. You book his train or bus ticket.`,
   },
   {
     q: 'How many days will my drop take?',
-    a: `About ${settings.outstation.kmPerDay} km of driving a day, with breaks. From Raipur, Nagpur, Jabalpur or Visakhapatnam is one driving day; Hyderabad, Kolkata, Mumbai or Delhi two. Want to stop on the way? Book extra days; each day booked is charged.`,
+    a: `About ${settings.outstation.kmPerDay} km — ${priceText.outstationHours} — of driving a day, resting at night. From Raipur, Nagpur, Jabalpur or Visakhapatnam is one day; Hyderabad, Kolkata, Mumbai or Delhi two; Bengaluru or Chennai three. Want it sooner? Ask for day and night driving (the same price). Want to stop on the way? Book extra days; each is charged in full.`,
   },
   {
     q: 'What else do I pay for?',
@@ -137,7 +135,7 @@ export default function OneWayDropPage() {
       <PageHero
         eyebrow="One-way drop"
         title="One-way drop to another city — you and your car, or just the car"
-        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. ${day}, plus a return day if his trip home runs past the driving days.`}
+        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. ${priceText.outstation} for each ${priceText.outstationHours} of driving; his way home ${late}.`}
         trail={trail}
         actions={
           <>
@@ -210,7 +208,7 @@ export default function OneWayDropPage() {
                       <span className="sm:hidden">
                         {' · '}
                         {t.days} {t.days === 1 ? 'day' : 'days'} ·{' '}
-                        {t.returnHours > 0 ? '+ return day' : 'home in time'}
+                        {`+${t.returnHours} h home`}
                       </span>
                     </span>
                   </th>
@@ -224,9 +222,7 @@ export default function OneWayDropPage() {
                       <span className="block">{homeText(t.home)}</span>
                     ) : null}
                     <span className="text-fg text-xs">
-                      {t.returnHours > 0
-                        ? `+ return day · ${rupees(t.est?.returnCharge ?? 0)}`
-                        : 'Home before the driving days end'}
+                      {`${t.returnHours} h from the drop · ${rupees(t.est?.returnCharge ?? 0)}`}
                     </span>
                   </td>
                   <td className="tabular px-4 py-3 text-right font-semibold whitespace-nowrap">

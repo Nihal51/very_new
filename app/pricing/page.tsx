@@ -92,12 +92,13 @@ export default function PricingPage() {
               ))}
             </ul>
             <p className="text-fg-subtle mt-6 text-sm">
-              Outstation trips and one-way drops are charged by the driving day: each is the
-              driver's 24 hours from the start, with up to {priceText.outstationHours} of driving
-              ({priceText.outstationExtraHour} for each hour beyond). After a one-way drop, if he is
-              not home when the driving days end, one return day ({priceText.outstationReturnMax})
-              is added, and {priceText.outstationReturnHour} an hour (at most{' '}
-              {priceText.outstationReturnMax} a day) if he is still travelling after it.
+              Outstation trips and one-way drops: {priceText.outstation} for each{' '}
+              {priceText.outstationHours} of driving, and {priceText.outstationExtraHour} for each
+              hour beyond (a shorter drive is all by the hour). After a one-way drop, the
+              driver&apos;s way home — from the drop until he is home, waiting for his train
+              included — is {priceText.outstationReturnHour} an hour, at most{' '}
+              {priceText.outstationReturnMax} a day. Round trips are charged by the days of the
+              trip.
               Pick your destination on the booking form for an estimate — or see{' '}
               <Link href="/one-way-drop/" className="text-accent-text font-semibold underline underline-offset-4">
                 one-way drop prices by route

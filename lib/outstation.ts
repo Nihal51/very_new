@@ -8,27 +8,25 @@
  * /app-config.json, in the mobile app. The rupee amounts come from
  * site-settings.ts and are passed in — none are typed here.
  *
- * How a trip is priced (decided with the owner, 19 Oct 2026; return day and
- * start-time rules 28 Oct 2026):
+ * How a trip is priced (decided with the owner, 19 Oct 2026; timings and the
+ * hourly rules 28 Oct 2026):
  *   - One-way distance from the pickup city decides everything. Most trips are
  *     one-way drops: the driver delivers the car and comes home by bus/train.
- *   - Driving days: at least one-way km ÷ kmPerDay (600 km, about 12 hours at
- *     averageKmh; up to a tenth of a day over doesn't add a day), or the days
- *     the customer books if more (resting, sightseeing). Each driving day is
- *     the driver's 24 hours from the start time. A round trip he finishes
- *     within the 24 hours (up to sameDayMaxHours of driving there and back —
- *     Raipur → Jharsuguda → Raipur) is ONE day; longer ones drive it twice.
- *   - The start time matters (one-way): it decides when he drops the car, and
- *     so which regular train or bus home he can catch (`home.trains`) and when
- *     he is home. If he is home before the last driving day ends: nothing more.
- *   - Return day: otherwise ONE return day is added (returnMaxPerDay) — a
- *     driving day is a driving day, the trip home is its own day (Mumbai: 2
- *     driving days + 1 return day).
- *   - Late hours: if he is still not home when the return day ends (a missed
- *     train, no seat), returnHour for each hour after it, at most
- *     returnMaxPerDay in any 24 hours. The FINAL bill uses the time he really
- *     reaches home; the estimate predicts it from the timetable.
- *   - The customer books and pays for the driver's ticket home.
+ *   - Driving (one-way): the hours of driving at averageKmh. Each hoursPerDay
+ *     of driving (12 h, about 600 km) is one day (dayRate); the hours left
+ *     over — or the whole drive, if it is shorter — extraHour each.
+ *   - Timings: from the start date and time. Normally he drives 12 hours and
+ *     rests 12 (up to an hour more finishes that evening); or, if the customer
+ *     wants it, day and night without the rest (same price). That gives the
+ *     drop time; then stationHours to the station, and the first regular train
+ *     home that runs that day (`home.trains`, with their running days, and
+ *     connections such as Bengaluru via Nagpur), or the average time home on
+ *     routes with a bus or train every hour or two.
+ *   - The way home (one-way): from the drop until he is home — the waiting
+ *     included — returnHour an hour, at most returnMaxPerDay in any 24 hours.
+ *   - Round trips: the days of the trip (the driver is with the customer).
+ *   - The customer books and pays for the driver's ticket home. The FINAL bill
+ *     uses the real times; the estimate predicts them.
  *   - The customer sees an estimate; the team quotes the exact price on the
  *     call, from the driver's real cost plus at least the minimum profit.
  */
@@ -39,11 +37,11 @@
 export type TripRules = {
   /** Customer price per day (24 h from the start, up to hoursPerDay driving) — the range customers are shown. */
   dayRate: { from: number; to: number };
-  /** Customer price per late hour: the driver still travelling home after the return day. */
+  /** Customer price per hour of the driver's way home (one-way: from the drop until he is home). */
   returnHour: number;
-  /** The return day (one-way, if he is not home when the driving days end) — and the most late hours cost in any 24 hours. */
+  /** The most the way home costs in any 24 hours. */
   returnMaxPerDay: number;
-  /** Customer price per hour beyond hoursPerDay of driving in a day. */
+  /** Customer price per driving hour beyond the full days (or of a drive shorter than a day). */
   extraHour: number;
   /** Driving hours in one outstation day. */
   hoursPerDay: number;
@@ -81,12 +79,12 @@ export type Destination = {
    * weekly premium trains), from erail.in, redBus and AbhiBus timetables.
    * Getting to the station (stationHours) is added on top.
    *
-   * `trains`: the regular daily (or nearly daily) trains home, where waiting
-   * for one matters — long routes with only a few a day. With them the
-   * estimate takes the first one he can catch after the drop; without them
-   * (buses and short routes, with a service every hour or two) he leaves
-   * stationHours after the drop. Their `hours` are to Raipur; Durg and
-   * Bilaspur add the difference in the averages above.
+   * `trains`: the regular trains home where waiting for one matters — long
+   * routes with only a few a day. With them the estimate takes the one that
+   * gets him home soonest among those he can catch after the drop on the day
+   * they run; without them (buses and short routes, with a service every hour
+   * or two) he leaves stationHours after the drop. Their `hours` are to
+   * Raipur; Durg and Bilaspur add the difference in the averages above.
    */
   home: {
     by: 'train' | 'bus' | 'bus + train';
@@ -97,17 +95,30 @@ export type Destination = {
   };
 };
 
-/** A regular train home: number and name, departure time (IST, "HH:MM") and hours on board to Raipur. */
-export type HomeTrain = { no: string; name: string; dep: string; hours: number };
+/**
+ * A regular train home: number and name, departure time (IST, "HH:MM") and
+ * hours to Raipur. `days`: the weekdays it leaves (0 = Sunday … 6 =
+ * Saturday); left out = every day. `via`: a change of train on the way (the
+ * hours include the change and the second train).
+ */
+export type HomeTrain = {
+  no: string;
+  name: string;
+  dep: string;
+  hours: number;
+  days?: readonly number[];
+  via?: string;
+};
 
 /**
  * Popular destinations. Road distances from Raipur: distancebetween2.com,
  * checked 19 Oct 2026 — check a few against Google Maps once a year. Train and
  * bus times home: erail.in, redBus, AbhiBus, ixigo, checked 20 Oct 2026 — check
- * them once a year too (new trains, new Vande Bharats). The `trains` lists
- * (ixigo, checked 28 Oct 2026) keep only trains that run daily or nearly
- * daily — weekly ones can't be counted on (Hyderabad has no daily train: its
- * line stands for the night trains that leave around 10:40 PM most days). Add a place by copying
+ * them once a year too (new trains, new Vande Bharats). The `trains` lists:
+ * ixigo, ConfirmTkt and RailYatri, checked 28 Oct 2026 (Hyderabad has no
+ * daily train: its line stands for the night trains that leave around
+ * 10:40 PM most days; Bengaluru's daily options change at Nagpur, about 6½ h
+ * more to Raipur). Add a place by copying
  * a line; the other pickup cities' distances are worked out from these.
  */
 export const destinations: readonly Destination[] = [
@@ -148,8 +159,8 @@ export const destinations: readonly Destination[] = [
   { id: 'kolkata', name: 'Kolkata', nameHi: 'कोलकाता', region: 'india', lat: 22.5726, lng: 88.3639, fromRaipur: { road: 831, air: 710 }, home: { by: 'train', raipur: 13.25, durg: 14.25, bilaspur: 11.25, trains: [{ no: '12860', name: 'Gitanjali Exp', dep: '13:40', hours: 13 }, { no: '18030', name: 'Shalimar–LTT Exp', dep: '15:00', hours: 15.4 }, { no: '12810', name: 'Howrah–Mumbai Mail', dep: '19:30', hours: 13.2 }, { no: '12130', name: 'Azad Hind Exp', dep: '21:40', hours: 13.2 }, { no: '12834', name: 'Howrah–Ahmedabad Exp', dep: '23:05', hours: 14.4 }] } },
   { id: 'pune', name: 'Pune', nameHi: 'पुणे', region: 'india', lat: 18.5204, lng: 73.8567, fromRaipur: { road: 1007, air: 867 }, home: { by: 'train', raipur: 20, durg: 19.5, bilaspur: 22, trains: [{ no: '12129', name: 'Azad Hind Exp', dep: '18:35', hours: 20 }] } },
   { id: 'mumbai', name: 'Mumbai', nameHi: 'मुंबई', region: 'india', lat: 19.076, lng: 72.8777, fromRaipur: { road: 1118, air: 945 }, home: { by: 'train', raipur: 18, durg: 17.25, bilaspur: 20.5, trains: [{ no: '12859', name: 'Gitanjali Exp', dep: '06:00', hours: 17.5 }, { no: '12809', name: 'Mumbai–Howrah Mail', dep: '21:10', hours: 18.9 }, { no: '18029', name: 'LTT–Shalimar Exp', dep: '22:00', hours: 21.7 }] } },
-  { id: 'delhi', name: 'Delhi', nameHi: 'दिल्ली', region: 'india', lat: 28.6139, lng: 77.209, fromRaipur: { road: 1214, air: 946 }, home: { by: 'train', raipur: 22.5, durg: 22, bilaspur: 21, trains: [{ no: '18238', name: 'Chhattisgarh Exp', dep: '04:25', hours: 28 }, { no: '12808', name: 'Samta Exp', dep: '07:00', hours: 22.8 }, { no: '12410', name: 'Gondwana Exp', dep: '15:05', hours: 22.4 }] } },
-  { id: 'bengaluru', name: 'Bengaluru', nameHi: 'बेंगलुरु', region: 'india', lat: 12.9716, lng: 77.5946, fromRaipur: { road: 1370, air: 1015.7 }, home: { by: 'train', raipur: 28, durg: 27.25, bilaspur: 30 } },
+  { id: 'delhi', name: 'Delhi', nameHi: 'दिल्ली', region: 'india', lat: 28.6139, lng: 77.209, fromRaipur: { road: 1214, air: 946 }, home: { by: 'train', raipur: 22.5, durg: 22, bilaspur: 21, trains: [{ no: '18238', name: 'Chhattisgarh Exp', dep: '04:25', hours: 28 }, { no: '12808', name: 'Samta Exp', dep: '07:00', hours: 22.8, days: [1, 2, 4, 5, 6] }, { no: '12410', name: 'Gondwana Exp', dep: '15:05', hours: 22.4, days: [1, 2, 3, 4, 6] }] } },
+  { id: 'bengaluru', name: 'Bengaluru', nameHi: 'बेंगलुरु', region: 'india', lat: 12.9716, lng: 77.5946, fromRaipur: { road: 1370, air: 1015.7 }, home: { by: 'train', raipur: 28, durg: 27.25, bilaspur: 30, trains: [{ no: '12295', name: 'Sanghamitra Exp', dep: '09:15', hours: 29.8, via: 'Nagpur' }, { no: '12975', name: 'Mysuru–Jaipur Exp', dep: '13:00', hours: 28.6, via: 'Nagpur' }, { no: '18262', name: 'Yelahanka–Bilaspur Exp', dep: '21:30', hours: 27.6, days: [4] }, { no: '12251', name: 'Wainganga Exp', dep: '23:40', hours: 24.4, days: [2, 5] }, { no: '22366', name: 'Bengaluru–Danapur Exp', dep: '23:50', hours: 31.7, via: 'Nagpur' }] } },
   { id: 'chennai', name: 'Chennai', nameHi: 'चेन्नई', region: 'india', lat: 13.0827, lng: 80.2707, fromRaipur: { road: 1405, air: 920 }, home: { by: 'train', raipur: 23, durg: 22.25, bilaspur: 25 } },
 ];
 
@@ -199,18 +210,23 @@ export type TripPlan = {
   kind: TripKind;
   /** Closer than localWithinKm: book a local package instead. */
   local: boolean;
-  /** The fewest days the distance allows. */
+  /** The fewest calendar days the trip takes. */
   minDays: number;
-  /** Days charged: minDays, or more if the customer booked more. */
+  /** Calendar days: minDays, or more if the customer booked more. */
   days: number;
-  /** One-way: whole hours after the driving days end until he is home (0 = home in time). */
+  /** Charged at dayRate: one-way, each full hoursPerDay of driving (or the days booked); round trips, the days. */
+  fullDays: number;
+  /** One-way: driving hours beyond the full days (or of a drive shorter than a day), at extraHour. */
+  extraHours: number;
+  /** One-way: hours of driving in all. */
+  driveHours: number;
+  /** One-way: day and night, without the night's rest. */
+  nonstop: boolean;
+  /** One-way: whole hours from the drop until he is home (his way home, the waiting included). */
   returnHours: number;
-  /** One-way: he is not home when the driving days end, so a return day is charged. */
-  returnDay: boolean;
-  /** One-way: hours he is still travelling after the return day ends (charged per hour). */
-  lateHours: number;
-  /** The start time used, as an hour of the day (7.5 = 7:30 AM). */
+  /** The start: hour of the day (7.5 = 7:30 AM) and, if known, the weekday (0 = Sunday). */
   startHour: number;
+  weekday?: number;
   /** One-way: hours after the start when he drops the car, leaves by train/bus and is home. */
   dropAt?: number;
   leaveAt?: number;
@@ -222,17 +238,19 @@ export type TripPlan = {
 /** When nothing better is known, the estimate assumes the driver leaves at 7 AM. */
 export const DEFAULT_START_HOUR = 7;
 
+/** When the driver leaves: the hour of the day and, if the date is known, the weekday (0 = Sunday). */
+export type TripStart = { hour: number; weekday?: number };
+
+/** Hours of driving for a distance, at averageKmh. */
+export const driveHours = (rules: Pick<TripRules, 'averageKmh'>, km: number) => km / rules.averageKmh;
+
 /**
- * Driving days for a distance: one per kmPerDay, but a little over a full
- * day's drive (up to a tenth of a day, 60 km at 600 km a day) does not add
- * another day — Raipur → Delhi, 1,214 km, is 2 days, not 3.
+ * Days of driving for a distance, for round trips: one per kmPerDay, but a
+ * little over a full day's drive (up to a tenth of a day) does not add one.
  */
 export function drivingDays(rules: Pick<TripRules, 'kmPerDay'>, km: number): number {
   return Math.max(1, Math.ceil(km / rules.kmPerDay - 0.1));
 }
-
-/** Hours of driving for a distance, at averageKmh. */
-export const driveHours = (rules: Pick<TripRules, 'averageKmh'>, km: number) => km / rules.averageKmh;
 
 /**
  * The fewest days for a round trip. Each day covers the driver's 24 hours from
@@ -277,14 +295,48 @@ const clock = (hhmm: string) => {
 };
 
 /**
- * The plan for a trip. `startHour` is when the driver leaves (hour of the day,
- * 0–24; DEFAULT_START_HOUR if unknown): on a one-way drop it decides when he
- * drops the car — the last stretch on the last day, at averageKmh — and so
- * which train he can catch and when he is home.
+ * When he drops the car, hours after the start, for `hours` of driving:
+ * day and night (`nonstop`) straight through; otherwise hoursPerDay of
+ * driving and the rest of the 24 hours resting, but up to an hour more he
+ * finishes that evening rather than stop for the night. `extraDays`: days
+ * the customer booked on top (stops on the way) move the drop on.
+ */
+export function dropTime(rules: Pick<TripRules, 'hoursPerDay'>, hours: number, nonstop = false, extraDays = 0): number {
+  if (nonstop) return hours + extraDays * 24;
+  const day = rules.hoursPerDay;
+  const full = Math.floor(hours / day + 1e-9);
+  const rest = hours - full * day;
+  let at: number;
+  if (full === 0) at = hours;
+  else if (rest <= 1e-9) at = (full - 1) * 24 + day;
+  else if (rest <= 1 + 1e-9) at = (full - 1) * 24 + day + rest;
+  else at = full * 24 + rest;
+  return at + extraDays * 24;
+}
+
+/**
+ * The first time a train leaves at or after `ready` hours after the start, on
+ * a day it runs (its `days`); an unknown weekday counts only daily trains.
+ * Undefined if it cannot be caught within a week.
+ */
+function nextDeparture(t: HomeTrain, ready: number, start: TripStart): number | undefined {
+  let at = ready + ((((clock(t.dep) - (start.hour + ready)) % 24) + 24) % 24);
+  if (!t.days || t.days.length === 0) return at;
+  if (start.weekday === undefined) return undefined;
+  for (let i = 0; i < 8; i++, at += 24) {
+    const weekday = (start.weekday + Math.floor((start.hour + at) / 24 + 1e-9)) % 7;
+    if (t.days.includes(weekday)) return at;
+  }
+  return undefined;
+}
+
+/**
+ * The plan for a trip, from the start (hour of the day and, if known, the
+ * weekday; a plain number is the hour) — see the rules at the top.
  *
- *   Mumbai, start 7 AM: 2 days, drops ~6:30 PM day 2, 9:10 PM train (19 h)
- *   → home ~4 PM day 3, after day 2 ended at 7 AM: a return day.
- *   Nagpur: drops ~1 PM, home the same evening: no return day.
+ *   Mumbai, 7 AM: 22.4 h of driving = 1 day + 11 h; drops the car ~5:20 PM
+ *   on day 2, takes the 9:10 PM Mail, home ~4 PM day 3: 23 h from the drop.
+ *   Nagpur: 5.7 h of driving = 6 h at extraHour; home that evening, 6 h.
  */
 export function planTrip(
   rules: TripRules,
@@ -292,39 +344,70 @@ export function planTrip(
   kind: TripKind,
   bookedDays = 0,
   home: HomeWay | number = {},
-  startHour: number = DEFAULT_START_HOUR,
+  startAt: TripStart | number = DEFAULT_START_HOUR,
+  nonstop = false,
 ): TripPlan {
   const way: HomeWay = typeof home === 'number' ? { hours: home } : home;
-  const start = Number.isFinite(startHour) ? ((startHour % 24) + 24) % 24 : DEFAULT_START_HOUR;
+  const raw = typeof startAt === 'number' ? { hour: startAt } : startAt;
+  const start: TripStart = {
+    hour: Number.isFinite(raw.hour) ? ((raw.hour % 24) + 24) % 24 : DEFAULT_START_HOUR,
+    ...(Number.isInteger(raw.weekday) && raw.weekday! >= 0 && raw.weekday! <= 6 && { weekday: raw.weekday }),
+  };
   const oneWay = Math.max(0, Math.round(km));
-  const round = kind === 'round';
-  const minDays = round ? roundTripDays(rules, oneWay) : drivingDays(rules, oneWay);
-  const days = Math.min(60, Math.max(minDays, Math.floor(bookedDays) || 0));
-  const base = { km: oneWay, kind, local: oneWay < rules.localWithinKm, minDays, days, startHour: start };
-  if (round || oneWay <= 0) return { ...base, returnHours: 0, returnDay: false, lateHours: 0 };
+  const booked = Math.min(60, Math.max(0, Math.floor(bookedDays) || 0));
+  const base = {
+    km: oneWay,
+    kind,
+    local: oneWay < rules.localWithinKm,
+    startHour: start.hour,
+    ...(start.weekday !== undefined && { weekday: start.weekday }),
+  };
 
-  const lastDayKm = oneWay - (minDays - 1) * rules.kmPerDay;
-  const dropAt = (days - 1) * 24 + driveHours(rules, lastDayKm);
+  if (kind === 'round' || oneWay <= 0) {
+    const minDays = kind === 'round' ? roundTripDays(rules, oneWay) : 1;
+    const days = Math.max(minDays, booked);
+    return { ...base, minDays, days, fullDays: days, extraHours: 0, driveHours: 0, nonstop: false, returnHours: 0 };
+  }
+
+  // Driving: each hoursPerDay is a day, the rest by the hour.
+  const hours = driveHours(rules, oneWay);
+  const full = Math.floor(hours / rules.hoursPerDay + 1e-9);
+  const rest = hours - full * rules.hoursPerDay;
+  const leftover = rest > 1e-9 ? Math.ceil(rest - 1e-9) : 0;
+  const lastDayAt = dropTime(rules, hours, nonstop);
+  // Calendar days he is driving (24 h each from the start).
+  const calendar = nonstop
+    ? Math.max(1, Math.ceil((lastDayAt - 1e-9) / 24))
+    : full + (rest > 1 + 1e-9 || full === 0 ? 1 : 0);
+  const extraDays = booked > calendar ? booked - calendar : 0;
+  const fullDays = extraDays > 0 ? booked : full;
+  const extraHours = extraDays > 0 ? 0 : leftover;
+
+  // The way home: the station, then the train or bus that gets him home soonest.
+  const dropAt = lastDayAt + (nonstop ? 0 : extraDays * 24);
   const ready = dropAt + rules.stationHours;
   let leaveAt = ready;
   let homeAt = ready + (way.hours ?? oneWay / rules.busKmh);
   let train: HomeTrain | undefined;
   for (const t of way.trains ?? []) {
-    // The first time this train leaves at or after `ready` (hours after the start).
-    const wait = (((clock(t.dep) - (start + ready)) % 24) + 24) % 24;
-    const arrives = ready + wait + t.hours + (way.offset ?? 0);
+    const leaves = nextDeparture(t, ready, start);
+    if (leaves === undefined) continue;
+    const arrives = leaves + t.hours + (way.offset ?? 0);
     if (!train || arrives < homeAt) {
       train = t;
-      leaveAt = ready + wait;
+      leaveAt = leaves;
       homeAt = arrives;
     }
   }
-  const returnHours = Math.max(0, Math.ceil(homeAt - days * 24 - 1e-9));
   return {
     ...base,
-    returnHours,
-    returnDay: returnHours > 0,
-    lateHours: Math.max(0, returnHours - 24),
+    minDays: calendar,
+    days: calendar + extraDays,
+    fullDays,
+    extraHours,
+    driveHours: hours,
+    nonstop,
+    returnHours: Math.max(0, Math.ceil(homeAt - dropAt - 1e-9)),
     dropAt,
     leaveAt,
     homeAt,
@@ -334,20 +417,9 @@ export function planTrip(
 
 /** What `hours` cost at `rate` an hour, at most `maxPerDay` in any 24 hours. */
 export function returnCost(hours: number, rate: number, maxPerDay: number): number {
-  const h = Math.max(0, Math.round(hours));
+  const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
   const fullDays = Math.floor(h / 24);
   return fullDays * Math.min(24 * rate, maxPerDay) + Math.min((h - 24 * fullDays) * rate, maxPerDay);
-}
-
-/**
- * The way home on a one-way drop, for `hours` after the driving days: nothing
- * if 0; else one return day (`dayPrice`) and, after its 24 hours, `rate` per
- * late hour, at most `dayPrice` in any 24 hours. Mumbai, 7 h after → ₹1,200;
- * 30 h after → ₹1,200 + 6 × ₹120.
- */
-export function returnDayCost(hours: number, rate: number, dayPrice: number): number {
-  const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
-  return h > 0 ? dayPrice + returnCost(Math.max(0, h - 24), rate, dayPrice) : 0;
 }
 
 /* ----------------------------------------------------------- estimate ---- */
@@ -356,28 +428,26 @@ type Money = { from: number; to: number };
 export type Estimate = {
   from: number;
   to: number;
+  /** The full days at dayRate, plus the extra driving hours. */
   driving: Money;
-  /** Return day + late hours. */
+  /** The extra driving hours alone. */
+  extraCharge: number;
+  /** The way home (one-way). */
   returnCharge: number;
-  /** The return day alone (0 if none). */
-  returnDayCharge: number;
-  /** Late hours after the return day. */
-  lateCharge: number;
 };
 
-/** What the customer sees: a range, from the per-day price range, plus the return day and any late hours. */
-export function estimate(rules: TripRules, plan: Pick<TripPlan, 'days' | 'returnHours'>): Estimate {
-  const driving = { from: plan.days * rules.dayRate.from, to: plan.days * rules.dayRate.to };
-  const returnCharge = returnDayCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay);
-  const returnDayCharge = plan.returnHours > 0 ? rules.returnMaxPerDay : 0;
-  return {
-    from: driving.from + returnCharge,
-    to: driving.to + returnCharge,
-    driving,
-    returnCharge,
-    returnDayCharge,
-    lateCharge: returnCharge - returnDayCharge,
+/** What the customer sees: a range, from the per-day price range, plus the extra hours and the way home. */
+export function estimate(
+  rules: TripRules,
+  plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'>,
+): Estimate {
+  const extraCharge = plan.extraHours * rules.extraHour;
+  const driving = {
+    from: plan.fullDays * rules.dayRate.from + extraCharge,
+    to: plan.fullDays * rules.dayRate.to + extraCharge,
   };
+  const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay);
+  return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, extraCharge, returnCharge };
 }
 
 /* -------------------------------------------------------------- quote ---- */
@@ -385,12 +455,13 @@ export function estimate(rules: TripRules, plan: Pick<TripPlan, 'days' | 'return
 export type QuoteInput = {
   /** What this driver charges for one outstation day. */
   driverDayCost: number;
-  /** What the driver gets per late hour; his return day is 10 of them. */
+  /** What the driver gets per hour of his way home (at most 10 of them in any 24 hours). */
   driverReturnHourPay: number;
+  /** Full days at the day rate. */
   days: number;
-  /** One-way: hours after the driving days until he is home — any at all means a return day; past 24, late hours. */
+  /** One-way: hours from the drop until he is home. */
   returnHours: number;
-  /** Hours beyond hoursPerDay of driving, summed over the trip. */
+  /** Driving hours beyond the full days (and any overtime), summed over the trip. */
   extraHours: number;
   /** Bus/train ticket home — passed straight through, no profit on it. */
   ticket: number;
@@ -402,9 +473,11 @@ export type QuoteInput = {
 
 export type Quote = {
   dayRate: number;
-  /** Customer price per late hour: the driver's pay plus the profit, never below returnHour. The return day is 10 of them. */
+  /** The full days charged (0 for a drive shorter than a day). */
+  days: number;
+  /** Customer price per hour of the way home: the driver's pay plus the profit, never below returnHour. */
   returnHourRate: number;
-  /** The return day plus any late hours, to the customer. */
+  /** The way home, to the customer, with the daily maximum. */
   returnCharge: number;
   extraHourRate: number;
   /** Driver charges the customer pays, before the ticket. */
@@ -427,15 +500,16 @@ const whole = (n: number) => Math.max(0, Math.round(Number.isFinite(n) ? n : 0))
 
 /**
  * The exact price for the call: the driver's real day cost plus the minimum
- * profit, rounded up to the next ₹50 a day (₹10 an hour for overtime and
- * late hours). The return day is the same number of hours as customers were
- * shown (returnMaxPerDay ÷ returnHour, 10), for the driver and the customer
- * alike.
+ * profit, rounded up to the next ₹50 a day (₹10 an hour for extra driving
+ * hours and the way home). The way home keeps the same daily maximum in hours
+ * as customers were shown (returnMaxPerDay ÷ returnHour, 10), for the driver
+ * and the customer alike.
  */
 export function quote(rules: TripRules, input: QuoteInput): Quote {
-  const days = Math.max(1, whole(input.days));
   const back = whole(input.returnHours);
   const hours = whole(input.extraHours);
+  // 0 full days is a drive shorter than a day, priced by the hour; nothing at all is one day.
+  const days = Math.min(60, whole(input.days) || (hours > 0 ? 0 : 1));
   const cost = whole(input.driverDayCost);
   const backPay = whole(input.driverReturnHourPay);
   const margin = Math.min(90, Math.max(0, input.minProfitPercent)) / 100;
@@ -448,15 +522,16 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
   const extraHourRate = Math.max(rules.extraHour, roundUpTo(hourCost / keep, 10));
   const returnHourRate = Math.max(rules.returnHour, roundUpTo(backPay / keep, 10));
   const capHours = rules.returnMaxPerDay / rules.returnHour;
-  const returnCharge = returnDayCost(back, returnHourRate, returnHourRate * capHours);
+  const returnCharge = returnCost(back, returnHourRate, returnHourRate * capHours);
 
   const charges = days * dayRate + returnCharge + hours * extraHourRate;
-  const driverPay = Math.round(days * cost + returnDayCost(back, backPay, backPay * capHours) + hours * hourCost);
+  const driverPay = Math.round(days * cost + returnCost(back, backPay, backPay * capHours) + hours * hourCost);
   const partnerPay = Math.round(charges * partner);
   const profit = charges - driverPay - partnerPay;
   const profitPercent = charges > 0 ? Math.round((profit / charges) * 1000) / 10 : 0;
   return {
     dayRate,
+    days,
     returnHourRate,
     returnCharge,
     extraHourRate,
@@ -475,13 +550,12 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
 
 /**
  * Everything the mobile app needs for its estimate, worked out here once so
- * the app and the website can never disagree: for each destination and each
- * pickup city, the km, the fewest days for a one-way drop (with the hours
- * after them until he is home, for a 7 AM start — any at all is a return day)
- * and for a round trip. For other start times the app repeats planTrip's
- * last step itself, from `lastDayHours` (driving on the last day), `homeHours`
- * (the average way home to that city) and the destination's regular `trains`
- * (hours to Raipur; the city adds homeHours minus Raipur's).
+ * the app and the website can never disagree: for each destination its
+ * regular trains home, and from each pickup city the km, the hours of
+ * driving, the average way home (`homeHours`), and — for a 7 AM start on an
+ * unknown day — the calendar days and the hours of the way home; plus the
+ * fewest days for a round trip. The app repeats planTrip for the customer's
+ * own start (lib/outstation.ts is the reference).
  */
 export function destinationTable(rules: TripRules) {
   const r3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -490,14 +564,13 @@ export function destinationTable(rules: TripRules) {
     name: d.name,
     nameHi: d.nameHi,
     region: d.region,
-    trains: (d.home.trains ?? []).map((t) => ({ ...t })),
+    trains: (d.home.trains ?? []).map((t) => ({ ...t, ...(t.days && { days: [...t.days] }) })),
     from: Object.fromEntries(
       pickupCities.map((city) => {
         const km = roadKm(city, d);
         const way = homeWay(d, city);
         const one = planTrip(rules, km, 'one-way', 0, way);
         const round = planTrip(rules, km, 'round');
-        const lastDayKm = km > 0 ? km - (one.minDays - 1) * rules.kmPerDay : 0;
         return [
           city,
           {
@@ -505,7 +578,7 @@ export function destinationTable(rules: TripRules) {
             oneWay: {
               days: one.minDays,
               returnHours: one.returnHours,
-              lastDayHours: r3(driveHours(rules, lastDayKm)),
+              driveHours: r3(one.driveHours),
               homeHours: r3(way.hours ?? 0),
             },
             roundDays: round.minDays,
@@ -516,7 +589,7 @@ export function destinationTable(rules: TripRules) {
       PickupCity,
       {
         km: number;
-        oneWay: { days: number; returnHours: number; lastDayHours: number; homeHours: number };
+        oneWay: { days: number; returnHours: number; driveHours: number; homeHours: number };
         roundDays: number;
       }
     >,

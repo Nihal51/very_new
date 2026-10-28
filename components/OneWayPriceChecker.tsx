@@ -21,10 +21,15 @@ export function OneWayPriceChecker({ className }: { className?: string }) {
   const [dest, setDest] = useState('nagpur');
   const [days, setDays] = useState('');
   const [time, setTime] = useState('07:00');
+  const [nonstop, setNonstop] = useState(false);
 
-  const trip = useMemo(() => tripFor('one-way-drop', city, dest, Number(days) || 0, time), [city, dest, days, time]);
+  const trip = useMemo(
+    () => tripFor('one-way-drop', city, dest, Number(days) || 0, time, nonstop),
+    [city, dest, days, time, nonstop],
+  );
   const query = new URLSearchParams({ pkg: 'one-way-drop', city, to: dest });
   if (days && Number(days) > trip.minDays) query.set('days', String(Number(days)));
+  if (nonstop) query.set('nonstop', '1');
 
   return (
     <Card className={className}>
@@ -80,6 +85,14 @@ export function OneWayPriceChecker({ className }: { className?: string }) {
           )}
         </Field>
       </div>
+
+      <label className="mt-4 flex items-start gap-3 text-sm">
+        <input type="checkbox" checked={nonstop} onChange={(e) => setNonstop(e.target.checked)} className="mt-0.5 size-4" />
+        <span>
+          <span className="font-semibold">Drive day and night</span>
+          <span className="text-fg-muted block">No overnight rest, so he gets there sooner — the same price for the driving.</span>
+        </span>
+      </label>
 
       <TripEstimate
         view={trip}

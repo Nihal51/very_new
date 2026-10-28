@@ -84,27 +84,28 @@ export const settings = {
 
   /* ------------------------------------- outstation trips & one-way drops --
      How the trip estimate is worked out on the booking form and in the app.
-     The customer picks a destination and the start time; the site counts the
-     one-way km and the driving days (prices.outstation each, 24 h from the
-     start). One-way: from the start time it predicts when he drops the car,
-     which regular train/bus home he catches and when he is home. Home before
-     the last driving day ends: nothing more. Otherwise ONE return day
-     (returnMaxPerDay), and if he is still travelling after that, returnHour
-     for each late hour (at most returnMaxPerDay in any 24 h). The customer
-     books his ticket home. The final bill uses the time he really gets home.
-     The team confirms the exact price on the call (the quote calculator in
-     /admin works it out from the driver's cost). */
+     The customer picks a destination and the start date and time. One-way:
+     each hoursPerDay of driving (about kmPerDay) is a day at
+     prices.outstation, each hour left over extraHour (a shorter drive: all by
+     the hour). From the start the site works out when he drops the car (12 h
+     driving and 12 of rest, or day and night if the customer asks), the
+     first regular train/bus home he can catch that day and when he is home;
+     that way home, the waiting included, is returnHour an hour, at most
+     returnMaxPerDay in any 24 h. Round trips: the days. The customer books
+     his ticket home; the final bill uses the real times. The team confirms
+     the exact price on the call (the quote calculator in /admin works it out
+     from the driver's cost). */
   outstation: {
     hoursPerDay: 12, //        driving hours in one outstation day
     sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
-    extraHour: 120, //         each hour of driving beyond hoursPerDay
-    returnHour: 120, //        each late hour: still travelling home after the return day
-    returnMaxPerDay: 1200, //  the return day — and the most late hours cost in any 24 hours
+    extraHour: 120, //         each driving hour beyond the full days (or of a drive shorter than a day)
+    returnHour: 120, //        each hour of his way home after a one-way drop (from the drop, waiting included)
+    returnMaxPerDay: 1200, //  the most the way home costs in any 24 hours
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 600, //          how far one driver drives in a day (about 12 h at averageKmh)
     averageKmh: 50, //         highway average with stops
     busKmh: 50, //             way home for a place not in the list: bus/train average, with stops
-    stationHours: 1, //        getting to the bus stand or station and waiting
+    stationHours: 1, //        from the drop to the bus stand or station
     localWithinKm: 60, //      closer than this, the form suggests a local package instead
     minProfitPercent: 15, //   the /admin quote calculator never quotes below this profit
   },

@@ -25,7 +25,7 @@ export function TripEstimate({
 }) {
   const oneWay = view.kind === 'one-way';
   const dayRate = `${priceText.outstation} a day`;
-  const returnRate = `a ${priceText.outstationReturnMax} return day if the driver is not home when the driving days end`;
+  const returnRate = `his way home from the drop, ${priceText.outstationReturnHour} an hour (max ${priceText.outstationReturnMax} a day)`;
 
   let body: ReactNode;
   if (!city) {
@@ -99,12 +99,10 @@ export function TripEstimate({
       <p className="text-fg-subtle mt-3 text-xs leading-relaxed">
         An estimate
         {oneWay && !view.startKnown ? ` for a driver leaving at ${startText(view)} — pick the date & time for yours` : ''}:
-        we confirm the exact price on the call, before the driver leaves. Each driving day is the
-        driver&apos;s 24 hours from the start, with up to {priceText.outstationHours} of driving
-        ({rupees(tripRules.extraHour)} an hour beyond).
+        we confirm the exact price on the call, before the driver leaves.
         {oneWay
-          ? ` If he is not home when the driving days end, one return day (${priceText.outstationReturnMax}) is added; still travelling after that, ${priceText.outstationReturnHour} an hour (max ${priceText.outstationReturnMax} a day). The final bill uses the time he really gets home. You book his train or bus ticket home.`
-          : ''}{' '}
+          ? ` ${priceText.outstation} for each ${priceText.outstationHours} of driving and ${rupees(tripRules.extraHour)} for each hour beyond — a shorter drive is all by the hour. His way home, from the drop until he is home (waiting for his train included): ${priceText.outstationReturnHour} an hour, at most ${priceText.outstationReturnMax} a day. The final bill uses the real times. You book his train or bus ticket home.`
+          : ` Each day is the driver's 24 hours from the start, with up to ${priceText.outstationHours} of driving (${rupees(tripRules.extraHour)} an hour beyond).`}{' '}
         Fuel, tolls and parking are extra. Please give the driver his meals, or{' '}
         {rupees(settings.outstation.mealAllowance)} a day.
       </p>

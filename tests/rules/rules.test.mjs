@@ -279,6 +279,16 @@ describe('bookings — admin workflow', () => {
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { quote: agreed() }));
   });
 
+  test('a drive shorter than a day: 0 full days, the driving hours priced by the hour', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    const db = admin();
+    // Raipur → Nagpur: 6 driving hours + 6 hours home, ₹120 each.
+    const short = agreed({ days: 0, extraHours: 6, returnHours: 6, returnCharge: 720, ticket: 0, amount: 6 * 120 + 720 });
+    await assertSucceeds(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: short })));
+    // But not nothing at all.
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: { ...short, extraHours: 0, amount: 720 } })));
+  });
+
   test('customers and guests cannot change a booking', async () => {
     await seedBooking('b1', { customerUid: 'cust1' });
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { status: 'cancelled' }));

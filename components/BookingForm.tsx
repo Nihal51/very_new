@@ -39,6 +39,8 @@ type Values = {
   days: string;
   pickup: string;
   when: string;
+  /** One-way drops: '1' = drive day and night, without the night's rest. */
+  nonstop: string;
   notes: string;
 };
 
@@ -55,8 +57,18 @@ const EMPTY: Values = {
   days: '',
   pickup: '',
   when: '',
+  nonstop: '',
   notes: '',
 };
+
+/** The note the team sees for a day-and-night drive. */
+const NONSTOP_NOTE = 'Day and night driving (non-stop).';
+
+/** The customer's notes, with the day-and-night request first when they asked for it. */
+function notesOf(v: Values): string {
+  const nonstop = v.nonstop && v.pkg === 'one-way-drop';
+  return (nonstop ? `${NONSTOP_NOTE} ${v.notes.trim()}` : v.notes.trim()).trim().slice(0, 500);
+}
 
 /** Visual order — also the order we hunt for the first invalid field on submit. */
 const ORDER = ['name', 'phone', 'city', 'pkg', 'dest', 'destOther', 'days', 'pickup', 'when', 'notes'] as const;
@@ -100,7 +112,7 @@ function packageLabel(value: string): string {
 /** The trip for a trip package, as the form shows and saves it. */
 function tripOf(v: Values) {
   if (!isTripPackage(v.pkg)) return null;
-  return tripFor(v.pkg, v.city, v.dest, Number(v.days) || 0, v.when);
+  return tripFor(v.pkg, v.city, v.dest, Number(v.days) || 0, v.when, Boolean(v.nonstop));
 }
 
 function tripRecordOf(v: Values): BookingTrip | null {
@@ -121,7 +133,7 @@ function whatsappMessage(v: Values): string {
     trip ? `Trip: ${tripSummary(trip, v.city)}` : null,
     `Pickup: ${v.pickup}`,
     v.when ? `Preferred time: ${v.when.replace('T', ' ')}` : null,
-    v.notes ? `Notes: ${v.notes}` : null,
+    notesOf(v) ? `Notes: ${notesOf(v)}` : null,
   ]
     .filter((line) => line !== null)
     .join('\n');
@@ -177,7 +189,7 @@ export function BookingForm({
     };
   }, []);
 
-  /* Links can pre-fill the form: /book/?pkg=one-way-drop&city=Raipur&to=nagpur&days=2
+  /* Links can pre-fill the form: /book/?pkg=one-way-drop&city=Raipur&to=nagpur&days=2&nonstop=1
      (the One-Way Drop page's "Book this drop"). Unknown values are ignored. */
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
@@ -185,11 +197,13 @@ export function BookingForm({
     const city = q.get('city') ?? '';
     const to = q.get('to') ?? '';
     const days = q.get('days') ?? '';
+    const nonstop = q.get('nonstop') === '1' ? '1' : '';
     const patch: Partial<Values> = {
       ...(bookingPackages.some((p) => p.value === pkg) && { pkg }),
       ...(cities.some((c) => c.name === city) && { city }),
       ...((to === ELSEWHERE || findDestination(to)) && { dest: to }),
       ...(/^[1-9]\d?$/.test(days) && { days }),
+      ...(nonstop && { nonstop }),
     };
     if (Object.keys(patch).length) setValues((v) => ({ ...v, ...patch }));
   }, []);
@@ -243,7 +257,7 @@ export function BookingForm({
       package: values.pkg,
       pickup: values.pickup.trim(),
       preferredTime: values.when || '',
-      notes: values.notes.trim(),
+      notes: notesOf(values),
       ...(trip && { trip }),
       ...(account && { customerUid: account.uid }),
     });
@@ -551,6 +565,24 @@ export function BookingForm({
                     />
                   )}
                 </Field>
+
+                {trip.kind === 'one-way' && (
+                  <label className="flex items-start gap-3 text-sm sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      name="nonstop"
+                      checked={Boolean(values.nonstop)}
+                      onChange={(e) => set('nonstop')(e.target.checked ? '1' : '')}
+                      className="mt-0.5 size-4"
+                    />
+                    <span>
+                      <span className="font-semibold">Drive day and night</span>
+                      <span className="text-fg-muted block">
+                        No overnight rest, so he gets there sooner — the same price for the driving.
+                      </span>
+                    </span>
+                  </label>
+                )}
 
                 <TripEstimate
                   view={trip}
