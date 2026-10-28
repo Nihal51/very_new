@@ -58,6 +58,7 @@ export function GET() {
       mealAllowance: outstation.mealAllowance,
       kmPerDay: outstation.kmPerDay,
       localWithinKm: outstation.localWithinKm,
+      stationHours: outstation.stationHours,
     },
     destinations: destinationTable(tripRules),
     google: { profile: google.profile, writeReview: google.writeReview },

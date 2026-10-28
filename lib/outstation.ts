@@ -478,21 +478,47 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
  * the app and the website can never disagree: for each destination and each
  * pickup city, the km, the fewest days for a one-way drop (with the hours
  * after them until he is home, for a 7 AM start — any at all is a return day)
- * and for a round trip.
+ * and for a round trip. For other start times the app repeats planTrip's
+ * last step itself, from `lastDayHours` (driving on the last day), `homeHours`
+ * (the average way home to that city) and the destination's regular `trains`
+ * (hours to Raipur; the city adds homeHours minus Raipur's).
  */
 export function destinationTable(rules: TripRules) {
+  const r3 = (n: number) => Math.round(n * 1000) / 1000;
   return destinations.map((d) => ({
     id: d.id,
     name: d.name,
     nameHi: d.nameHi,
     region: d.region,
+    trains: (d.home.trains ?? []).map((t) => ({ ...t })),
     from: Object.fromEntries(
       pickupCities.map((city) => {
         const km = roadKm(city, d);
-        const one = planTrip(rules, km, 'one-way', 0, homeWay(d, city));
+        const way = homeWay(d, city);
+        const one = planTrip(rules, km, 'one-way', 0, way);
         const round = planTrip(rules, km, 'round');
-        return [city, { km, oneWay: { days: one.minDays, returnHours: one.returnHours }, roundDays: round.minDays }];
+        const lastDayKm = km > 0 ? km - (one.minDays - 1) * rules.kmPerDay : 0;
+        return [
+          city,
+          {
+            km,
+            oneWay: {
+              days: one.minDays,
+              returnHours: one.returnHours,
+              lastDayHours: r3(driveHours(rules, lastDayKm)),
+              homeHours: r3(way.hours ?? 0),
+            },
+            roundDays: round.minDays,
+          },
+        ];
       }),
-    ) as Record<PickupCity, { km: number; oneWay: { days: number; returnHours: number }; roundDays: number }>,
+    ) as Record<
+      PickupCity,
+      {
+        km: number;
+        oneWay: { days: number; returnHours: number; lastDayHours: number; homeHours: number };
+        roundDays: number;
+      }
+    >,
   }));
 }

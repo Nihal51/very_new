@@ -339,9 +339,20 @@ test('the app table has every destination from every pickup city', () => {
     }
   }
   const nagpur = table.find((r) => r.id === 'nagpur');
-  assert.deepEqual(nagpur.from.Raipur, { km: 284, oneWay: { days: 1, returnHours: 0 }, roundDays: 1 });
+  assert.deepEqual([nagpur.from.Raipur.km, nagpur.from.Raipur.oneWay.days, nagpur.from.Raipur.oneWay.returnHours, nagpur.from.Raipur.roundDays], [284, 1, 0, 1]);
   const delhi = table.find((r) => r.id === 'delhi');
-  assert.deepEqual(delhi.from.Raipur, { km: 1214, oneWay: { days: 2, returnHours: trip('delhi').returnHours }, roundDays: 4 });
+  const d = trip('delhi');
+  assert.equal(delhi.from.Raipur.km, 1214);
+  assert.deepEqual([delhi.from.Raipur.oneWay.days, delhi.from.Raipur.oneWay.returnHours, delhi.from.Raipur.roundDays], [2, d.returnHours, 4]);
+  assert.ok(Math.abs(delhi.from.Raipur.oneWay.lastDayHours - (d.dropAt - 24)) < 0.001);
+  assert.equal(delhi.from.Raipur.oneWay.homeHours, findDestination('delhi').home.raipur);
+  assert.deepEqual(delhi.trains, findDestination('delhi').home.trains);
+  // Everything the app needs to redo the plan for another start time.
+  for (const row of table) for (const city of pickupCities) {
+    const o = row.from[city].oneWay;
+    assert.ok(Number.isFinite(o.lastDayHours) && o.lastDayHours >= 0 && o.lastDayHours <= 14, `${city} → ${row.id}: ${o.lastDayHours}`);
+    assert.ok(Number.isFinite(o.homeHours) && o.homeHours >= 0, `${city} → ${row.id}`);
+  }
 });
 
 /* ------------------------------------------------- the profit guard ---- */
