@@ -1,5 +1,5 @@
 import { destinationTable } from '@/lib/outstation';
-import { settings, tripRules } from '@/lib/settings';
+import { railLookupUrl, railRules, settings, tripRules } from '@/lib/settings';
 import { site } from '@/lib/site';
 
 /**
@@ -43,9 +43,10 @@ export function GET() {
       standInPerDay: monthly.standInPerDay,
       replacementDays: monthly.replacementDays,
     },
-    /* The trip estimate: rules, and for each destination its regular trains
-       home and from each pickup city the km, the hours of driving and the
-       average way home (lib/outstation.ts destinationTable). The app redoes
+    /* The trip estimate: rules, and for each destination its stations for
+       the train lookup (no train times — those come from `trains.lookupUrl`
+       for the date) and from each pickup city the km, the hours of driving
+       and the typical way home (lib/outstation.ts destinationTable). The app redoes
        planTrip for the customer's start: each hoursPerDay of driving a day at
        prices.outstation, the rest extraHour an hour; the way home from the
        drop returnHour an hour, at most returnMaxPerDay in any 24 h. */
@@ -62,6 +63,16 @@ export function GET() {
       averageKmh: outstation.averageKmh,
     },
     destinations: destinationTable(tripRules),
+    /* The live train lookup (lib/rail.ts): the alerts robot's address and
+       the planning rules. The RailRadar key is never here — the robot has it. */
+    trains: {
+      lookupUrl: railLookupUrl,
+      transferBufferMinutes: railRules.transferBufferMinutes,
+      maxTransferHours: railRules.maxTransferHours,
+      directWithinHours: railRules.directWithinHours,
+      maxWaitHours: railRules.maxWaitHours,
+      maxOptions: railRules.maxOptions,
+    },
     google: { profile: google.profile, writeReview: google.writeReview },
     alerts: { pingUrl: alerts.pingUrl },
     site: { url: site.url, privacy: `${site.url}/privacy/`, terms: `${site.url}/terms/` },

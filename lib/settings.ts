@@ -10,6 +10,7 @@
 
 import { settings as raw } from '@/site-settings';
 import type { TripRules } from './outstation';
+import type { RailRules } from './rail';
 import { checkSettings, type SiteSettings } from './settings-schema';
 
 export const settings: SiteSettings = checkSettings(raw);
@@ -78,6 +79,16 @@ export const priceBounds = {
 };
 
 export { joiningFee as joiningFeeAmount };
+
+/** The train lookup's rules for lib/rail.ts, and where the robot answers ('' = no lookup). */
+export const railRules: RailRules = {
+  transferBufferMinutes: settings.trains.transferBufferMinutes,
+  maxTransferHours: settings.trains.maxTransferHours,
+  directWithinHours: settings.trains.directWithinHours,
+  maxWaitHours: settings.trains.maxWaitHours,
+  maxOptions: settings.trains.maxOptions,
+};
+export const railLookupUrl = (settings.trains.lookupUrl || settings.alerts.pingUrl).trim();
 
 /** The trip rules for lib/outstation.ts, from the checked settings. */
 export const tripRules: TripRules = {

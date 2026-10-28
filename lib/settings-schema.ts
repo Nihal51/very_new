@@ -21,6 +21,15 @@ export type SiteSettings = {
   login: { phoneOtp: boolean };
   /** The alerts robot's web-app URL; the website pings it after each booking so alerts go out in seconds. */
   alerts: { pingUrl: string };
+  /** The live train lookup for the way home (lib/rail.ts). */
+  trains: {
+    lookupUrl: string;
+    transferBufferMinutes: number;
+    maxTransferHours: number;
+    directWithinHours: number;
+    maxWaitHours: number;
+    maxOptions: number;
+  };
   prices: {
     oneHour: number;
     threeHours: number;
@@ -170,6 +179,16 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   if (o.busKmh < 20) problems.push('outstation.busKmh must be at least 20');
   count('outstation.stationHours', o.stationHours, 6);
   count('outstation.graceMinutes', o.graceMinutes, 59);
+  const tr = s.trains;
+  if (tr.lookupUrl && !/^https:\/\/script\.google(usercontent)?\.com\//.test(tr.lookupUrl))
+    problems.push('trains.lookupUrl must be the alerts robot’s web app address (https://script.google.com/…/exec) or empty');
+  count('trains.transferBufferMinutes', tr.transferBufferMinutes, 600);
+  if (tr.transferBufferMinutes < 30) problems.push('trains.transferBufferMinutes must be at least 30');
+  count('trains.maxTransferHours', tr.maxTransferHours, 48);
+  count('trains.directWithinHours', tr.directWithinHours, 96);
+  count('trains.maxWaitHours', tr.maxWaitHours, 96);
+  count('trains.maxOptions', tr.maxOptions, 10);
+  if (tr.maxOptions < 1) problems.push('trains.maxOptions must be at least 1');
   count('outstation.localWithinKm', o.localWithinKm, 150);
   count('outstation.minProfitPercent', o.minProfitPercent, 60);
   if (o.extraHour * o.hoursPerDay > s.prices.outstation.to * 2)

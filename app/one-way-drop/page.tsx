@@ -214,13 +214,7 @@ export default function OneWayDropPage() {
                   </th>
                   <td className="tabular hidden px-4 py-3 sm:table-cell">{t.days}</td>
                   <td className="text-fg-muted hidden px-4 py-3 sm:table-cell">
-                    {t.plan?.train ? (
-                      <span className="block">
-                        {t.plan.train.no} {t.plan.train.name}
-                      </span>
-                    ) : t.home ? (
-                      <span className="block">{homeText(t.home)}</span>
-                    ) : null}
+                    {t.home ? <span className="block">{homeText(t.home)} (typical)</span> : null}
                     <span className="text-fg text-xs">
                       {`${t.returnHours} h from the drop · ${rupees(t.est?.returnCharge ?? 0)}`}
                     </span>
@@ -234,7 +228,9 @@ export default function OneWayDropPage() {
           </table>
         </div>
         <p className="text-fg-subtle mt-3 text-sm">
-          Fuel, tolls, parking and meals are extra; you book his ticket home. Exact price confirmed on the call.
+          The way home here is a typical time. Pick your date on the booking form and the estimate looks up the real
+          trains home for that day. Fuel, tolls, parking and meals are extra; you book his ticket home. Exact price
+          confirmed on the call.
         </p>
       </Section>
 

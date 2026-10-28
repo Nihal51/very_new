@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { CheckCircleIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
 import { TripEstimate } from '@/components/TripEstimate';
+import { useReturnTrains } from '@/components/useReturnTrains';
 import { currentUser, loadProfile, mightBeSignedIn } from '@/lib/auth';
 import { NONSTOP_NOTE, isTripPackage, type BookingTrip } from '@/lib/bookings';
 import { findDestination } from '@/lib/outstation';
@@ -14,7 +15,7 @@ import { bookingPackages, cities } from '@/lib/content';
 import { submitDoc } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
 import { formatPhone, site, telHref, waHref } from '@/lib/site';
-import { ELSEWHERE, destinationGroups, tripFor, tripRecord, tripSummary } from '@/lib/trip';
+import { ELSEWHERE, destinationGroups, tripFor, tripRecord, tripSummary, whenText, type TripView } from '@/lib/trip';
 import {
   firstErrorField,
   isClean,
@@ -61,10 +62,21 @@ const EMPTY: Values = {
   notes: '',
 };
 
-/** The customer's notes, with the day-and-night request first when they asked for it. */
-function notesOf(v: Values): string {
+/**
+ * The customer's notes, with the day-and-night request first when they asked
+ * for it, and the train home the estimate used (so the team sees which one).
+ */
+function notesOf(v: Values, train?: string): string {
   const nonstop = v.nonstop && v.pkg === 'one-way-drop';
-  return (nonstop ? `${NONSTOP_NOTE} ${v.notes.trim()}` : v.notes.trim()).trim().slice(0, 500);
+  return [nonstop ? NONSTOP_NOTE : '', train ?? '', v.notes.trim()].filter(Boolean).join(' ').slice(0, 500);
+}
+
+/** "Train home in the estimate: 12345 Some Express, Fri, 31 Oct, 11:40 pm (timetable)." */
+function trainNote(view: TripView | null): string | undefined {
+  const o = view?.ret;
+  if (!o) return undefined;
+  const legs = o.legs.map((l) => `${l.train.number} ${l.train.name} ${whenText(l.depart)}`).join(', then ');
+  return `Train home in the estimate: ${legs} (${o.scheduled ? 'timetable' : 'live'}; not booked).`;
 }
 
 /** Visual order — also the order we hunt for the first invalid field on submit. */
@@ -112,14 +124,13 @@ function tripOf(v: Values) {
   return tripFor(v.pkg, v.city, v.dest, Number(v.days) || 0, v.when, Boolean(v.nonstop));
 }
 
-function tripRecordOf(v: Values): BookingTrip | null {
-  const view = tripOf(v);
+/** The trip as saved: from the view the customer saw (with the train they chose applied). */
+function tripRecordOf(v: Values, view: TripView | null): BookingTrip | null {
   return view && v.dest ? tripRecord(view, v.destOther) : null;
 }
 
 /** Everything the customer typed, as a WhatsApp message — the outage fallback. */
-function whatsappMessage(v: Values): string {
-  const trip = tripRecordOf(v);
+function whatsappMessage(v: Values, trip: BookingTrip | null, train?: string): string {
   return [
     `Hi ${site.name}, I would like to book a driver.`,
     '',
@@ -130,7 +141,7 @@ function whatsappMessage(v: Values): string {
     trip ? `Trip: ${tripSummary(trip, v.city)}` : null,
     `Pickup: ${v.pickup}`,
     v.when ? `Preferred time: ${v.when.replace('T', ' ')}` : null,
-    notesOf(v) ? `Notes: ${notesOf(v)}` : null,
+    notesOf(v, train) ? `Notes: ${notesOf(v, train)}` : null,
   ]
     .filter((line) => line !== null)
     .join('\n');
@@ -157,6 +168,7 @@ export function BookingForm({
   const [status, setStatus] = useState<Status>('idle');
   const [failureMessage, setFailureMessage] = useState('');
   const [submitted, setSubmitted] = useState<Values>(EMPTY);
+  const [submittedTrip, setSubmittedTrip] = useState<{ trip: BookingTrip | null; train?: string }>({ trip: null });
 
   const formRef = useRef<HTMLFormElement>(null);
   const successRef = useRef<HTMLDivElement>(null);
@@ -186,7 +198,7 @@ export function BookingForm({
     };
   }, []);
 
-  /* Links can pre-fill the form: /book/?pkg=one-way-drop&city=Raipur&to=nagpur&days=2&nonstop=1
+  /* Links can pre-fill the form: /book/?pkg=one-way-drop&city=Raipur&to=nagpur&days=2&nonstop=1&when=2026-10-31T07:00
      (the One-Way Drop page's "Book this drop"). Unknown values are ignored. */
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
@@ -195,7 +207,9 @@ export function BookingForm({
     const to = q.get('to') ?? '';
     const days = q.get('days') ?? '';
     const nonstop = q.get('nonstop') === '1' ? '1' : '';
+    const when = q.get('when') ?? '';
     const patch: Partial<Values> = {
+      ...(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(when) && { when }),
       ...(bookingPackages.some((p) => p.value === pkg) && { pkg }),
       ...(cities.some((c) => c.name === city) && { city }),
       ...((to === ELSEWHERE || findDestination(to)) && { dest: to }),
@@ -210,7 +224,12 @@ export function BookingForm({
     if (status === 'success') successRef.current?.focus();
   }, [status]);
 
-  const trip = useMemo(() => tripOf(values), [values]);
+  const baseTrip = useMemo(() => tripOf(values), [values]);
+  // The real trains home for the drop date (one-way drops); `trip` has the chosen one applied.
+  const rail = useReturnTrains(baseTrip, values.city);
+  const trip = rail.view;
+  const tripRec = tripRecordOf(values, trip);
+  const train = trainNote(trip);
 
   const set = (key: keyof Values) => (value: string) => {
     const next = { ...values, [key]: value };
@@ -246,7 +265,8 @@ export function BookingForm({
     }
 
     setStatus('submitting');
-    const trip = tripRecordOf(values);
+    const sentTrip = tripRec;
+    const sentTrain = train;
     const result = await submitDoc('bookings', {
       name: values.name.trim(),
       phone: normalisePhone(values.phone),
@@ -254,13 +274,14 @@ export function BookingForm({
       package: values.pkg,
       pickup: values.pickup.trim(),
       preferredTime: values.when || '',
-      notes: notesOf(values),
-      ...(trip && { trip }),
+      notes: notesOf(values, sentTrain),
+      ...(sentTrip && { trip: sentTrip }),
       ...(account && { customerUid: account.uid }),
     });
 
     if (result.ok) {
       setSubmitted(values);
+      setSubmittedTrip({ trip: sentTrip, ...(sentTrain && { train: sentTrain }) });
       setStatus('success');
       setValues(account ? { ...EMPTY, name: values.name, phone: values.phone } : EMPTY);
       setTouched({});
@@ -274,7 +295,6 @@ export function BookingForm({
   /* ------------------------------------------------------------- success -- */
 
   if (status === 'success') {
-    const submittedTrip = tripRecordOf(submitted);
     return (
       <Card id={id} className={cn('scroll-mt-28', className)}>
         <div ref={successRef} tabIndex={-1} className="focus:outline-none">
@@ -301,10 +321,10 @@ export function BookingForm({
               <dt className="text-fg-subtle">City</dt>
               <dd className="mt-0.5 font-semibold">{submitted.city}</dd>
             </div>
-            {submittedTrip && (
+            {submittedTrip.trip && (
               <div className="sm:col-span-2">
                 <dt className="text-fg-subtle">Trip</dt>
-                <dd className="mt-0.5 font-semibold">{tripSummary(submittedTrip, submitted.city)}</dd>
+                <dd className="mt-0.5 font-semibold">{tripSummary(submittedTrip.trip, submitted.city)}</dd>
               </div>
             )}
             <div className="sm:col-span-2">
@@ -340,7 +360,7 @@ export function BookingForm({
               Call {formatPhone(site.phone)}
             </ButtonAnchor>
             <ButtonAnchor
-              href={waHref(whatsappMessage(submitted))}
+              href={waHref(whatsappMessage(submitted, submittedTrip.trip, submittedTrip.train))}
               target="_blank"
               rel="noopener noreferrer"
               variant="outline"
@@ -583,6 +603,7 @@ export function BookingForm({
 
                 <TripEstimate
                   view={trip}
+                  rail={rail}
                   city={values.city}
                   elsewhere={values.dest === ELSEWHERE}
                   onUseLocal={() => setValues((v) => ({ ...v, pkg: 'local-full-day' }))}
@@ -655,7 +676,7 @@ export function BookingForm({
               <p>{failureMessage}</p>
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <ButtonAnchor
-                  href={waHref(whatsappMessage(values))}
+                  href={waHref(whatsappMessage(values, tripRec, train))}
                   target="_blank"
                   rel="noopener noreferrer"
                   size="sm"

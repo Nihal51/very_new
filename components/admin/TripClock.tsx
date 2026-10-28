@@ -366,13 +366,12 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
     warnings.push(
       `The drive took ${durationText(bill.driveMinutes)}; the plan was about ${Math.round(plan.dropAt)} h. Ask why before you send the bill.`,
     );
-  if (plan?.dropAt !== undefined && plan.homeAt !== undefined && link.kind === 'one-way') {
-    const planned = plan.homeAt - plan.dropAt;
-    if (bill.returnMinutes / 60 > planned + LATE_HOME_HOURS)
-      warnings.push(
-        `His way home took ${durationText(bill.returnMinutes)}; the plan was about ${Math.round(planned)} h${plan.train ? ` (${plan.train.no} ${plan.train.name})` : ''}. Ask which train he took.`,
-      );
-  }
+  // The way home the customer was quoted (the train looked up for their date, or the typical time).
+  const planned = b.quote?.returnHours || b.trip?.returnHours || 0;
+  if (link.kind === 'one-way' && planned > 0 && bill.returnMinutes / 60 > planned + LATE_HOME_HOURS)
+    warnings.push(
+      `His way home took ${durationText(bill.returnMinutes)}; the estimate allowed about ${planned} h. Ask which train he took.`,
+    );
 
   const pay = int(cost) ? driverPay(bill, int(cost), int(returnPay), tripRules) : 0;
   const profit = bill.amount - bill.ticket - pay;

@@ -12,15 +12,18 @@ import {
   homeTravelHours,
   homeWay,
   pickupCities,
+  pickupStations,
   planTrip,
   roadKm,
+  withReturn,
   type Destination,
   type Estimate,
   type PickupCity,
   type TripKind,
   type TripPlan,
 } from './outstation';
-import { rupeeRange, rupees, tripRules } from './settings';
+import type { ReturnOption } from './rail';
+import { rupeeRange, rupees, settings, tripRules } from './settings';
 
 /** The picker's value for a place that is not in the list. */
 export const ELSEWHERE = 'other';
@@ -57,6 +60,8 @@ export type TripView = {
   est?: Estimate;
   /** The pickup city itself was chosen as the destination. */
   sameCity: boolean;
+  /** One-way: the train home from the lookup that the plan and the estimate use (withTrain). */
+  ret?: ReturnOption;
 };
 
 /**
@@ -146,28 +151,88 @@ export function atText(view: Pick<TripView, 'startHour' | 'startDate'>, hours: n
 /** "7:00 am" — the start time alone. */
 export const startText = (view: Pick<TripView, 'startHour'>) => atText({ startHour: view.startHour }, 0).replace(/^day 1, /, '');
 
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-/** [2, 5] → "Tue & Fri"; [1, 2, 4, 5, 6] → "Mon, Tue, Thu, Fri & Sat". */
-const dayList = (days: readonly number[]) => {
-  const names = [...days].sort((a, b) => a - b).map((d) => WEEKDAYS[d] ?? '');
-  return names.length > 1 ? `${names.slice(0, -1).join(', ')} & ${names[names.length - 1]}` : (names[0] ?? '');
-};
-
 /** "about 22 h" — hours rounded, never 0. */
 const aboutHours = (h: number) => `about ${Math.max(1, Math.round(h))} h`;
 
+/* --------------------------------------------------- the train home ---- */
+
+const IST_MS = 330 * 60_000;
+const WHEN = new Intl.DateTimeFormat('en-IN', {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true,
+  timeZone: 'Asia/Kolkata',
+});
+
+/** An instant → "Fri, 31 Oct, 11:40 pm" (India time). */
+export const whenText = (ms: number) => WHEN.format(new Date(ms)).replace(/\s?(am|pm)$/i, ' $1');
+
+/** 95 → "1 h 35 m". */
+export function hmText(min: number): string {
+  const m = Math.max(0, Math.round(min));
+  const h = Math.floor(m / 60);
+  const r = m - h * 60;
+  return h && r ? `${h} h ${r} m` : h ? `${h} h` : `${r} m`;
+}
+
+/** When the driver leaves, as an instant — only when the customer picked a date. */
+export function startInstant(view: Pick<TripView, 'startDate' | 'startHour'>): number | undefined {
+  const sd = view.startDate;
+  if (!sd) return undefined;
+  return Date.UTC(sd.y, sd.m - 1, sd.d) + Math.round(view.startHour * 60) * 60_000 - IST_MS;
+}
+
+/**
+ * What the train lookup needs for this trip: the destination's stations and
+ * change stations, the pickup city's home station, and when he drops the car
+ * and can board (drop + stationHours). Undefined when there is nothing to
+ * look up: a round trip, a bus route, or no date picked yet.
+ */
+export function railInput(view: TripView, city: string) {
+  const p = view.plan;
+  const start = startInstant(view);
+  if (view.kind !== 'one-way' || !view.dest?.rail || !p || p.dropAt === undefined || start === undefined) return undefined;
+  if (!(pickupCities as readonly string[]).includes(city)) return undefined;
+  const drop = start + Math.round(p.dropAt * 60) * 60_000;
+  return {
+    stations: [...view.dest.rail.stations],
+    hubs: [...(view.dest.rail.hubs ?? [])],
+    home: pickupStations[city as PickupCity] as string,
+    drop,
+    ready: drop + Math.round(tripRules.stationHours * 60) * 60_000,
+  };
+}
+
+/** The trip with a train from the lookup in place of the allowance: the plan, the way home and the estimate. */
+export function withTrain(view: TripView, option: ReturnOption | undefined): TripView {
+  const start = startInstant(view);
+  if (!option || !view.plan || view.plan.dropAt === undefined || start === undefined) return view;
+  const h = (ms: number) => (ms - start) / 3_600_000;
+  const plan = withReturn(view.plan, h(option.depart), h(option.arrive));
+  if (plan === view.plan) return view;
+  return { ...view, plan, returnHours: plan.returnHours, est: estimate(tripRules, plan), ret: option };
+}
+
+/** The way home split up: waiting (getting to the station included) and travelling, hours. */
+export function wayHome(view: TripView): { wait: number; travel: number; total: number } | undefined {
+  const p = view.plan;
+  if (!p || p.dropAt === undefined || p.leaveAt === undefined || p.homeAt === undefined) return undefined;
+  return { wait: p.leaveAt - p.dropAt, travel: p.homeAt - p.leaveAt, total: p.returnHours };
+}
+
 /**
  * The one-way drop hour by hour, for the estimate card: when he leaves, how
- * he drives, when he drops the car, the train or bus he catches (and how long
- * he waits for it), and when he is home.
+ * he drives, when he drops the car, then either the train from the lookup
+ * (each train, the change and the wait, with real dates) or — when no train
+ * is confirmed — the typical way home, labelled as such.
  */
 export function tripTimeline(view: TripView, city: string): { label: string; value: string }[] {
   const p = view.plan;
   if (!p || view.kind !== 'one-way' || p.dropAt === undefined || p.homeAt === undefined) return [];
   const at = (h: number) => atText(view, h);
-  const leaveAt = p.leaveAt ?? p.dropAt;
-  const wait = leaveAt - p.dropAt - tripRules.stationHours;
   const driving = p.nonstop
     ? `${aboutHours(p.driveHours)}, day and night`
     : p.minDays > 1
@@ -178,18 +243,24 @@ export function tripTimeline(view: TripView, city: string): { label: string; val
     { label: 'Driving', value: driving },
     { label: `Drops the car in ${view.dest?.name ?? 'the city'}`, value: `about ${at(p.dropAt)}` },
   ];
-  if (p.train) {
-    const t = p.train;
-    const extra = [t.via ? `change at ${t.via}` : null, t.days?.length ? `runs ${dayList(t.days)}` : null].filter(Boolean);
-    rows.push({
-      label: 'Train home (you book his ticket)',
-      value: `${t.no} ${t.name}${extra.length ? ` (${extra.join('; ')})` : ''}, ${at(leaveAt)}`,
+  const o = view.ret;
+  if (o) {
+    rows.push({ label: 'Waits for his train (getting to the station included)', value: hmText(o.waitMinutes) });
+    o.legs.forEach((l, i) => {
+      rows.push({
+        label: `${o.legs.length > 1 ? `Train ${i + 1}` : 'Train home'}: ${l.train.number} ${l.train.name}`,
+        value: `${l.from.name} ${whenText(l.depart)} → ${l.to.name} ${whenText(l.arrive)}`,
+      });
+      if (i === 0 && o.transfer) rows.push({ label: `Change at ${o.transfer.station.name}`, value: `${hmText(o.transfer.minutes)} between the trains` });
     });
-    if (wait >= 1) rows.push({ label: 'He waits for it', value: aboutHours(wait) });
+    rows.push({ label: `Home in ${city}`, value: `${o.scheduled ? 'about ' : ''}${whenText(o.expectedArrive)}` });
   } else {
-    rows.push({ label: 'Bus or train home (you book his ticket)', value: view.home ? homeText(view.home) : 'bus or train' });
+    rows.push({
+      label: 'Way home (typical time — no train confirmed)',
+      value: view.home ? homeText(view.home) : 'bus or train',
+    });
+    rows.push({ label: `Home in ${city}`, value: `about ${at(p.homeAt)}` });
   }
-  rows.push({ label: `Home in ${city}`, value: `about ${at(p.homeAt)}` });
   return rows;
 }
 
@@ -254,15 +325,27 @@ export function estimateLines(view: TripView): { label: string; amount: string }
       label: `${plural(p.extraHours, 'driving hour')}${p.fullDays > 0 ? ' more' : ''} × ${rupees(tripRules.extraHour)}`,
       amount: rupees(view.est.extraCharge),
     });
+  const w = wayHome(view);
+  const split = w ? ` (waiting ${aboutHours(w.wait).replace('about ', '')} + ${view.ret ? 'on the train' : 'travelling'} ${aboutHours(w.travel).replace('about ', '')})` : '';
   lines.push(
     p.returnHours > 0
       ? {
-          label: `Driver’s way home: ${plural(p.returnHours, 'hour')} from the drop until he is home, waiting included × ${rupees(tripRules.returnHour)} (max ${rupees(tripRules.returnMaxPerDay)} a day)`,
+          label: `Driver’s way home: ${plural(p.returnHours, 'hour')} from the drop until he is home${split} × ${rupees(tripRules.returnHour)}, max ${rupees(tripRules.returnMaxPerDay)} a day`,
           amount: rupees(view.est.returnCharge),
         }
       : { label: 'Driver’s way home', amount: 'No charge' },
   );
   return lines;
+}
+
+/** What the estimate does NOT include, each on its own line: paid separately or given directly. */
+export function notIncluded(view: TripView): string[] {
+  return [
+    ...(view.kind === 'one-way' ? ['His train or bus ticket home: you book and pay for it'] : []),
+    `His meals: please give them, or ${rupees(settings.outstation.mealAllowance)} a day`,
+    'Fuel, tolls and parking: you pay as you go',
+    'A hotel, only if a stop for the night is planned with you on the call',
+  ];
 }
 
 /** "₹1,550 × 2 days + ₹120 × 1 extra hour + ₹2,400 way home (35 h) + ₹650 ticket" — the agreed price, itemised. */

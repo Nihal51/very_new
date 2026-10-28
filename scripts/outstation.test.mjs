@@ -46,7 +46,7 @@ const rules = {
 const { from: lo, to: hi } = rules.dayRate;
 
 const fromRaipur = (id) => roadKm('Raipur', findDestination(id));
-/** A trip from Raipur as the booking form plans it: with the real trains home, leaving at `start` (7 AM, any day). */
+/** A trip from Raipur as the booking form plans it before the train lookup (the typical time home), leaving at `start` (7 AM, any day). */
 const trip = (id, kind = 'one-way', days = 0, start = 7, nonstop = false) =>
   planTrip(rules, fromRaipur(id), kind, days, homeWay(findDestination(id), 'Raipur'), start, nonstop);
 const price = (plan) => {
@@ -101,83 +101,46 @@ test('Raipur → Nagpur one-way: 6 h of driving + 6 h home, all by the hour — 
   assert.deepEqual(price(plan), [1440, 1440]);
 });
 
-test('Raipur → Mumbai one-way: 1 day + 11 h of driving, the 9:10 PM Mail, 23 h home — ₹4,070–4,170', () => {
+test('Raipur → Mumbai one-way: 1 day + 11 h of driving; without a confirmed train, the typical 18 h home — ₹4,070–4,170', () => {
   const plan = trip('mumbai');
   assert.deepEqual([plan.fullDays, plan.extraHours, plan.days], [1, 11, 2]);
-  assert.equal(plan.train.no, '12809');
-  assert.equal(plan.returnHours, 23);
+  assert.equal(plan.homeBasis, 'allowance', 'no train is invented: the typical time until the lookup confirms one');
+  assert.equal(plan.returnHours, 1 + 18);
   const e = estimate(rules, plan);
   assert.deepEqual([e.extraCharge, e.returnCharge], [11 * 120, 1200]);
   assert.deepEqual(price(plan), [4070, 4170]);
 });
 
-test('Raipur → Hyderabad: the direct train runs Mon, Wed & Fri; other days the daily Dakshin Exp via Nagpur', () => {
-  // Leaving on a Sunday: drops the car Monday ~10:30 AM, waits ~11 h for the 10:40 PM direct train.
-  const sunday = trip('hyderabad', 'one-way', 0, { hour: 7, weekday: 0 });
-  assert.deepEqual([sunday.fullDays, sunday.extraHours], [1, 4]);
-  assert.equal(sunday.train.no, '12771');
-  assert.ok(sunday.leaveAt - sunday.dropAt > 11);
-  assert.equal(sunday.returnHours, 27);
-  assert.deepEqual(price(sunday), [1550 + 480 + 1200 + 360, 1650 + 480 + 1200 + 360]);
-  // Leaving on a Monday: no direct train on Tuesday — the Dakshin Exp, changing at Nagpur.
-  const monday = trip('hyderabad', 'one-way', 0, { hour: 7, weekday: 1 });
-  assert.equal(monday.train.no, '12721');
-  assert.equal(monday.train.via, 'Nagpur');
-  // No date: only the daily trains count.
-  assert.equal(trip('hyderabad').train.no, '12721');
-});
-
-test('Raipur → Bengaluru, leaving Thursday 7:30 AM day and night: drops Friday morning, the Friday-only Wainganga Exp', () => {
-  // The owner's check: 12975 does not run on Fridays (Thu & Sat only), so it is never offered then.
-  const plan = trip('bengaluru', 'one-way', 0, { hour: 7.5, weekday: 4 }, true);
-  assert.equal(plan.train.no, '12251');
-  const leavesOn = (4 + Math.floor((7.5 + plan.leaveAt) / 24)) % 7;
-  assert.equal(leavesOn, 5, 'leaves on the Friday');
-});
-
-test('Raipur → Delhi: 2 days + 1 h of driving; the trains that do not run that day are skipped', () => {
-  // Unknown day: only the daily Chhattisgarh Exp counts.
-  const anyDay = trip('delhi');
-  assert.deepEqual([anyDay.fullDays, anyDay.extraHours, anyDay.days], [2, 1, 2]);
-  assert.equal(anyDay.train.no, '18238');
-  // Leaving on a Sunday: drops the car Monday evening; the Samta runs Tuesday morning.
-  const sunday = trip('delhi', 'one-way', 0, { hour: 7, weekday: 0 });
-  assert.equal(sunday.train.no, '12808');
-  assert.ok(sunday.homeAt < anyDay.homeAt);
-  // Leaving on a Monday: drops Tuesday evening; no Samta on Wednesday, so the daily train.
-  assert.equal(trip('delhi', 'one-way', 0, { hour: 7, weekday: 1 }).train.no, '18238');
-});
-
-test('Raipur → Bengaluru: no daily direct train — the daily change at Nagpur beats waiting for the weekly ones', () => {
-  const plan = trip('bengaluru', 'one-way', 0, { hour: 7, weekday: 1 });
-  assert.deepEqual([plan.fullDays, plan.extraHours, plan.days], [2, 4, 3]);
-  assert.equal(plan.train.via, 'Nagpur');
-  // The Thursday-only train is never taken on a Wednesday.
-  for (let weekday = 0; weekday < 7; weekday++) {
-    const p = trip('bengaluru', 'one-way', 0, { hour: 7, weekday });
-    if (p.train.days) {
-      const leavesOn = (weekday + Math.floor((7 + p.leaveAt) / 24)) % 7;
-      assert.ok(p.train.days.includes(leavesOn), `weekday ${weekday}: ${p.train.no} does not run on ${leavesOn}`);
-    }
+test('no train, time or running day is typed into the destinations — train routes list only their stations', () => {
+  for (const d of destinations) {
+    assert.equal('trains' in d.home, false, `${d.id}: train times come from the lookup, never from this file`);
+    if (!d.rail) continue;
+    assert.equal(d.home.by, 'train', `${d.id}: stations only on train routes`);
+    assert.ok(d.rail.stations.length >= 1 && d.rail.stations.length <= 3, `${d.id}: 1–3 stations`);
+    for (const code of [...d.rail.stations, ...(d.rail.hubs ?? [])]) assert.match(code, /^[A-Z]{1,5}$/, `${d.id}: ${code}`);
+    for (const hub of d.rail.hubs ?? []) assert.ok(!d.rail.stations.includes(hub), `${d.id}: a change station is not a boarding one`);
   }
+  // Long train routes all have their stations; the change at Nagpur where direct trains are few.
+  for (const id of ['nagpur', 'jabalpur', 'visakhapatnam', 'varanasi', 'hyderabad', 'kolkata', 'pune', 'mumbai', 'delhi', 'bengaluru'])
+    assert.ok(findDestination(id).rail, id);
+  assert.deepEqual([...findDestination('bengaluru').rail.hubs], ['NGP']);
 });
 
-test('Raipur → Kolkata: drops before noon on day 2, the afternoon Gitanjali, 16 h home', () => {
+test('Raipur → Kolkata: drops before noon on day 2; the typical way home', () => {
   const plan = trip('kolkata');
-  assert.equal(plan.train.no, '12860');
-  assert.equal(plan.returnHours, 16);
+  assert.equal(plan.returnHours, Math.ceil(1 + findDestination('kolkata').home.raipur));
   assert.deepEqual(price(plan), [1550 + 5 * 120 + 1200, 1650 + 5 * 120 + 1200]);
 });
 
-test('day and night (non-stop): the same driving price, an earlier drop — the train decides if it helps', () => {
+test('day and night (non-stop): the same driving price, an earlier drop', () => {
   const normal = trip('mumbai');
   const nonstop = trip('mumbai', 'one-way', 0, 7, true);
   assert.equal(nonstop.nonstop, true);
   assert.deepEqual([nonstop.fullDays, nonstop.extraHours], [normal.fullDays, normal.extraHours]);
   assert.ok(Math.abs(nonstop.dropAt - nonstop.driveHours) < 1e-9);
   assert.ok(nonstop.dropAt < normal.dropAt);
-  // Mumbai at 5:20 AM: the next train is still the 9:10 PM one, so he waits — more hours home.
-  assert.ok(nonstop.returnHours > normal.returnHours);
+  // Whether that saves time home depends on the trains for the date (lib/rail.ts); the allowance is the same.
+  assert.equal(nonstop.returnHours, normal.returnHours);
 });
 
 test('the drive: 12 h a day and 12 of rest; up to an hour more finishes that evening', () => {
@@ -191,36 +154,7 @@ test('the drive: 12 h a day and 12 of rest; up to an hour more finishes that eve
   assert.equal(dropTime(rules, 6, false, 2), 48 + 6, 'two days booked on top: stops on the way');
 });
 
-test('the first train he can catch is at least stationHours after the drop, on a day it runs', () => {
-  for (const d of destinations) {
-    if (!d.home.trains) continue;
-    for (const hour of [0, 5, 7, 9.5, 13, 18, 23])
-      for (const weekday of [undefined, 0, 3, 6]) {
-        const plan = trip(d.id, 'one-way', 0, { hour, weekday });
-        if (!plan.train) continue;
-        assert.ok(plan.leaveAt >= plan.dropAt + rules.stationHours - 1e-9, `${d.id} @${hour}`);
-        const [h, m] = plan.train.dep.split(':').map(Number);
-        const clock = (((hour + plan.leaveAt) % 24) + 24) % 24;
-        assert.ok(Math.abs(clock - (h + m / 60)) < 1e-6, `${d.id} @${hour}: leaves at ${clock}`);
-        if (plan.train.days) {
-          assert.notEqual(weekday, undefined, 'a train with running days needs the date');
-          assert.ok(plan.train.days.includes((weekday + Math.floor((hour + plan.leaveAt) / 24)) % 7));
-        }
-      }
-  }
-});
-
-test('every regular train is sensible: number, HH:MM, running days, hours close to the route\'s average', () => {
-  for (const d of destinations)
-    for (const t of d.home.trains ?? []) {
-      assert.match(t.dep, /^([01]\d|2[0-3]):[0-5]\d$/, `${d.id} ${t.no}`);
-      assert.match(t.no, /^\d{5}$/, `${d.id} ${t.no}`);
-      assert.ok(t.hours > 0 && Math.abs(t.hours - d.home.raipur) <= 8, `${d.id} ${t.no}: ${t.hours} h`);
-      for (const day of t.days ?? []) assert.ok(Number.isInteger(day) && day >= 0 && day <= 6, `${d.id} ${t.no}`);
-    }
-});
-
-test('the train/bus time home comes from the timetables, per pickup city', () => {
+test('the typical time home (the allowance) per pickup city', () => {
   const delhi = findDestination('delhi');
   assert.deepEqual(
     pickupCities.map((c) => homeTravelHours(delhi, c)),
@@ -358,7 +292,8 @@ test('the app table has every destination from every pickup city, and what the a
   const nagpur = table.find((r) => r.id === 'nagpur');
   assert.deepEqual([nagpur.from.Raipur.km, nagpur.from.Raipur.oneWay.days, nagpur.from.Raipur.oneWay.returnHours], [284, 1, 6]);
   const blr = table.find((r) => r.id === 'bengaluru');
-  assert.deepEqual(blr.trains, findDestination('bengaluru').home.trains);
+  assert.equal('trains' in blr, false, 'no train list for the app either');
+  assert.deepEqual(blr.rail, { stations: ['SMVB', 'SBC', 'YPR'], hubs: ['NGP'] });
   assert.ok(Math.abs(blr.from.Raipur.oneWay.driveHours - 1370 / rules.averageKmh) < 0.001);
 });
 

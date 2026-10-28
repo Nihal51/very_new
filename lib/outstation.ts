@@ -18,10 +18,12 @@
  *   - Timings: from the start date and time. Normally he drives 12 hours and
  *     rests 12 (up to an hour more finishes that evening); or, if the customer
  *     wants it, day and night without the rest (same price). That gives the
- *     drop time; then stationHours to the station, and the first regular train
- *     home that runs that day (`home.trains`, with their running days, and
- *     connections such as Bengaluru via Nagpur), or the average time home on
- *     routes with a bus or train every hour or two.
+ *     drop time; then stationHours to the station and the train home: on
+ *     train routes the real trains for that date from the lookup (lib/rail.ts,
+ *     direct first, then a confirmed change such as Nagpur), applied with
+ *     withReturn. Bus routes, and a train route whose lookup cannot confirm a
+ *     train, use the typical hours home as a labelled allowance (decided
+ *     29 Oct 2026: no train times are typed into this file).
  *   - The way home (one-way): from the drop until he is home — the waiting
  *     included — returnHour an hour, at most returnMaxPerDay in any 24 hours.
  *   - Round trips: the days of the trip (the driver is with the customer).
@@ -79,54 +81,36 @@ export type Destination = {
   /** One-way road and straight-line distance from Raipur, in km. */
   fromRaipur: { road: number; air: number };
   /**
-   * The driver's way home after a one-way drop: how he usually travels, and
-   * hours on board to Raipur, to Durg (also used for Bhilai) and to Bilaspur —
-   * the regular daily trains or buses a driver can get on short notice (not
-   * weekly premium trains), from erail.in, redBus and AbhiBus timetables.
-   * Getting to the station (stationHours) is added on top.
-   *
-   * `trains`: the regular trains home where waiting for one matters — long
-   * routes with only a few a day. With them the estimate takes the one that
-   * gets him home soonest among those he can catch after the drop on the day
-   * they run; without them (buses and short routes, with a service every hour
-   * or two) he leaves stationHours after the drop. Their `hours` are to
-   * Raipur; Durg and Bilaspur add the difference in the averages above.
+   * The driver's way home after a one-way drop: how he usually travels, and a
+   * typical number of hours on board to Raipur, to Durg (also used for
+   * Bhilai) and to Bilaspur. These are an ALLOWANCE for the estimate when no
+   * train can be confirmed (and for bus routes): never shown as a train or a
+   * timetable. Getting to the station (stationHours) is added on top.
    */
   home: {
     by: 'train' | 'bus' | 'bus + train';
     raipur: number;
     durg: number;
     bilaspur: number;
-    trains?: readonly HomeTrain[];
   };
+  /**
+   * Train routes: the destination's stations (Indian Railways codes, the main
+   * one first) where the driver can board, and change stations (`hubs`) for
+   * a connection when no direct train leaves soon enough. The trains and their
+   * times come from the live lookup for the drop date (lib/rail.ts) — none
+   * are typed in here.
+   */
+  rail?: { stations: readonly string[]; hubs?: readonly string[] };
 };
 
-/**
- * A regular train home: number and name, departure time (IST, "HH:MM") and
- * hours to Raipur. `days`: the weekdays it leaves (0 = Sunday … 6 =
- * Saturday); left out = every day. `via`: a change of train on the way (the
- * hours include the change and the second train).
- */
-export type HomeTrain = {
-  no: string;
-  name: string;
-  dep: string;
-  hours: number;
-  days?: readonly number[];
-  via?: string;
-};
+/** The pickup cities' home stations: Bhilai drivers come home to Durg, the nearest main station. */
+export const pickupStations = { Raipur: 'R', Bhilai: 'DURG', Durg: 'DURG', Bilaspur: 'BSP' } as const;
 
 /**
  * Popular destinations. Road distances from Raipur: distancebetween2.com,
- * checked 19 Oct 2026 — check a few against Google Maps once a year. Train and
- * bus times home: erail.in, redBus, AbhiBus, ixigo, checked 20 Oct 2026 — check
- * them once a year too (new trains, new Vande Bharats). The `trains` lists:
- * departure times and running days from each train's ConfirmTkt timetable
- * (its train-information table, where the page header disagrees), checked
- * 28 Oct 2026. Hyderabad and Bengaluru have no daily direct train to Raipur:
- * besides the direct ones on their days, the daily trains to Nagpur count,
- * with about 6½ h more for the change and the train on to Raipur. Add a
- * place by copying
+ * checked 19 Oct 2026 — check a few against Google Maps once a year. The
+ * typical hours home (the allowance) from erail.in, redBus, AbhiBus, ixigo,
+ * checked 20 Oct 2026. Station codes: Indian Railways. Add a place by copying
  * a line; the other pickup cities' distances are worked out from these.
  */
 export const destinations: readonly Destination[] = [
@@ -136,40 +120,40 @@ export const destinations: readonly Destination[] = [
   { id: 'durg', name: 'Durg', nameHi: 'दुर्ग', region: 'cg', lat: 21.1904, lng: 81.2849, fromRaipur: { road: 40, air: 36.4 }, home: { by: 'train', raipur: 0.75, durg: 0, bilaspur: 2.75 } },
   { id: 'mahasamund', name: 'Mahasamund', nameHi: 'महासमुंद', region: 'cg', lat: 21.1074, lng: 82.0948, fromRaipur: { road: 55, air: 51.1 }, home: { by: 'bus', raipur: 1.5, durg: 2.5, bilaspur: 3.5 } },
   { id: 'dhamtari', name: 'Dhamtari', nameHi: 'धमतरी', region: 'cg', lat: 20.7076, lng: 81.5494, fromRaipur: { road: 67, air: 61.6 }, home: { by: 'bus', raipur: 2, durg: 2.25, bilaspur: 4 } },
-  { id: 'rajnandgaon', name: 'Rajnandgaon', nameHi: 'राजनांदगांव', region: 'cg', lat: 21.0974, lng: 81.0337, fromRaipur: { road: 74, air: 64.5 }, home: { by: 'train', raipur: 1.5, durg: 0.75, bilaspur: 3 } },
-  { id: 'dongargarh', name: 'Dongargarh', nameHi: 'डोंगरगढ़', region: 'cg', lat: 21.1891, lng: 80.755, fromRaipur: { road: 108, air: 90.5 }, home: { by: 'train', raipur: 2, durg: 1.25, bilaspur: 3.75 } },
-  { id: 'bilaspur', name: 'Bilaspur', nameHi: 'बिलासपुर', region: 'cg', lat: 22.0797, lng: 82.1409, fromRaipur: { road: 113, air: 106.1 }, home: { by: 'train', raipur: 1.5, durg: 2.5, bilaspur: 0 } },
+  { id: 'rajnandgaon', name: 'Rajnandgaon', nameHi: 'राजनांदगांव', region: 'cg', lat: 21.0974, lng: 81.0337, fromRaipur: { road: 74, air: 64.5 }, home: { by: 'train', raipur: 1.5, durg: 0.75, bilaspur: 3 }, rail: { stations: ['RJN'] } },
+  { id: 'dongargarh', name: 'Dongargarh', nameHi: 'डोंगरगढ़', region: 'cg', lat: 21.1891, lng: 80.755, fromRaipur: { road: 108, air: 90.5 }, home: { by: 'train', raipur: 2, durg: 1.25, bilaspur: 3.75 }, rail: { stations: ['DGG'] } },
+  { id: 'bilaspur', name: 'Bilaspur', nameHi: 'बिलासपुर', region: 'cg', lat: 22.0797, lng: 82.1409, fromRaipur: { road: 113, air: 106.1 }, home: { by: 'train', raipur: 1.5, durg: 2.5, bilaspur: 0 }, rail: { stations: ['BSP'] } },
   { id: 'kawardha', name: 'Kawardha', nameHi: 'कवर्धा', region: 'cg', lat: 22.0086, lng: 81.2318, fromRaipur: { road: 116, air: 94.1 }, home: { by: 'bus', raipur: 3, durg: 2.75, bilaspur: 3.25 } },
   { id: 'kanker', name: 'Kanker', nameHi: 'कांकेर', region: 'cg', lat: 20.2719, lng: 81.492, fromRaipur: { road: 127, air: 109.8 }, home: { by: 'bus', raipur: 3.5, durg: 3.75, bilaspur: 5.5 } },
-  { id: 'janjgir', name: 'Janjgir', nameHi: 'जांजगीर', region: 'cg', lat: 22.009, lng: 82.5772, fromRaipur: { road: 160, air: 128.9 }, home: { by: 'train', raipur: 3, durg: 3.5, bilaspur: 1 } },
+  { id: 'janjgir', name: 'Janjgir', nameHi: 'जांजगीर', region: 'cg', lat: 22.009, lng: 82.5772, fromRaipur: { road: 160, air: 128.9 }, home: { by: 'train', raipur: 3, durg: 3.5, bilaspur: 1 }, rail: { stations: ['NIA'] } },
   { id: 'amarkantak', name: 'Amarkantak', nameHi: 'अमरकंटक', region: 'cg', lat: 22.673, lng: 81.7536, fromRaipur: { road: 209, air: 159.7 }, home: { by: 'bus + train', raipur: 5.5, durg: 6.5, bilaspur: 3 } },
-  { id: 'korba', name: 'Korba', nameHi: 'कोरबा', region: 'cg', lat: 22.3595, lng: 82.7501, fromRaipur: { road: 216, air: 169 }, home: { by: 'train', raipur: 4, durg: 4.75, bilaspur: 2 } },
-  { id: 'raigarh', name: 'Raigarh', nameHi: 'रायगढ़', region: 'cg', lat: 21.8974, lng: 83.395, fromRaipur: { road: 258, air: 196.2 }, home: { by: 'train', raipur: 4, durg: 4.5, bilaspur: 2.25 } },
+  { id: 'korba', name: 'Korba', nameHi: 'कोरबा', region: 'cg', lat: 22.3595, lng: 82.7501, fromRaipur: { road: 216, air: 169 }, home: { by: 'train', raipur: 4, durg: 4.75, bilaspur: 2 }, rail: { stations: ['KRBA'] } },
+  { id: 'raigarh', name: 'Raigarh', nameHi: 'रायगढ़', region: 'cg', lat: 21.8974, lng: 83.395, fromRaipur: { road: 258, air: 196.2 }, home: { by: 'train', raipur: 4, durg: 4.5, bilaspur: 2.25 }, rail: { stations: ['RIG'] } },
   { id: 'jagdalpur', name: 'Jagdalpur', nameHi: 'जगदलपुर', region: 'cg', lat: 19.0748, lng: 82.008, fromRaipur: { road: 287, air: 245.3 }, home: { by: 'bus', raipur: 7, durg: 8, bilaspur: 9 } },
   { id: 'ambikapur', name: 'Ambikapur', nameHi: 'अंबिकापुर', region: 'cg', lat: 23.1355, lng: 83.182, fromRaipur: { road: 334, air: 263.6 }, home: { by: 'bus', raipur: 7.5, durg: 8.5, bilaspur: 5.25 } },
   // Other states
-  { id: 'gondia', name: 'Gondia', nameHi: 'गोंदिया', region: 'india', lat: 21.4624, lng: 80.192, fromRaipur: { road: 201, air: 147.9 }, home: { by: 'train', raipur: 3, durg: 2.25, bilaspur: 4.5 } },
+  { id: 'gondia', name: 'Gondia', nameHi: 'गोंदिया', region: 'india', lat: 21.4624, lng: 80.192, fromRaipur: { road: 201, air: 147.9 }, home: { by: 'train', raipur: 3, durg: 2.25, bilaspur: 4.5 }, rail: { stations: ['G'] } },
   { id: 'sambalpur', name: 'Sambalpur', nameHi: 'संबलपुर', region: 'india', lat: 21.4669, lng: 83.9812, fromRaipur: { road: 275, air: 244.8 }, home: { by: 'bus', raipur: 6, durg: 6.5, bilaspur: 4.5 } },
-  { id: 'nagpur', name: 'Nagpur', nameHi: 'नागपुर', region: 'india', lat: 21.1458, lng: 79.0882, fromRaipur: { road: 284, air: 263.8 }, home: { by: 'train', raipur: 5, durg: 4.25, bilaspur: 6.5 } },
-  { id: 'jharsuguda', name: 'Jharsuguda', nameHi: 'झारसुगुड़ा', region: 'india', lat: 21.8554, lng: 84.0062, fromRaipur: { road: 320, air: 254.9 }, home: { by: 'train', raipur: 5, durg: 6, bilaspur: 3.25 } },
-  { id: 'jabalpur', name: 'Jabalpur', nameHi: 'जबलपुर', region: 'india', lat: 23.1815, lng: 79.9864, fromRaipur: { road: 383, air: 273.5 }, home: { by: 'train', raipur: 9, durg: 8.5, bilaspur: 8.5, trains: [{ no: '11702', name: 'Mook Mati Exp', dep: '06:00', hours: 7.8 }, { no: '12854', name: 'Amarkantak Exp', dep: '21:35', hours: 9.3 }] } },
-  { id: 'visakhapatnam', name: 'Visakhapatnam', nameHi: 'विशाखापत्तनम', region: 'india', lat: 17.6868, lng: 83.2185, fromRaipur: { road: 546, air: 430 }, home: { by: 'train', raipur: 10, durg: 11, bilaspur: 12, trains: [{ no: '12807', name: 'Samta Exp', dep: '09:20', hours: 9.7, days: [0, 2, 3, 4, 6] }, { no: '20830', name: 'Vande Bharat', dep: '14:50', hours: 7.2, days: [0, 1, 2, 3, 5, 6] }, { no: '18530', name: 'VSKP–Durg Exp', dep: '16:50', hours: 11.7 }, { no: '18518', name: 'VSKP–Korba Exp', dep: '21:00', hours: 10 }] } },
+  { id: 'nagpur', name: 'Nagpur', nameHi: 'नागपुर', region: 'india', lat: 21.1458, lng: 79.0882, fromRaipur: { road: 284, air: 263.8 }, home: { by: 'train', raipur: 5, durg: 4.25, bilaspur: 6.5 }, rail: { stations: ['NGP'] } },
+  { id: 'jharsuguda', name: 'Jharsuguda', nameHi: 'झारसुगुड़ा', region: 'india', lat: 21.8554, lng: 84.0062, fromRaipur: { road: 320, air: 254.9 }, home: { by: 'train', raipur: 5, durg: 6, bilaspur: 3.25 }, rail: { stations: ['JSG'] } },
+  { id: 'jabalpur', name: 'Jabalpur', nameHi: 'जबलपुर', region: 'india', lat: 23.1815, lng: 79.9864, fromRaipur: { road: 383, air: 273.5 }, home: { by: 'train', raipur: 9, durg: 8.5, bilaspur: 8.5 }, rail: { stations: ['JBP'] } },
+  { id: 'visakhapatnam', name: 'Visakhapatnam', nameHi: 'विशाखापत्तनम', region: 'india', lat: 17.6868, lng: 83.2185, fromRaipur: { road: 546, air: 430 }, home: { by: 'train', raipur: 10, durg: 11, bilaspur: 12 }, rail: { stations: ['VSKP'] } },
   { id: 'bhubaneswar', name: 'Bhubaneswar', nameHi: 'भुवनेश्वर', region: 'india', lat: 20.2961, lng: 85.8245, fromRaipur: { road: 547, air: 449 }, home: { by: 'bus', raipur: 11.5, durg: 12.25, bilaspur: 13.5 } },
   { id: 'puri', name: 'Puri', nameHi: 'पुरी', region: 'india', lat: 19.8135, lng: 85.8312, fromRaipur: { road: 577, air: 465.9 }, home: { by: 'bus', raipur: 13, durg: 13.75, bilaspur: 15 } },
-  { id: 'prayagraj', name: 'Prayagraj', nameHi: 'प्रयागराज', region: 'india', lat: 25.4358, lng: 81.8463, fromRaipur: { road: 578, air: 465.9 }, home: { by: 'train', raipur: 13.5, durg: 14.5, bilaspur: 11.5 } },
+  { id: 'prayagraj', name: 'Prayagraj', nameHi: 'प्रयागराज', region: 'india', lat: 25.4358, lng: 81.8463, fromRaipur: { road: 578, air: 465.9 }, home: { by: 'train', raipur: 13.5, durg: 14.5, bilaspur: 11.5 }, rail: { stations: ['PRYJ'] } },
   { id: 'ranchi', name: 'Ranchi', nameHi: 'रांची', region: 'india', lat: 23.3441, lng: 85.3096, fromRaipur: { road: 616, air: 444 }, home: { by: 'bus', raipur: 12, durg: 12.5, bilaspur: 10 } },
   { id: 'bhopal', name: 'Bhopal', nameHi: 'भोपाल', region: 'india', lat: 23.2599, lng: 77.4126, fromRaipur: { road: 628, air: 488 }, home: { by: 'bus', raipur: 11.75, durg: 12, bilaspur: 13 } },
-  { id: 'varanasi', name: 'Varanasi', nameHi: 'वाराणसी', region: 'india', lat: 25.3176, lng: 82.9739, fromRaipur: { road: 644, air: 472.7 }, home: { by: 'train', raipur: 17, durg: 18, bilaspur: 15, trains: [{ no: '15159', name: 'Sarnath Exp', dep: '12:30', hours: 17.25 }, { no: '15231', name: 'Barauni–Gondia Exp', dep: '21:35', hours: 16.75 }] } },
+  { id: 'varanasi', name: 'Varanasi', nameHi: 'वाराणसी', region: 'india', lat: 25.3176, lng: 82.9739, fromRaipur: { road: 644, air: 472.7 }, home: { by: 'train', raipur: 17, durg: 18, bilaspur: 15 }, rail: { stations: ['BSB'] } },
   { id: 'indore', name: 'Indore', nameHi: 'इंदौर', region: 'india', lat: 22.7196, lng: 75.8577, fromRaipur: { road: 727, air: 617.2 }, home: { by: 'bus', raipur: 16.5, durg: 17.25, bilaspur: 18.5 } },
   { id: 'patna', name: 'Patna', nameHi: 'पटना', region: 'india', lat: 25.5941, lng: 85.1376, fromRaipur: { road: 739, air: 601 }, home: { by: 'bus', raipur: 19, durg: 19.75, bilaspur: 21 } },
-  { id: 'lucknow', name: 'Lucknow', nameHi: 'लखनऊ', region: 'india', lat: 26.8467, lng: 80.9462, fromRaipur: { road: 779, air: 626.2 }, home: { by: 'train', raipur: 20, durg: 21, bilaspur: 18 } },
-  { id: 'hyderabad', name: 'Hyderabad', nameHi: 'हैदराबाद', region: 'india', lat: 17.385, lng: 78.4867, fromRaipur: { road: 780, air: 542 }, home: { by: 'train', raipur: 15, durg: 15, bilaspur: 16.5, trains: [{ no: '12723', name: 'Telangana Exp', dep: '06:25', hours: 15.4, via: 'Nagpur' }, { no: '12791', name: 'Secunderabad–Danapur Exp', dep: '09:25', hours: 15.4, via: 'Nagpur' }, { no: '12771', name: 'Secunderabad–Raipur Exp', dep: '22:40', hours: 14.7, days: [1, 3, 5] }, { no: '12721', name: 'Dakshin Exp', dep: '23:25', hours: 16.4, via: 'Nagpur' }] } },
-  { id: 'kolkata', name: 'Kolkata', nameHi: 'कोलकाता', region: 'india', lat: 22.5726, lng: 88.3639, fromRaipur: { road: 831, air: 710 }, home: { by: 'train', raipur: 13.25, durg: 14.25, bilaspur: 11.25, trains: [{ no: '12860', name: 'Gitanjali Exp', dep: '13:40', hours: 13 }, { no: '18030', name: 'Shalimar–LTT Exp', dep: '15:00', hours: 15.4 }, { no: '12810', name: 'Howrah–Mumbai Mail', dep: '19:30', hours: 13.2 }, { no: '12130', name: 'Azad Hind Exp', dep: '21:40', hours: 13.2 }, { no: '12834', name: 'Howrah–Ahmedabad Exp', dep: '23:05', hours: 14.4 }] } },
-  { id: 'pune', name: 'Pune', nameHi: 'पुणे', region: 'india', lat: 18.5204, lng: 73.8567, fromRaipur: { road: 1007, air: 867 }, home: { by: 'train', raipur: 20, durg: 19.5, bilaspur: 22, trains: [{ no: '12129', name: 'Azad Hind Exp', dep: '18:35', hours: 20 }] } },
-  { id: 'mumbai', name: 'Mumbai', nameHi: 'मुंबई', region: 'india', lat: 19.076, lng: 72.8777, fromRaipur: { road: 1118, air: 945 }, home: { by: 'train', raipur: 18, durg: 17.25, bilaspur: 20.5, trains: [{ no: '12859', name: 'Gitanjali Exp', dep: '06:00', hours: 17.5 }, { no: '12809', name: 'Mumbai–Howrah Mail', dep: '21:10', hours: 18.9 }, { no: '18029', name: 'LTT–Shalimar Exp', dep: '22:00', hours: 21.7 }] } },
-  { id: 'delhi', name: 'Delhi', nameHi: 'दिल्ली', region: 'india', lat: 28.6139, lng: 77.209, fromRaipur: { road: 1214, air: 946 }, home: { by: 'train', raipur: 22.5, durg: 22, bilaspur: 21, trains: [{ no: '18238', name: 'Chhattisgarh Exp', dep: '04:25', hours: 28 }, { no: '12808', name: 'Samta Exp', dep: '07:00', hours: 22.8, days: [1, 2, 4, 5, 6] }, { no: '12410', name: 'Gondwana Exp', dep: '15:05', hours: 22.4, days: [1, 2, 3, 4, 6] }] } },
-  { id: 'bengaluru', name: 'Bengaluru', nameHi: 'बेंगलुरु', region: 'india', lat: 12.9716, lng: 77.5946, fromRaipur: { road: 1370, air: 1015.7 }, home: { by: 'train', raipur: 28, durg: 27.25, bilaspur: 30, trains: [{ no: '12295', name: 'Sanghamitra Exp', dep: '09:15', hours: 29.8, via: 'Nagpur' }, { no: '12975', name: 'Mysuru–Jaipur Exp', dep: '13:00', hours: 28.6, days: [4, 6], via: 'Nagpur' }, { no: '18262', name: 'Yelahanka–Bilaspur Exp', dep: '21:30', hours: 27.6, days: [4] }, { no: '12251', name: 'Wainganga Exp', dep: '23:40', hours: 24.4, days: [2, 5] }, { no: '22366', name: 'Bengaluru–Danapur Exp', dep: '23:50', hours: 31.7, via: 'Nagpur' }] } },
-  { id: 'chennai', name: 'Chennai', nameHi: 'चेन्नई', region: 'india', lat: 13.0827, lng: 80.2707, fromRaipur: { road: 1405, air: 920 }, home: { by: 'train', raipur: 23, durg: 22.25, bilaspur: 25 } },
+  { id: 'lucknow', name: 'Lucknow', nameHi: 'लखनऊ', region: 'india', lat: 26.8467, lng: 80.9462, fromRaipur: { road: 779, air: 626.2 }, home: { by: 'train', raipur: 20, durg: 21, bilaspur: 18 }, rail: { stations: ['LKO', 'LJN'] } },
+  { id: 'hyderabad', name: 'Hyderabad', nameHi: 'हैदराबाद', region: 'india', lat: 17.385, lng: 78.4867, fromRaipur: { road: 780, air: 542 }, home: { by: 'train', raipur: 15, durg: 15, bilaspur: 16.5 }, rail: { stations: ['SC', 'HYB', 'KCG'], hubs: ['NGP'] } },
+  { id: 'kolkata', name: 'Kolkata', nameHi: 'कोलकाता', region: 'india', lat: 22.5726, lng: 88.3639, fromRaipur: { road: 831, air: 710 }, home: { by: 'train', raipur: 13.25, durg: 14.25, bilaspur: 11.25 }, rail: { stations: ['HWH', 'SHM'] } },
+  { id: 'pune', name: 'Pune', nameHi: 'पुणे', region: 'india', lat: 18.5204, lng: 73.8567, fromRaipur: { road: 1007, air: 867 }, home: { by: 'train', raipur: 20, durg: 19.5, bilaspur: 22 }, rail: { stations: ['PUNE'], hubs: ['NGP'] } },
+  { id: 'mumbai', name: 'Mumbai', nameHi: 'मुंबई', region: 'india', lat: 19.076, lng: 72.8777, fromRaipur: { road: 1118, air: 945 }, home: { by: 'train', raipur: 18, durg: 17.25, bilaspur: 20.5 }, rail: { stations: ['CSMT', 'LTT'], hubs: ['NGP'] } },
+  { id: 'delhi', name: 'Delhi', nameHi: 'दिल्ली', region: 'india', lat: 28.6139, lng: 77.209, fromRaipur: { road: 1214, air: 946 }, home: { by: 'train', raipur: 22.5, durg: 22, bilaspur: 21 }, rail: { stations: ['NDLS', 'NZM'], hubs: ['NGP'] } },
+  { id: 'bengaluru', name: 'Bengaluru', nameHi: 'बेंगलुरु', region: 'india', lat: 12.9716, lng: 77.5946, fromRaipur: { road: 1370, air: 1015.7 }, home: { by: 'train', raipur: 28, durg: 27.25, bilaspur: 30 }, rail: { stations: ['SMVB', 'SBC', 'YPR'], hubs: ['NGP'] } },
+  { id: 'chennai', name: 'Chennai', nameHi: 'चेन्नई', region: 'india', lat: 13.0827, lng: 80.2707, fromRaipur: { road: 1405, air: 920 }, home: { by: 'train', raipur: 23, durg: 22.25, bilaspur: 25 }, rail: { stations: ['MAS'], hubs: ['NGP'] } },
 ];
 
 /** The four pickup cities — booking `city` values — and where they are. */
@@ -239,8 +223,12 @@ export type TripPlan = {
   dropAt?: number;
   leaveAt?: number;
   homeAt?: number;
-  /** One-way: the regular train he catches, on routes with a timetable. */
-  train?: HomeTrain;
+  /**
+   * One-way: where leaveAt/homeAt come from — 'allowance' (getting to the
+   * station, then the typical hours home; no train confirmed) or 'train' (a
+   * train from the lookup, set by withReturn).
+   */
+  homeBasis?: 'allowance' | 'train';
 };
 
 /** When nothing better is known, the estimate assumes the driver leaves at 7 AM. */
@@ -280,27 +268,16 @@ export function homeTravelHours(dest: Destination | undefined, city: PickupCity)
   return city === 'Raipur' ? dest.home.raipur : city === 'Bilaspur' ? dest.home.bilaspur : dest.home.durg;
 }
 
-/** How the driver gets home from `dest` to `city`, for planTrip. */
+/** How the driver gets home from `dest` to `city`, for planTrip: the allowance in hours. */
 export type HomeWay = {
-  /** Average hours on board (homeTravelHours). Left out: the distance at busKmh. */
+  /** Typical hours on board (homeTravelHours). Left out: the distance at busKmh. */
   hours?: number;
-  /** Regular trains home (hours to Raipur). */
-  trains?: readonly HomeTrain[];
-  /** Added to each train's hours: the pickup city's average minus Raipur's. */
-  offset?: number;
 };
 
-/** The way home from a destination to a pickup city: average hours and the regular trains. */
+/** The allowance for the way home from a destination to a pickup city. */
 export function homeWay(dest: Destination, city: PickupCity): HomeWay {
-  const hours = homeTravelHours(dest, city) ?? 0;
-  return { hours, trains: dest.home.trains, offset: hours - dest.home.raipur };
+  return { hours: homeTravelHours(dest, city) ?? 0 };
 }
-
-/** "21:35" → 21.583… (hour of the day). */
-const clock = (hhmm: string) => {
-  const [h, m] = hhmm.split(':').map(Number);
-  return (h || 0) + (m || 0) / 60;
-};
 
 /**
  * When he drops the car, hours after the start, for `hours` of driving:
@@ -323,28 +300,14 @@ export function dropTime(rules: Pick<TripRules, 'hoursPerDay'>, hours: number, n
 }
 
 /**
- * The first time a train leaves at or after `ready` hours after the start, on
- * a day it runs (its `days`); an unknown weekday counts only daily trains.
- * Undefined if it cannot be caught within a week.
- */
-function nextDeparture(t: HomeTrain, ready: number, start: TripStart): number | undefined {
-  let at = ready + ((((clock(t.dep) - (start.hour + ready)) % 24) + 24) % 24);
-  if (!t.days || t.days.length === 0) return at;
-  if (start.weekday === undefined) return undefined;
-  for (let i = 0; i < 8; i++, at += 24) {
-    const weekday = (start.weekday + Math.floor((start.hour + at) / 24 + 1e-9)) % 7;
-    if (t.days.includes(weekday)) return at;
-  }
-  return undefined;
-}
-
-/**
  * The plan for a trip, from the start (hour of the day and, if known, the
- * weekday; a plain number is the hour) — see the rules at the top.
+ * weekday; a plain number is the hour) — see the rules at the top. The way
+ * home is the ALLOWANCE (stationHours, then the typical hours home); a train
+ * confirmed by the lookup replaces it through withReturn.
  *
  *   Mumbai, 7 AM: 22.4 h of driving = 1 day + 11 h; drops the car ~5:20 PM
- *   on day 2, takes the 9:10 PM Mail, home ~4 PM day 3: 23 h from the drop.
- *   Nagpur: 5.7 h of driving = 6 h at extraHour; home that evening, 6 h.
+ *   on day 2; allowance 1 + 18 h home: 19 h from the drop.
+ *   Nagpur: 5.7 h of driving = 6 h at extraHour; allowance 1 + 5 h home.
  */
 export function planTrip(
   rules: TripRules,
@@ -391,22 +354,10 @@ export function planTrip(
   const fullDays = extraDays > 0 ? booked : full;
   const extraHours = extraDays > 0 ? 0 : leftover;
 
-  // The way home: the station, then the train or bus that gets him home soonest.
+  // The way home (the allowance): getting to the station, then the typical hours home.
   const dropAt = lastDayAt + (nonstop ? 0 : extraDays * 24);
-  const ready = dropAt + rules.stationHours;
-  let leaveAt = ready;
-  let homeAt = ready + (way.hours ?? oneWay / rules.busKmh);
-  let train: HomeTrain | undefined;
-  for (const t of way.trains ?? []) {
-    const leaves = nextDeparture(t, ready, start);
-    if (leaves === undefined) continue;
-    const arrives = leaves + t.hours + (way.offset ?? 0);
-    if (!train || arrives < homeAt) {
-      train = t;
-      leaveAt = leaves;
-      homeAt = arrives;
-    }
-  }
+  const leaveAt = dropAt + rules.stationHours;
+  const homeAt = leaveAt + (way.hours || oneWay / rules.busKmh);
   return {
     ...base,
     minDays: calendar,
@@ -419,7 +370,23 @@ export function planTrip(
     dropAt,
     leaveAt,
     homeAt,
-    ...(train && { train }),
+    homeBasis: 'allowance',
+  };
+}
+
+/**
+ * The plan with a train from the lookup instead of the allowance: `leaveAt`
+ * and `homeAt` in hours after the start (the train's departure and its
+ * arrival home). The way home is then whole hours from the drop to homeAt.
+ */
+export function withReturn(plan: TripPlan, leaveAt: number, homeAt: number): TripPlan {
+  if (plan.kind !== 'one-way' || plan.dropAt === undefined || !(homeAt > plan.dropAt)) return plan;
+  return {
+    ...plan,
+    leaveAt,
+    homeAt,
+    returnHours: Math.max(0, Math.ceil(homeAt - plan.dropAt - 1e-9)),
+    homeBasis: 'train',
   };
 }
 
@@ -699,7 +666,7 @@ export function destinationTable(rules: TripRules) {
     name: d.name,
     nameHi: d.nameHi,
     region: d.region,
-    trains: (d.home.trains ?? []).map((t) => ({ ...t, ...(t.days && { days: [...t.days] }) })),
+    ...(d.rail && { rail: { stations: [...d.rail.stations], hubs: [...(d.rail.hubs ?? [])] } }),
     from: Object.fromEntries(
       pickupCities.map((city) => {
         const km = roadKm(city, d);

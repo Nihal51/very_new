@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
 import { TripEstimate } from '@/components/TripEstimate';
+import { useReturnTrains } from '@/components/useReturnTrains';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Field, Input, Select } from '@/components/ui/Field';
@@ -12,24 +13,28 @@ import { ELSEWHERE, destinationGroups, tripFor } from '@/lib/trip';
 
 /**
  * "What will my drop cost?" on the One-Way Drop page: pickup city, destination,
- * start time and days → the same estimate the booking form shows, and a
- * button that opens the booking form with them already filled in.
+ * start date and time, and days → the same estimate the booking form shows
+ * (with the real trains home for that date), and a button that opens the
+ * booking form with them already filled in.
  */
 export function OneWayPriceChecker({ className }: { className?: string }) {
   const router = useRouter();
   const [city, setCity] = useState('Raipur');
   const [dest, setDest] = useState('nagpur');
   const [days, setDays] = useState('');
-  const [time, setTime] = useState('07:00');
+  const [when, setWhen] = useState('');
   const [nonstop, setNonstop] = useState(false);
 
-  const trip = useMemo(
-    () => tripFor('one-way-drop', city, dest, Number(days) || 0, time, nonstop),
-    [city, dest, days, time, nonstop],
+  const base = useMemo(
+    () => tripFor('one-way-drop', city, dest, Number(days) || 0, when, nonstop),
+    [city, dest, days, when, nonstop],
   );
+  const rail = useReturnTrains(base, city);
+  const trip = rail.view ?? base;
   const query = new URLSearchParams({ pkg: 'one-way-drop', city, to: dest });
   if (days && Number(days) > trip.minDays) query.set('days', String(Number(days)));
   if (nonstop) query.set('nonstop', '1');
+  if (when) query.set('when', when);
 
   return (
     <Card className={className}>
@@ -61,8 +66,10 @@ export function OneWayPriceChecker({ className }: { className?: string }) {
             </Select>
           )}
         </Field>
-        <Field label="Driver leaves at" name="ow-time" hint="It decides which train he catches home.">
-          {(p) => <Input {...p} type="time" step={900} value={time} onChange={(e) => setTime(e.target.value)} />}
+        <Field label="Driver leaves on" name="ow-when" hint="The date and time decide which train he catches home.">
+          {(p) => (
+            <Input {...p} type="datetime-local" step={900} value={when} onChange={(e) => setWhen(e.target.value)} />
+          )}
         </Field>
         <Field
           label="Days"
@@ -96,6 +103,7 @@ export function OneWayPriceChecker({ className }: { className?: string }) {
 
       <TripEstimate
         view={trip}
+        rail={rail}
         city={city}
         elsewhere={dest === ELSEWHERE}
         onUseLocal={() => router.push(`/book/?pkg=local-full-day&city=${encodeURIComponent(city)}#booking-form`)}

@@ -27,23 +27,27 @@ full days × prices.outstation          each hoursPerDay (12 h, ~600 km) of driv
 2. **Timings, from the start date and time:** he drives 12 hours and rests 12
    (up to an hour more he finishes that evening) — or, if the customer ticks
    **Drive day and night**, straight through (the same driving price). That
-   gives the drop time. Then `stationHours` (1 h) to the station, and the
-   first regular train home he can catch **on a day it runs** that gets him
-   home soonest (`home.trains` next to each long route in `lib/outstation.ts`,
-   with running days and connections, e.g. Hyderabad and Bengaluru via Nagpur). Routes
-   without a list (buses, short routes with a service every hour or two) use
-   the average time home. Trains are timed to Raipur; Durg (also Bhilai) and
-   Bilaspur add the difference in the averages. A place typed in by hand
-   falls back to km ÷ `busKmh`.
-3. **Way home:** every hour from the drop until he is home — waiting for the
+   gives the drop time; then `stationHours` (1 h) to the station.
+3. **The train home — real trains for that date** (see *Trains home* below):
+   the lookup finds the trains from the destination's stations to the pickup
+   city's station (Raipur `R`; Durg `DURG`, also for Bhilai; Bilaspur `BSP`)
+   for the drop date. Direct trains first; if none leaves within
+   `trains.directWithinHours`, connections through the destination's change
+   station (e.g. Nagpur) where **both** trains came back from the lookup and
+   the change leaves at least `trains.transferBufferMinutes`. The customer
+   sees the recommended train (home soonest) and can choose another; the
+   estimate follows. **No train times are typed into the code.**
+4. **When no train is confirmed** (no date picked yet, a bus route, the
+   lookup not set up, or it fails or finds nothing): the typical hours home
+   from `destinations[].home` are used, and the card **says so**, with links
+   to NTES and IRCTC. A place typed in by hand uses km ÷ `busKmh`.
+5. **Way home:** every hour from the drop until he is home — waiting for the
    train included — at `returnHour` (₹120), at most `returnMaxPerDay`
-   (₹1,200) in any 24 hours.
-4. The customer books his ticket home. The **final bill** uses the real
-   times; the estimate predicts them. Booking extra days (stops on the way)
-   charges each as a full day and moves the drop on.
-
-Without a date, trains that run only on some days are left out (the daily
-ones and the connections still count) — pick the date for the exact train.
+   (₹1,200) in any 24 hours. Shown split: waiting + on the train, charged once.
+6. Not in the price, listed separately: his ticket (the customer books it),
+   meals (`mealAllowance` a day if not given), fuel, tolls, parking, and a
+   hotel only if a night stop is agreed. The **final bill** uses the real
+   times. Booking extra days (stops on the way) charges each as a full day.
 
 ### Round trips
 
@@ -55,27 +59,72 @@ Small print for both: fuel, tolls and parking are extra; give the driver his
 meals or `mealAllowance` (₹300) a day. Closer than `localWithinKm` (60 km),
 the form suggests the Local Full Day instead.
 
-### Worked examples (₹1,550–1,650 a day, ₹120 an hour), from Raipur at 7 AM
+### Worked examples (₹1,550–1,650 a day, ₹120 an hour), from Raipur at 7 AM, before the train lookup
 
-| One-way drop | Driving | Drops the car | Way home | Hours home | Estimate |
+| One-way drop | Driving | Drops the car | Typical way home (allowance) | Hours home | Estimate |
 | --- | --- | --- | --- | --- | --- |
-| Nagpur | 6 h | day 1, 12:40 PM | train ~5 h → home day 1, 6:40 PM | 6 h | ₹1,440 |
-| Jagdalpur | 6 h | day 1, 12:45 PM | bus ~7 h → home day 1, 8:45 PM | 8 h | ₹1,680 |
-| Visakhapatnam | 11 h | day 1, 5:55 PM | 18518 at 9:00 PM → home day 2, 7:00 AM | 14 h | ₹2,520 |
-| Bhopal | 1 day + 1 h | day 1, 7:35 PM | bus ~12 h → home day 2, 8:20 AM | 13 h | ₹2,870–2,970 |
-| Kolkata | 1 day + 5 h | day 2, 11:35 AM | 12860 at 1:40 PM → home day 3, 2:40 AM | 16 h | ₹3,350–3,450 |
-| Hyderabad | 1 day + 4 h | day 2, 10:35 AM | 12721 via Nagpur at 11:25 PM → home day 3, 3:50 PM | 30 h | ₹3,950–4,050 |
-| Pune | 1 day + 9 h | day 2, 3:10 PM | 12129 at 6:35 PM → home day 3, 2:35 PM | 24 h | ₹3,830–3,930 |
-| Mumbai | 1 day + 11 h | day 2, 5:20 PM | 12809 at 9:10 PM → home day 3, 4:05 PM | 23 h | ₹4,070–4,170 |
-| Mumbai, day and night | 1 day + 11 h | day 2, 5:20 AM | 12809 at 9:10 PM → home day 3, 4:05 PM | 35 h | ₹5,270–5,370 |
-| Delhi | 2 days + 1 h | day 2, 7:15 PM | 18238 at 4:25 AM → home day 4, 8:25 AM | 38 h | ₹5,620–5,820 |
-| Delhi, leaving Sun | 2 days + 1 h | Mon 7:15 PM | 12808 at 7:00 AM → home Wed 5:50 AM | 35 h | ₹5,620–5,820 |
-| Bengaluru, leaving Mon | 2 days + 4 h | Wed 10:25 AM | 22366 via Nagpur at 11:50 PM → home Fri 7:30 AM | 46 h | ₹5,980–6,180 |
-| Chennai | 2 days + 5 h | day 3, 11:05 AM | train ~23 h → home day 4, 11:05 AM | 24 h | ₹4,900–5,100 |
+| Nagpur | 6 h | day 1, 12:40 PM | 1 h + train ~5 h | 6 h | ₹1,440 |
+| Jagdalpur | 6 h | day 1, 12:45 PM | 1 h + bus ~7 h | 8 h | ₹1,680 |
+| Mumbai | 1 day + 11 h | day 2, 5:20 PM | 1 h + train ~18 h | 19 h | ₹4,070–4,170 |
 
-Day and night can cost more in the end: Mumbai non-stop arrives at 5:20 AM,
-but the train home is still the 9:10 PM one, so he waits — the estimate
+With a date, the lookup replaces the allowance with the real trains for that
+day — including the wait for the train: dropped at 12 PM, train at 3 PM = 3 h
+waiting + the hours on the train. Day and night can cost more in the end when
+the earlier drop only means a longer wait for the same train; the estimate
 shows it.
+
+## Trains home — the live lookup (RailRadar)
+
+Chosen on 29 Oct 2026 after reading both providers' documentation:
+
+- **RailRadar** (railradar.in/docs) documents a trains-between-stations search
+  **with a date** (`GET /v1/trains/between/{from}/{to}?date=YYYY-MM-DD`), day
+  numbers for overnight arrivals, the full timetable (`/v1/trains/{number}`),
+  live running status (`/v1/trains/{number}/live`, and `live=true` on the
+  search), and a Bearer key in a header. Plans: free sandbox 100 requests a
+  month (testing only, not commercial); **Developer ₹999/month (₹499 the
+  first month), 30,000 requests, 30 a minute**; Growth ₹2,999.
+- **Qrail** (qrail.in/developers) was not chosen: its documentation shows
+  only Train Route, PNR and Running Status, with no response formats, and the
+  key goes in the URL; its advertised between-stations search is not
+  documented, so it cannot be verified.
+
+How it works:
+
+1. The website never holds the key. It asks the **alerts robot**
+   (`apps-script/Code.js`, `doGet` with `action=trains`), which calls
+   RailRadar with `RAILRADAR_API_KEY` from its Script Properties and passes on
+   only the documented fields.
+2. The robot caches each search 6 hours (5 minutes with live status) and caps
+   calls: `RAIL_MINUTE_LIMIT` (default 25) and `RAIL_DAILY_LIMIT` (default
+   900). Over a cap it answers `busy`; RailRadar's own 429 is passed on as
+   `rate-limited`.
+3. `lib/rail.ts` turns each answer into real instants in India time (date +
+   HH:MM + the day numbers), leaves out — and reports — any train whose data
+   does not add up (bad times, days out of order, duration mismatch, not
+   running on that day), and plans direct trains and connections.
+4. Live delays are used only when RailRadar returns live data for today's
+   run, and are labelled live; everything else is labelled scheduled, with
+   the time it was checked. Nothing claims a seat or a ticket.
+
+**One-time setup** (until then the card says the check is not switched on):
+
+1. Sign up at railradar.in/developers and copy your API key (`rr_live_…`).
+   For real customers, take the Developer plan (the sandbox is for testing
+   only and allows 100 requests a month — set `RAIL_DAILY_LIMIT` to 3 and
+   `RAIL_MINUTE_LIMIT` to 8 while on it).
+2. Apps Script (the "DriveBuddy Bookings" Sheet → Extensions → Apps Script):
+   paste the new `apps-script/Code.js`; Project Settings → Script properties
+   → add `RAILRADAR_API_KEY` with the key.
+3. Deploy → New deployment → Web app: execute as **Me**, access **Anyone** →
+   copy the URL ending in `/exec`. (Already deployed? Manage deployments →
+   Edit → Version: New version → Deploy; the URL stays the same.)
+4. In `site-settings.ts`, put that URL in `trains.lookupUrl` (or in
+   `alerts.pingUrl` — it is used for both), commit and push.
+
+Station codes and change stations live next to each train destination in
+`lib/outstation.ts` (`rail: { stations, hubs }`). A wrong code shows up as
+"could not check" on the card, never as an invented train.
 
 The booking saves the trip and the estimate, and the Telegram alert, email
 and Sheet show them.
@@ -184,7 +233,11 @@ All in `site-settings.ts`:
 | `outstation.minProfitPercent` | 15 | Floor for the `/admin` calculator and the profit guard |
 
 To add a destination, copy a line in `destinations` in `lib/outstation.ts`
-(road and straight-line km from Raipur) and run `npm test`. For a long
-route with few trains a day, add its regular trains home (`trains`: number,
-name, departure time, hours to Raipur, `days` it runs if not daily, `via` for
-a change of train). Never rename an `id`: bookings store it.
+(road and straight-line km from Raipur, the typical hours home) and run
+`npm test`. For a train route, add its stations (`rail.stations`, the main
+one first) and, where direct trains are few, a change station (`rail.hubs`).
+Never type in train times. Never rename an `id`: bookings store it.
+
+The train lookup's rules are in `site-settings.ts` → `trains`:
+`transferBufferMinutes` (90), `maxTransferHours` (12), `directWithinHours`
+(24), `maxWaitHours` (48), `maxOptions` (5), `lookupUrl`.

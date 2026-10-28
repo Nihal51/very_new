@@ -142,6 +142,7 @@ function load() {
   const whatsapps = []; // every WhatsApp Cloud API request
   const warnings = [];
   const deadTokens = new Set(); // tokens Expo answers with DeviceNotRegistered
+  const rail = { calls: [], answer: () => ({ code: 404, body: { success: false } }) }; // RailRadar stand-in
 
   const response = (code, body) => ({ getResponseCode: () => code, getContentText: () => JSON.stringify(body) });
   const ctx = {
@@ -158,7 +159,10 @@ function load() {
       const c = new Map();
       return { getScriptCache: () => ({ get: (k) => c.get(k) ?? null, put: (k, v) => c.set(k, v), clear: () => c.clear() }) };
     })(),
-    ContentService: { createTextOutput: (t) => ({ text: t }) },
+    ContentService: {
+      createTextOutput: (t) => ({ text: t, setMimeType() { return this; } }),
+      MimeType: { JSON: 'application/json' },
+    },
     Utilities: { getUuid: () => Math.random().toString(16).slice(2) },
     Session: { getEffectiveUser: () => ({ getEmail: () => 'owner@example.com' }) },
     MailApp: { sendEmail: (m) => mail.push(m) },
@@ -173,6 +177,13 @@ function load() {
       }),
     },
     UrlFetchApp: {
+      fetchAll(requests) {
+        return requests.map((r) => {
+          rail.calls.push({ url: r.url, auth: r.headers?.Authorization });
+          const { code, body } = rail.answer(r.url);
+          return { getResponseCode: () => code, getContentText: () => (typeof body === 'string' ? body : JSON.stringify(body)) };
+        });
+      },
       fetch(url, opts = {}) {
         const body = opts.payload ? JSON.parse(opts.payload) : null;
         if (url.startsWith('https://api.telegram.org/')) {
@@ -211,7 +222,7 @@ function load() {
     const [head = [], ...rows] = g;
     return rows.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
   };
-  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens };
+  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, rail };
 }
 
 const ts = (msAgo) => ({ timestampValue: new Date(Date.now() - msAgo).toISOString() });
@@ -623,6 +634,108 @@ describe('trip clock', () => {
     // Customer text cannot inject markup.
     const evil = env.ctx.tripTelegram({ link: { driverName: '<b>x</b>', to: '<i>', startAt: d('2026-10-29T02:15:00Z') }, step: 'start', booking: { ref: 'DB-1' }, id: 'b1', siteUrl: 'https://x' });
     assert.doesNotMatch(evil.text, /<i>|<b>x/);
+  });
+});
+
+describe('train lookup (RailRadar proxy)', () => {
+  let env;
+  beforeEach(() => {
+    env = load();
+    env.props.set('RAILRADAR_API_KEY', 'rr_live_SECRET123');
+  });
+  // RailRadar's documented example shape (docs/trains-between-stations).
+  const sample = (from, to, trains) => ({
+    success: true,
+    data: { from: { code: from, name: `${from} Jn` }, to: { code: to, name: `${to} Jn` }, count: trains.length, trains },
+    meta: { traceId: 't', timestamp: '2026-10-30T10:00:00Z', executionTime: 5, source: 'database' },
+  });
+  const train = (number, dep, depDay, arr, arrDay, duration, extra = {}) => ({
+    train: { number, name: `Train ${number}`, type: 'Express', runDays: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] },
+    from: { departure: dep, day: depDay, sequence: 1 },
+    to: { arrival: arr, day: arrDay, sequence: 20 },
+    distance: 1000, duration, totalHaltsBetween: 10, ...extra,
+  });
+  const now = Date.parse('2026-10-30T10:00:00+05:30');
+  const get = (q, live = '0') => {
+    const out = env.ctx.doGet({ parameter: { action: 'trains', q, live } });
+    return JSON.parse(out.text);
+  };
+
+  test('asks RailRadar with the key in the header only, and passes on the documented fields', () => {
+    env.rail.answer = () => ({ code: 200, body: sample('YPR', 'R', [train('12251', '23:40', 1, '00:05', 3, 1465)]) });
+    const res = JSON.parse(env.ctx.jsonOut_(env.ctx.trainsLookup_({ q: 'YPR-R-2026-10-31' }, now)).text);
+    assert.equal(res.ok, true);
+    assert.equal(res.source, 'RailRadar');
+    assert.equal(env.rail.calls.length, 1);
+    assert.equal(env.rail.calls[0].url, 'https://api.railradar.in/v1/trains/between/YPR/R?date=2026-10-31');
+    assert.equal(env.rail.calls[0].auth, 'Bearer rr_live_SECRET123');
+    const r = res.results[0];
+    assert.equal(r.ok, true);
+    assert.equal(r.q, 'YPR-R-2026-10-31');
+    assert.equal(r.checkedAt, new Date(now).toISOString());
+    assert.deepEqual({ ...r.trains[0], runDays: [...r.trains[0].runDays] }, {
+      number: '12251', name: 'Train 12251', type: 'Express', runDays: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'],
+      dep: '23:40', depDay: 1, arr: '00:05', arrDay: 3, duration: 1465, live: null,
+    });
+    assert.doesNotMatch(JSON.stringify(res), /SECRET123/, 'the key never leaves the robot');
+  });
+
+  test('a search is cached for 6 hours: the second visitor costs no call', () => {
+    env.rail.answer = () => ({ code: 200, body: sample('YPR', 'R', [train('12251', '23:40', 1, '00:05', 3, 1465)]) });
+    env.ctx.trainsLookup_({ q: 'YPR-R-2026-10-31' }, now);
+    const again = env.ctx.trainsLookup_({ q: 'YPR-R-2026-10-31' }, now + 60_000);
+    assert.equal(env.rail.calls.length, 1);
+    assert.equal(again.results[0].checkedAt, new Date(now).toISOString(), 'a cached answer keeps the time it was fetched');
+  });
+
+  test('live status only for a run today, and only when asked', () => {
+    env.rail.answer = () => ({ code: 200, body: sample('NGP', 'R', [train('12105', '20:00', 1, '23:55', 1, 235, { live: { type: 'upcoming', delayMinutes: 25 } })]) });
+    const res = env.ctx.trainsLookup_({ q: 'NGP-R-2026-10-30,NGP-R-2026-11-02', live: '1' }, now);
+    assert.equal(env.rail.calls[0].url, 'https://api.railradar.in/v1/trains/between/NGP/R?date=2026-10-30&live=true');
+    assert.equal(env.rail.calls[1].url, 'https://api.railradar.in/v1/trains/between/NGP/R?date=2026-11-02');
+    assert.equal(res.results[0].live, true);
+    assert.equal(res.results[0].trains[0].live.delayMinutes, 25);
+    assert.equal(res.results[1].live, false);
+    assert.equal(res.results[1].trains[0].live, null, 'a later run never carries a delay');
+  });
+
+  test('errors are named, never turned into trains', () => {
+    const codes = { YPR: 404, SBC: 429, SMVB: 503, NGP: 401, PUNE: 200 };
+    env.rail.answer = (url) => {
+      const from = url.split('/between/')[1].split('/')[0];
+      return { code: codes[from], body: from === 'PUNE' ? '<html>oops</html>' : { success: false, error: { code: 'X', message: 'x' } } };
+    };
+    const res = env.ctx.trainsLookup_({ q: 'YPR-R-2026-10-31,SBC-R-2026-10-31,SMVB-R-2026-10-31,NGP-R-2026-10-31,PUNE-R-2026-10-31' }, now);
+    assert.deepEqual([...res.results.map((r) => r.error)], ['not-found', 'rate-limited', 'unavailable', 'not-configured', 'bad-response']);
+    assert.ok(res.results.every((r) => r.ok === false && !r.trains));
+  });
+
+  test('the per-minute and per-day caps stop calls (and say "busy")', () => {
+    env.props.set('RAIL_MINUTE_LIMIT', '3');
+    env.props.set('RAIL_DAILY_LIMIT', '5');
+    env.rail.answer = () => ({ code: 200, body: sample('X', 'R', []) });
+    let res = env.ctx.trainsLookup_({ q: 'SC-R-2026-10-31,HYB-R-2026-10-31,KCG-R-2026-10-31,SC-R-2026-11-01' }, now);
+    assert.equal(env.rail.calls.length, 3);
+    assert.deepEqual([...res.results.map((r) => r.ok)], [true, true, true, false]);
+    assert.equal(res.results[3].error, 'busy');
+    // Next minute: two more allowed today, then the day is used up.
+    res = env.ctx.trainsLookup_({ q: 'SC-R-2026-11-01,HYB-R-2026-11-01,KCG-R-2026-11-01' }, now + 61_000);
+    assert.equal(env.rail.calls.length, 5);
+    assert.deepEqual([...res.results.map((r) => r.error ?? 'ok')], ['ok', 'ok', 'busy']);
+  });
+
+  test('bad or oversized requests and a missing key cost nothing', () => {
+    env.rail.answer = () => assert.fail('no call expected');
+    for (const q of ['', 'ypr-R-2026-10-31', 'YPR-R-2026-13-01', 'YPR-R-2026-02-30', 'YPR-YPR-2026-10-31', 'YPR-R-2020-01-01', 'YPR-R-2027-12-01', Array(13).fill('YPR-R-2026-10-31').join(',')])
+      assert.equal(env.ctx.trainsLookup_({ q }, now).error, 'bad-request', q);
+    env.props.delete('RAILRADAR_API_KEY');
+    assert.deepEqual({ ...env.ctx.trainsLookup_({ q: 'YPR-R-2026-10-31' }, now) }, { ok: false, error: 'not-configured' });
+    assert.equal(env.rail.calls.length, 0);
+  });
+
+  test('the doorbell still works on GET without action=trains', () => {
+    const out = env.ctx.doGet({ parameter: {} });
+    assert.equal(out.text, 'ok');
   });
 });
 

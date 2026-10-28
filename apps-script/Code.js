@@ -42,6 +42,12 @@
  *   WHATSAPP_TEMPLATE    default driver_assigned
  *   WHATSAPP_LANGUAGE    default en (or hi — the language of the approved template)
  *   WHATSAPP_API_VERSION default v23.0
+ *   RAILRADAR_API_KEY    optional: RailRadar key (railradar.in/developers) — the
+ *                        booking estimate's real trains home. Off until set.
+ *   RAIL_MINUTE_LIMIT    calls to RailRadar a minute, default 25 (Developer plan
+ *                        allows 30; free sandbox: set 8)
+ *   RAIL_DAILY_LIMIT     calls to RailRadar a day, default 900 (Developer plan:
+ *                        30,000 a month; free sandbox: set 3)
  *
  * Your own columns are safe: the robot finds its columns by their heading, only
  * ever writes those, and leaves any column you add (e.g. "Paid?") alone.
@@ -783,8 +789,183 @@ function doPost() {
   return ping_();
 }
 
-function doGet() {
+/** GET: the doorbell, or (action=trains) the train lookup for the booking estimate. */
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  if (p.action === 'trains') return jsonOut_(trainsLookup_(p, Date.now()));
   return ping_();
+}
+
+function jsonOut_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ============================================================ train lookup
+   The booking estimate's real trains home on the drop date (lib/rail.ts on
+   the website). This is the only code that talks to RailRadar: its key stays
+   in the Script Properties (RAILRADAR_API_KEY), never on the website or in
+   GitHub, and never in an answer. Each search is cached for 6 hours (5
+   minutes with live running status), and calls to RailRadar are capped per
+   minute and per day so a busy day or a prank cannot use up the plan. Only
+   RailRadar's documented fields are passed on, unchanged; nothing is
+   invented: a search that fails says why. */
+
+var RAIL_API = 'https://api.railradar.in/v1';
+var RAIL_MAX_QUERIES = 12;
+
+/** epoch ms → its date in India, "2026-10-31". */
+function istDay(ms) {
+  return new Date(ms + 330 * 60000).toISOString().slice(0, 10);
+}
+
+function dayPlus(day, n) {
+  var p = day.split('-').map(Number);
+  return new Date(Date.UTC(p[0], p[1] - 1, p[2] + n)).toISOString().slice(0, 10);
+}
+
+/**
+ * "SBC-R-2026-10-31,NGP-R-2026-11-01" → [{ from, to, date }], or null if any
+ * part is not a station code pair and a date from yesterday to 120 days ahead
+ * (India time), or there are more than RAIL_MAX_QUERIES.
+ */
+function parseTrainQueries(q, now) {
+  var parts = String(q == null ? '' : q).split(',').filter(String);
+  if (!parts.length || parts.length > RAIL_MAX_QUERIES) return null;
+  var first = dayPlus(istDay(now), -1);
+  var last = dayPlus(istDay(now), 120);
+  var out = [];
+  for (var i = 0; i < parts.length; i++) {
+    var m = /^([A-Z]{1,5})-([A-Z]{1,5})-(\d{4}-\d{2}-\d{2})$/.exec(parts[i]);
+    if (!m || m[1] === m[2] || m[3] < first || m[3] > last || dayPlus(m[3], 0) !== m[3]) return null;
+    out.push({ from: m[1], to: m[2], date: m[3] });
+  }
+  return out;
+}
+
+/** RailRadar's train (documented fields) → what the website reads; live status only when it was asked for. */
+function railTrain(t, live) {
+  t = t || {};
+  var tr = t.train || {};
+  var from = t.from || {};
+  var to = t.to || {};
+  var out = {
+    number: String(tr.number == null ? '' : tr.number),
+    name: String(tr.name == null ? '' : tr.name),
+    type: tr.type == null ? '' : String(tr.type),
+    runDays: Array.isArray(tr.runDays) ? tr.runDays.map(String) : [],
+    dep: from.departure == null ? '' : String(from.departure),
+    depDay: from.day,
+    arr: to.arrival == null ? '' : String(to.arrival),
+    arrDay: to.day,
+    duration: typeof t.duration === 'number' ? t.duration : null,
+    live: null,
+  };
+  if (live && t.live && typeof t.live.delayMinutes === 'number') out.live = { delayMinutes: t.live.delayMinutes };
+  return out;
+}
+
+/** One RailRadar answer → a result for the website: ok with the trains, or the reason it failed. */
+function railResult(query, code, body, checkedAt, live) {
+  var base = { q: query.from + '-' + query.to + '-' + query.date };
+  var fail = function (error) { base.ok = false; base.error = error; return base; };
+  if (code === 404) return fail('not-found');
+  if (code === 429) return fail('rate-limited');
+  if (code === 401 || code === 403) return fail('not-configured');
+  if (code === 400) return fail('bad-request');
+  if (code >= 500) return fail('unavailable');
+  if (code !== 200 || !body || body.success !== true || !body.data || !Array.isArray(body.data.trains)) return fail('bad-response');
+  var d = body.data;
+  return {
+    q: base.q,
+    ok: true,
+    checkedAt: new Date(checkedAt).toISOString(),
+    live: Boolean(live),
+    from: { code: query.from, name: String((d.from && d.from.name) || query.from) },
+    to: { code: query.to, name: String((d.to && d.to.name) || query.to) },
+    trains: d.trains.map(function (t) { return railTrain(t, live); }),
+  };
+}
+
+/**
+ * How many of `n` new calls to RailRadar may go out now: the per-minute cap
+ * (CacheService) and the per-day cap (Script Properties). Counts what it
+ * allows. Approximate under heavy load; RailRadar's own 429 is handled too.
+ */
+function railBudget_(n, now) {
+  if (n <= 0) return 0;
+  var cache = CacheService.getScriptCache();
+  var props = PropertiesService.getScriptProperties();
+  var perMinute = Number(prop_('RAIL_MINUTE_LIMIT')) || 25;
+  var perDay = Number(prop_('RAIL_DAILY_LIMIT')) || 900;
+  var minuteKey = 'railMin:' + Math.floor(now / 60000);
+  var usedMinute = Number(cache.get(minuteKey) || 0);
+  var day = istDay(now);
+  var dayRec = String(props.getProperty('railDay') || '').split(':');
+  var usedDay = dayRec[0] === day ? Number(dayRec[1] || 0) : 0;
+  var allowed = Math.max(0, Math.min(n, perMinute - usedMinute, perDay - usedDay));
+  if (allowed > 0) {
+    cache.put(minuteKey, String(usedMinute + allowed), 120);
+    props.setProperty('railDay', day + ':' + (usedDay + allowed));
+  }
+  return allowed;
+}
+
+/**
+ * The lookup: ?action=trains&q=SBC-R-2026-10-31,…&live=1. Answers
+ * { ok, source, results: [one per search, in order] } — every search either
+ * ok with its trains (cached ones keep the time they were fetched) or failed
+ * with a reason ('busy' when a cap was reached).
+ */
+function trainsLookup_(params, now) {
+  var queries = parseTrainQueries(params.q, now);
+  if (!queries) return { ok: false, error: 'bad-request' };
+  var key = prop_('RAILRADAR_API_KEY');
+  if (!key) return { ok: false, error: 'not-configured' };
+  var wantLive = String(params.live) === '1';
+  var today = istDay(now);
+  var yesterday = dayPlus(today, -1);
+  var cache = CacheService.getScriptCache();
+  var results = [];
+  var misses = [];
+  queries.forEach(function (q, i) {
+    var live = wantLive && (q.date === today || q.date === yesterday);
+    var ck = 'rail1:' + q.from + '-' + q.to + '-' + q.date + (live ? ':live' : '');
+    var hit = cache.get(ck);
+    if (hit) {
+      try { results[i] = JSON.parse(hit); return; } catch (err) { /* refetch */ }
+    }
+    misses.push({ i: i, q: q, live: live, ck: ck });
+  });
+  var allowed = railBudget_(misses.length, now);
+  var go = misses.slice(0, allowed);
+  misses.slice(allowed).forEach(function (m) {
+    results[m.i] = { q: m.q.from + '-' + m.q.to + '-' + m.q.date, ok: false, error: 'busy' };
+  });
+  if (go.length) {
+    var responses = UrlFetchApp.fetchAll(go.map(function (m) {
+      return {
+        url: RAIL_API + '/trains/between/' + m.q.from + '/' + m.q.to + '?date=' + m.q.date + (m.live ? '&live=true' : ''),
+        method: 'get',
+        headers: { Authorization: 'Bearer ' + key },
+        muteHttpExceptions: true,
+      };
+    }));
+    go.forEach(function (m, j) {
+      var res = responses[j];
+      var code = res ? res.getResponseCode() : 0;
+      var body = null;
+      try { body = JSON.parse(res.getContentText()); } catch (err) { body = null; }
+      var r = railResult(m.q, code, body, now, m.live);
+      results[m.i] = r;
+      if (r.ok) {
+        var text = JSON.stringify(r);
+        if (text.length < 90000) cache.put(m.ck, text, m.live ? 300 : 21600);
+      } else if (r.error !== 'rate-limited' && r.error !== 'unavailable') {
+        console.warn('RailRadar ' + code + ' for ' + r.q);
+      }
+    });
+  }
+  return { ok: true, source: 'RailRadar', results: results };
 }
 
 function ping_() {
@@ -1315,5 +1496,6 @@ if (typeof module !== 'undefined') {
     toValue: toValue, fromValue: fromValue, toFields: toFields, fromFields: fromFields,
     updateKey: updateKey, customerPush: customerPush, whatsappAssigned: whatsappAssigned, floodTelegram: floodTelegram,
     tripClockOf: tripClockOf, tripClockNews: tripClockNews, sameClock: sameClock, hoursText: hoursText, tripTelegram: tripTelegram,
+    parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
   };
 }

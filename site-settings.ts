@@ -72,6 +72,22 @@ export const settings = {
     pingUrl: '',
   },
 
+  /* --------------------------------------- the driver's train home -------
+     For one-way drops the estimate looks up the REAL trains home for the
+     drop date (RailRadar, through the alerts robot in apps-script/Code.js,
+     which keeps the API key in its Script Properties — never here).
+     lookupUrl: the robot's web app address (Apps Script → Deploy → Web app,
+     ends in /exec). Empty: alerts.pingUrl is used; both empty: no lookup,
+     and the estimate uses the typical time home, labelled as such. */
+  trains: {
+    lookupUrl: '',
+    transferBufferMinutes: 90, // the least time to change trains (e.g. at Nagpur)
+    maxTransferHours: 12, //      a longer wait at the change is not offered as a connection
+    directWithinHours: 24, //     no direct train leaving within this long → look for a change
+    maxWaitHours: 48, //          trains leaving later than this after he is ready are not offered
+    maxOptions: 5, //             how many routes the customer can choose from
+  },
+
   /* ---------------------------------------------------- driver charges -----
      In rupees. A from/to pair shows as a range, e.g. ₹1,000–1,200. */
   prices: {
