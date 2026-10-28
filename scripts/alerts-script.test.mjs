@@ -580,10 +580,11 @@ describe('formatting', () => {
     assert.equal(ctx.inr(125000), '1,25,000');
   });
   test('an outstation trip shows in the alert, the email and the Sheet', () => {
-    const trip = { to: 'Delhi', destId: 'delhi', kind: 'one-way', km: 1214, days: 3, returnHours: 11, estFrom: 5550, estTo: 6150 };
+    const trip = { to: 'Delhi', destId: 'delhi', kind: 'one-way', km: 1214, days: 2, returnHours: 11, estFrom: 4300, estTo: 4500 };
     const booking = { name: 'A', phone: '9111473929', city: 'Raipur', package: 'one-way-drop', pickup: 'a', preferredTime: '', notes: 'Swift', trip };
-    const line = 'Raipur → Delhi · one-way drop · ~1214 km · 3 days + 11 h getting home · est. ₹5,550–6,150';
+    const line = 'Raipur → Delhi · one-way drop · ~1214 km · 2 days + a return day · est. ₹4,300–4,500';
     assert.equal(ctx.tripLine(booking), line);
+    assert.equal(ctx.tripLine({ ...booking, trip: { ...trip, returnHours: 30 } }), line.replace('a return day', 'a return day + 6 late h'));
     const c = { booking, id: 'i', ref: 'DB-1001', previousBookings: 0, siteUrl: 'https://thedrivebuddy.in' };
     assert.ok(ctx.bookingTelegram(c).text.includes('<b>Trip:</b> ' + line));
     assert.ok(ctx.bookingEmail(c).body.includes('Trip: ' + line + '\nNotes: Swift'));

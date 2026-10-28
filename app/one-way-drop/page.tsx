@@ -14,14 +14,16 @@ import { pageMeta } from '@/lib/seo';
 import { priceText, rupeeRange, rupees, settings } from '@/lib/settings';
 import { formatPhone, site, telHref } from '@/lib/site';
 import { homeText, kmText, tripFor } from '@/lib/trip';
+import { DEFAULT_START_HOUR } from '@/lib/outstation';
 
 const trail = [{ name: 'One-Way Drop', path: '/one-way-drop/' }];
 const day = `${priceText.outstation} a day`;
+const returnDay = `one return day, ${priceText.outstationReturnMax}`;
 const late = `${priceText.outstationReturnHour} an hour, at most ${priceText.outstationReturnMax} a day`;
 
 export const metadata: Metadata = pageMeta({
   title: 'One-Way Drop Driver: You & Your Car to Any City',
-  description: `A verified driver takes you and your car, or just the car, from Raipur, Bhilai, Durg or Bilaspur to any city. ${day}, his way home included.`,
+  description: `A verified driver takes you and your car, or just the car, from Raipur, Bhilai, Durg or Bilaspur to any city. ${day}, priced with his train home.`,
   path: '/one-way-drop/',
 });
 
@@ -70,7 +72,7 @@ const options = [
 const steps = [
   {
     title: 'See the price',
-    body: 'Pick your city and destination above: the estimate shows straight away.',
+    body: 'Pick your city, destination and start time above: the estimate shows straight away, with the train he will take home.',
   },
   {
     title: 'We call you',
@@ -82,20 +84,21 @@ const steps = [
   },
   {
     title: 'He comes home',
-    body: `By bus or train — included in the days you pay. Only if he is still travelling after the last day: ${late}.`,
+    body: `By bus or train — you book his ticket. Home before the driving days end: nothing more. Otherwise ${returnDay}; still travelling after that, ${late}.`,
   },
 ];
 
 const included = [
   'A police-verified, sober, highway-experienced driver',
   `Each day: the driver's 24 hours from the start, with up to ${priceText.outstationHours} of driving`,
-  'His way home by bus or train, within the paid days',
+  'His way home, if he is back before the driving days end',
   'Ride along or send the car alone — the same price',
 ];
 
 const notIncluded = [
   'Fuel, tolls and parking',
-  'His bus or train ticket home, at cost',
+  'His bus or train ticket home — you book it',
+  `A return day (${priceText.outstationReturnMax}) if he is not home when the driving days end`,
   `His meals — or ${priceText.mealAllowance} a day`,
   'Overnight stay on routes longer than a day',
   `Driving beyond ${priceText.outstationHours} a day: ${priceText.outstationExtraHour} an hour`,
@@ -112,15 +115,15 @@ const faqs = [
   },
   {
     q: 'Is the driver’s way home included?',
-    a: `Yes. Each day you pay covers the driver's 24 hours from the start, his bus or train home included — so a drop from Raipur to Nagpur is one day. Only if he is still travelling home after the last paid day do you pay ${late}, plus his ticket at cost.`,
+    a: `If he is home before the driving days end, yes — a drop from Raipur to Nagpur is one day. If not, ${returnDay}, is added: a driving day is a driving day, the trip home is its own day (Raipur → Mumbai: 2 driving days + 1 return day). Still travelling after the return day — a missed train, no seat — ${late}. The estimate uses the regular trains home and your start time; the final bill uses the time he really gets home. You book his train or bus ticket.`,
   },
   {
     q: 'How many days will my drop take?',
-    a: `About ${settings.outstation.kmPerDay} km of driving a day, with breaks. From Raipur, Nagpur or Jabalpur is one day, Bhopal or Hyderabad two, Mumbai or Delhi three. Want to stop on the way? Book extra days; each day booked is charged.`,
+    a: `About ${settings.outstation.kmPerDay} km of driving a day, with breaks. From Raipur, Nagpur, Jabalpur or Visakhapatnam is one driving day; Hyderabad, Kolkata, Mumbai or Delhi two. Want to stop on the way? Book extra days; each day booked is charged.`,
   },
   {
     q: 'What else do I pay for?',
-    a: `Fuel, tolls and parking, as on every DriveBuddy booking, and the driver's bus or train ticket home at cost. Please give him his meals, or ${priceText.mealAllowance} a day. On routes longer than a day, his overnight stay too.`,
+    a: `Fuel, tolls and parking, as on every DriveBuddy booking. You book the driver's bus or train ticket home. Please give him his meals, or ${priceText.mealAllowance} a day. On routes longer than a day, his overnight stay too.`,
   },
   {
     q: 'When do I pay, and how?',
@@ -134,7 +137,7 @@ export default function OneWayDropPage() {
       <PageHero
         eyebrow="One-way drop"
         title="One-way drop to another city — you and your car, or just the car"
-        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. ${day}, his way home included.`}
+        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. ${day}, plus a return day if his trip home runs past the driving days.`}
         trail={trail}
         actions={
           <>
@@ -176,7 +179,7 @@ export default function OneWayDropPage() {
         id="routes"
         eyebrow="Popular routes"
         title="One-way drops from Raipur"
-        lede="Estimates for the drop alone, with the driver’s real train or bus time home. From Bhilai, Durg or Bilaspur, use the price checker above."
+        lede={`Leaving Raipur at ${DEFAULT_START_HOUR} AM, with the regular train or bus he can catch home. Another start time or Bhilai, Durg or Bilaspur: use the price checker above.`}
       >
         <div className="border-border overflow-x-auto rounded-xl border">
           <table className="w-full text-left text-[0.9375rem]">
@@ -186,7 +189,7 @@ export default function OneWayDropPage() {
                   Destination
                 </th>
                 <th scope="col" className="hidden px-4 py-3 font-semibold sm:table-cell">
-                  Days
+                  Driving days
                 </th>
                 <th scope="col" className="hidden px-4 py-3 font-semibold sm:table-cell">
                   Driver’s way home
@@ -207,15 +210,23 @@ export default function OneWayDropPage() {
                       <span className="sm:hidden">
                         {' · '}
                         {t.days} {t.days === 1 ? 'day' : 'days'} ·{' '}
-                        {t.returnHours > 0 ? `+${t.returnHours} h home` : 'way home included'}
+                        {t.returnHours > 0 ? '+ return day' : 'home in time'}
                       </span>
                     </span>
                   </th>
                   <td className="tabular hidden px-4 py-3 sm:table-cell">{t.days}</td>
                   <td className="text-fg-muted hidden px-4 py-3 sm:table-cell">
-                    {t.home ? <span className="block">{homeText(t.home)}</span> : null}
+                    {t.plan?.train ? (
+                      <span className="block">
+                        {t.plan.train.no} {t.plan.train.name}
+                      </span>
+                    ) : t.home ? (
+                      <span className="block">{homeText(t.home)}</span>
+                    ) : null}
                     <span className="text-fg text-xs">
-                      {t.returnHours > 0 ? `+${t.returnHours} h after the last day · ${rupees(t.est?.returnCharge ?? 0)}` : 'Within the paid days'}
+                      {t.returnHours > 0
+                        ? `+ return day · ${rupees(t.est?.returnCharge ?? 0)}`
+                        : 'Home before the driving days end'}
                     </span>
                   </td>
                   <td className="tabular px-4 py-3 text-right font-semibold whitespace-nowrap">
@@ -227,7 +238,7 @@ export default function OneWayDropPage() {
           </table>
         </div>
         <p className="text-fg-subtle mt-3 text-sm">
-          Fuel, tolls, parking, his ticket home and meals are extra. Exact price confirmed on the call.
+          Fuel, tolls, parking and meals are extra; you book his ticket home. Exact price confirmed on the call.
         </p>
       </Section>
 

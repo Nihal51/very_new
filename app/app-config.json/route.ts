@@ -44,10 +44,11 @@ export function GET() {
       replacementDays: monthly.replacementDays,
     },
     /* The trip estimate: rules, and for each destination and pickup city the
-       one-way km, the fewest days, and the hours the driver is still on his way
-       home after them (lib/outstation.ts works them out). The app shows
-       days × prices.outstation + those hours × returnHour (at most
-       returnMaxPerDay in any 24 h). */
+       one-way km, the fewest days, and the hours after them until the driver
+       is home, for a 7 AM start (lib/outstation.ts works them out). The
+       estimate is days × prices.outstation, plus — if those hours are more
+       than 0 — one return day (returnMaxPerDay), plus returnHour for each hour
+       past its 24 (at most returnMaxPerDay in any 24 h). */
     outstation: {
       hoursPerDay: outstation.hoursPerDay,
       sameDayMaxHours: outstation.sameDayMaxHours,

@@ -11,23 +11,24 @@ import { cities } from '@/lib/content';
 import { ELSEWHERE, destinationGroups, tripFor } from '@/lib/trip';
 
 /**
- * "What will my drop cost?" on the One-Way Drop page: pickup city, destination
- * and days → the same estimate the booking form shows, and a button that
- * opens the booking form with all three already filled in.
+ * "What will my drop cost?" on the One-Way Drop page: pickup city, destination,
+ * start time and days → the same estimate the booking form shows, and a
+ * button that opens the booking form with them already filled in.
  */
 export function OneWayPriceChecker({ className }: { className?: string }) {
   const router = useRouter();
   const [city, setCity] = useState('Raipur');
   const [dest, setDest] = useState('nagpur');
   const [days, setDays] = useState('');
+  const [time, setTime] = useState('07:00');
 
-  const trip = useMemo(() => tripFor('one-way-drop', city, dest, Number(days) || 0), [city, dest, days]);
+  const trip = useMemo(() => tripFor('one-way-drop', city, dest, Number(days) || 0, time), [city, dest, days, time]);
   const query = new URLSearchParams({ pkg: 'one-way-drop', city, to: dest });
   if (days && Number(days) > trip.minDays) query.set('days', String(Number(days)));
 
   return (
     <Card className={className}>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="From" name="ow-city">
           {(p) => (
             <Select {...p} value={city} onChange={(e) => setCity(e.target.value)}>
@@ -54,6 +55,9 @@ export function OneWayPriceChecker({ className }: { className?: string }) {
               <option value={ELSEWHERE}>Somewhere else…</option>
             </Select>
           )}
+        </Field>
+        <Field label="Driver leaves at" name="ow-time" hint="It decides which train he catches home.">
+          {(p) => <Input {...p} type="time" step={900} value={time} onChange={(e) => setTime(e.target.value)} />}
         </Field>
         <Field
           label="Days"

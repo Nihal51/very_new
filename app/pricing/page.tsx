@@ -37,7 +37,7 @@ const notIncluded = [
   'Fuel, tolls and parking charges',
   'Overnight stay costs on outstation trips',
   `The driver's meals on outstation trips — or ${priceText.mealAllowance} a day`,
-  'His bus or train ticket home after a one-way drop',
+  'His bus or train ticket home after a one-way drop — you book it',
 ];
 
 /** The pricing-specific questions, reused from the main FAQ set. */
@@ -92,11 +92,12 @@ export default function PricingPage() {
               ))}
             </ul>
             <p className="text-fg-subtle mt-6 text-sm">
-              Outstation trips and one-way drops are charged by the day: each day covers the
+              Outstation trips and one-way drops are charged by the driving day: each is the
               driver's 24 hours from the start, with up to {priceText.outstationHours} of driving
-              ({priceText.outstationExtraHour} for each hour beyond) and his way home included. If
-              he is still travelling home after the last paid day, those hours are{' '}
-              {priceText.outstationReturnHour} each, at most {priceText.outstationReturnMax} a day.
+              ({priceText.outstationExtraHour} for each hour beyond). After a one-way drop, if he is
+              not home when the driving days end, one return day ({priceText.outstationReturnMax})
+              is added, and {priceText.outstationReturnHour} an hour (at most{' '}
+              {priceText.outstationReturnMax} a day) if he is still travelling after it.
               Pick your destination on the booking form for an estimate — or see{' '}
               <Link href="/one-way-drop/" className="text-accent-text font-semibold underline underline-offset-4">
                 one-way drop prices by route

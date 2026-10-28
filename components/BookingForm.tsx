@@ -100,7 +100,7 @@ function packageLabel(value: string): string {
 /** The trip for a trip package, as the form shows and saves it. */
 function tripOf(v: Values) {
   if (!isTripPackage(v.pkg)) return null;
-  return tripFor(v.pkg, v.city, v.dest, Number(v.days) || 0);
+  return tripFor(v.pkg, v.city, v.dest, Number(v.days) || 0, v.when);
 }
 
 function tripRecordOf(v: Values): BookingTrip | null {
@@ -532,6 +532,26 @@ export function BookingForm({
                   )}
                 </Field>
 
+                <Field
+                  label="Driver leaves on"
+                  name="when"
+                  optionalLabel
+                  hint={
+                    trip.kind === 'one-way'
+                      ? 'Date & time: they decide which train he catches home. Blank: we assume 7 AM.'
+                      : 'Date & time the trip starts.'
+                  }
+                >
+                  {(p) => (
+                    <Input
+                      {...p}
+                      type="datetime-local"
+                      value={values.when}
+                      onChange={(e) => set('when')(e.target.value)}
+                    />
+                  )}
+                </Field>
+
                 <TripEstimate
                   view={trip}
                   city={values.city}
@@ -562,21 +582,24 @@ export function BookingForm({
               )}
             </Field>
 
-            <Field
-              label="Preferred date & time"
-              name="when"
-              optionalLabel
-              hint="Leave blank if you need a driver now."
-            >
-              {(p) => (
-                <Input
-                  {...p}
-                  type="datetime-local"
-                  value={values.when}
-                  onChange={(e) => set('when')(e.target.value)}
-                />
-              )}
-            </Field>
+            {/* Trips ask for the start in the trip box above: it changes the estimate. */}
+            {!trip && (
+              <Field
+                label="Preferred date & time"
+                name="when"
+                optionalLabel
+                hint="Leave blank if you need a driver now."
+              >
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="datetime-local"
+                    value={values.when}
+                    onChange={(e) => set('when')(e.target.value)}
+                  />
+                )}
+              </Field>
+            )}
 
             <Field
               label="Anything else?"

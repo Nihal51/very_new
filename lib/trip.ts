@@ -5,10 +5,12 @@
 
 import { TRIP_PACKAGES, type BookingQuote, type BookingTrip, type TripPackage } from './bookings';
 import {
+  DEFAULT_START_HOUR,
   destinations,
   estimate,
   findDestination,
   homeTravelHours,
+  homeWay,
   pickupCities,
   planTrip,
   roadKm,
@@ -40,8 +42,13 @@ export type TripView = {
   minDays: number;
   /** The days to charge. */
   days: number;
-  /** One-way: hours the driver is still travelling home after the paid days. */
+  /** One-way: hours after the driving days until the driver is home (any = a return day; past 24 = late hours). */
   returnHours: number;
+  /** When the driver leaves: hour of the day, and the date if the customer picked one. */
+  startHour: number;
+  startDate?: { y: number; m: number; d: number };
+  /** The customer picked a start time (otherwise DEFAULT_START_HOUR is assumed). */
+  startKnown: boolean;
   /** How the driver gets home and the hours on board (timetables in lib/outstation.ts). */
   home?: { by: Destination['home']['by']; hours: number };
   plan?: TripPlan;
@@ -51,19 +58,38 @@ export type TripView = {
 };
 
 /**
- * Works out the trip for the form. `bookedDays` is what the customer typed (0
- * or less = as few as the distance allows).
+ * "2026-10-20T09:30" (the form's date & time) or "09:30" (a time alone) → the
+ * start hour of the day, and the date if there is one.
  */
-export function tripFor(pkg: TripPackage, city: string, destId: string, bookedDays: number): TripView {
+export function parseStart(when: string): { startHour: number; startDate?: TripView['startDate'] } | null {
+  const m = /^(?:(\d{4})-(\d{2})-(\d{2})T)?(\d{2}):(\d{2})/.exec(when.trim());
+  if (!m) return null;
+  const hour = Number(m[4]) + Number(m[5]) / 60;
+  if (!(hour >= 0 && hour < 24)) return null;
+  return {
+    startHour: hour,
+    ...(m[1] && { startDate: { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } }),
+  };
+}
+
+/**
+ * Works out the trip for the form. `bookedDays` is what the customer typed (0
+ * or less = as few as the distance allows); `when` is when the driver leaves
+ * (the form's date & time, or a time alone; empty = 7 AM).
+ */
+export function tripFor(pkg: TripPackage, city: string, destId: string, bookedDays: number, when = ''): TripView {
   const kind = TRIP_PACKAGES[pkg];
   const dest = destId && destId !== ELSEWHERE ? findDestination(destId) : undefined;
   const sameCity = Boolean(dest && dest.name === city);
+  const start = parseStart(when);
+  const startHour = start?.startHour ?? DEFAULT_START_HOUR;
+  const when_ = { startHour, startKnown: Boolean(start), ...(start?.startDate && { startDate: start.startDate }) };
   if (!dest || !isPickupCity(city) || sameCity) {
     const days = Math.min(60, Math.max(1, Math.floor(bookedDays) || 1));
-    return { kind, dest, km: 0, minDays: 1, days, returnHours: 0, sameCity };
+    return { kind, dest, km: 0, minDays: 1, days, returnHours: 0, sameCity, ...when_ };
   }
   const homeHours = homeTravelHours(dest, city) ?? 0;
-  const plan = planTrip(tripRules, roadKm(city, dest), kind, bookedDays, homeHours);
+  const plan = planTrip(tripRules, roadKm(city, dest), kind, bookedDays, homeWay(dest, city), startHour);
   return {
     kind,
     dest,
@@ -75,7 +101,48 @@ export function tripFor(pkg: TripPackage, city: string, destId: string, bookedDa
     plan,
     est: estimate(tripRules, plan),
     sameCity,
+    ...when_,
   };
+}
+
+const TIME = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' });
+const DATE = new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+/**
+ * A moment `hours` after the start, rounded to 5 minutes: "Wed 22 Oct, 4:05 pm"
+ * when the date is known, else "day 3, 4:05 pm".
+ */
+export function atText(view: Pick<TripView, 'startHour' | 'startDate'>, hours: number): string {
+  const t = Math.round(((view.startHour + hours) * 60) / 5) * 5; // minutes after midnight of day 1
+  const day = Math.floor(t / 1440);
+  const time = TIME.format(new Date(Date.UTC(2000, 0, 1) + (t - day * 1440) * 60_000)).replace(/\s?(am|pm)$/i, ' $1');
+  if (!view.startDate) return `day ${day + 1}, ${time}`;
+  const { y, m, d } = view.startDate;
+  return `${DATE.format(new Date(Date.UTC(y, m - 1, d + day)))}, ${time}`;
+}
+
+/** "7:00 am" — the start time alone. */
+export const startText = (view: Pick<TripView, 'startHour'>) => atText({ startHour: view.startHour }, 0).replace(/^day 1, /, '');
+
+/**
+ * The one-way drop hour by hour, for the estimate card: when he leaves, drops
+ * the car, catches his train or bus, is home — and when the driving days end.
+ */
+export function tripTimeline(view: TripView, city: string): { label: string; value: string }[] {
+  const p = view.plan;
+  if (!p || view.kind !== 'one-way' || p.dropAt === undefined || p.homeAt === undefined) return [];
+  const at = (h: number) => atText(view, h);
+  const rows = [
+    { label: `Leaves ${city}`, value: at(0) },
+    { label: `Drops the car in ${view.dest?.name ?? 'the city'}`, value: `about ${at(p.dropAt)}` },
+    p.train
+      ? { label: 'Train home (you book his ticket)', value: `${p.train.no} ${p.train.name}, ${at(p.leaveAt ?? p.dropAt)}` }
+      : { label: `Way home (you book his ticket)`, value: view.home ? homeText(view.home) : 'bus or train' },
+    { label: `Home in ${city}`, value: `about ${at(p.homeAt)}` },
+    { label: `${plural(view.days, 'driving day')} end`, value: at(view.days * 24) },
+  ];
+  if (p.returnDay) rows.push({ label: 'Return day ends', value: at(view.days * 24 + 24) });
+  return rows;
 }
 
 /** The trip as saved on the booking (firestore.rules: isTrip). */
@@ -101,10 +168,12 @@ export const homeText = (home: NonNullable<TripView['home']>) =>
 /** 1214 → "1,214 km" */
 export const kmText = (km: number) => `${new Intl.NumberFormat('en-IN').format(km)} km`;
 
-/** "2 days" / "3 days + 11 h for the driver to get home". */
+/** "2 days" / "2 days + a return day" / "2 days + a return day + 6 late hours". */
 export function tripDays(t: Pick<BookingTrip, 'kind' | 'days' | 'returnHours'>): string {
   const days = plural(t.days, 'day');
-  return t.kind === 'one-way' && t.returnHours > 0 ? `${days} + ${t.returnHours} h for the driver to get home` : days;
+  if (t.kind !== 'one-way' || t.returnHours <= 0) return days;
+  const late = Math.max(0, t.returnHours - 24);
+  return `${days} + a return day${late ? ` + ${plural(late, 'late hour')}` : ''}`;
 }
 
 /** One line for WhatsApp, the confirmation and the account page. */
@@ -131,24 +200,30 @@ export function estimateLines(view: TripView): { label: string; amount: string }
     },
   ];
   if (view.kind === 'one-way') {
-    const way = view.home ? ` (${homeText(view.home)})` : '';
-    lines.push(
-      view.returnHours > 0
-        ? {
-            label: `Driver’s way home${way}: still travelling ${plural(view.returnHours, 'hour')} after the last day × ${rupees(tripRules.returnHour)} (max ${rupees(tripRules.returnMaxPerDay)} a day)`,
-            amount: rupees(view.est.returnCharge),
-          }
-        : { label: `Driver’s way home${way}: within the paid days`, amount: 'No charge' },
-    );
+    const late = view.plan?.lateHours ?? Math.max(0, view.returnHours - 24);
+    if (view.returnHours > 0) {
+      lines.push({
+        label: `Return day: the driver is still on his way home when the driving days end`,
+        amount: rupees(view.est.returnDayCharge),
+      });
+      if (late > 0)
+        lines.push({
+          label: `${plural(late, 'late hour')} after the return day × ${rupees(tripRules.returnHour)} (max ${rupees(tripRules.returnMaxPerDay)} a day)`,
+          amount: rupees(view.est.lateCharge),
+        });
+    } else {
+      lines.push({ label: 'Driver’s way home: he is home before the driving days end', amount: 'No charge' });
+    }
   }
   return lines;
 }
 
-/** "₹1,550 × 3 days + ₹1,200 return (11 h) + ₹650 ticket" — the agreed price, itemised. */
+/** "₹1,550 × 2 days + ₹1,200 return day + ₹650 ticket" — the agreed price, itemised. */
 export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
+  const late = Math.max(0, q.returnHours - 24);
   return [
     `${rupees(q.dayRate)} × ${plural(q.days, 'day')}`,
-    q.returnHours > 0 ? `${rupees(q.returnCharge)} return (${q.returnHours} h)` : null,
+    q.returnHours > 0 ? `${rupees(q.returnCharge)} return day${late ? ` + ${plural(late, 'late hour')}` : ''}` : null,
     q.extraHours > 0 ? `${rupees(q.extraHourRate)} × ${plural(q.extraHours, 'extra hour')}` : null,
     q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
   ]

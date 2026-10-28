@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
-import { estimateLines, kmText, tripDays, type TripView } from '@/lib/trip';
+import { estimateLines, kmText, startText, tripDays, tripTimeline, type TripView } from '@/lib/trip';
 
 /**
  * The live estimate under the destination picker on the booking form, for
@@ -25,7 +25,7 @@ export function TripEstimate({
 }) {
   const oneWay = view.kind === 'one-way';
   const dayRate = `${priceText.outstation} a day`;
-  const returnRate = `${priceText.outstationReturnHour} an hour if the driver is still travelling home after the last day (max ${priceText.outstationReturnMax} a day)`;
+  const returnRate = `a ${priceText.outstationReturnMax} return day if the driver is not home when the driving days end`;
 
   let body: ReactNode;
   if (!city) {
@@ -48,6 +48,7 @@ export function TripEstimate({
     );
   } else if (view.est && view.plan) {
     const lines = estimateLines(view);
+    const timeline = tripTimeline(view, city);
     body = (
       <>
         <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">Estimated price</p>
@@ -63,6 +64,21 @@ export function TripEstimate({
             </li>
           ))}
         </ul>
+        {timeline.length > 0 && (
+          <div className="border-border mt-3 border-t pt-3">
+            <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">
+              The driver’s trip{view.startKnown ? '' : `, leaving at ${startText(view)}`}
+            </p>
+            <dl className="mt-2 grid gap-1 text-[0.8125rem]">
+              {timeline.map((r) => (
+                <div key={r.label} className="flex flex-wrap items-baseline justify-between gap-x-3">
+                  <dt className="text-fg-muted">{r.label}</dt>
+                  <dd className="tabular ml-auto text-right font-medium">{r.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        )}
         {view.plan.local && (
           <p className="bg-bg-subtle mt-3 rounded-lg p-3">
             {view.dest.name} is only about {kmText(view.km)} away — a Local Full Day ({priceText.fullDay}{' '}
@@ -81,12 +97,16 @@ export function TripEstimate({
     >
       {body}
       <p className="text-fg-subtle mt-3 text-xs leading-relaxed">
-        An estimate: we confirm the exact price on the call, before the driver leaves. Each day
-        covers the driver&apos;s 24 hours from the start, with up to {priceText.outstationHours} of
-        driving ({rupees(tripRules.extraHour)} an hour beyond)
-        {oneWay ? ' and his way home' : ''}. Fuel, tolls and parking
-        {oneWay ? ', and his bus or train ticket,' : ''} are extra. Please give the driver his meals,
-        or {rupees(settings.outstation.mealAllowance)} a day.
+        An estimate
+        {oneWay && !view.startKnown ? ` for a driver leaving at ${startText(view)} — pick the date & time for yours` : ''}:
+        we confirm the exact price on the call, before the driver leaves. Each driving day is the
+        driver&apos;s 24 hours from the start, with up to {priceText.outstationHours} of driving
+        ({rupees(tripRules.extraHour)} an hour beyond).
+        {oneWay
+          ? ` If he is not home when the driving days end, one return day (${priceText.outstationReturnMax}) is added; still travelling after that, ${priceText.outstationReturnHour} an hour (max ${priceText.outstationReturnMax} a day). The final bill uses the time he really gets home. You book his train or bus ticket home.`
+          : ''}{' '}
+        Fuel, tolls and parking are extra. Please give the driver his meals, or{' '}
+        {rupees(settings.outstation.mealAllowance)} a day.
       </p>
     </div>
   );

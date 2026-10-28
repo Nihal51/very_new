@@ -78,27 +78,31 @@ export const settings = {
     oneHour: 300,
     threeHours: 600,
     fullDay: { from: 1000, to: 1200 }, //     Local Full Day, 8 hours
-    outstation: { from: 1450, to: 1650 }, //  per DAY of an outstation trip or one-way drop (rules below)
+    outstation: { from: 1550, to: 1650 }, //  per DAY of an outstation trip or one-way drop (rules below)
     nightFrom: 500, //                        Night driver, 8 PM – 6 AM, "from ₹500"
   },
 
   /* ------------------------------------- outstation trips & one-way drops --
      How the trip estimate is worked out on the booking form and in the app.
-     The customer picks a destination; the site counts the one-way km and the
-     days. Each day (prices.outstation) covers the driver's 24 hours from the
-     start, his way home included. Only if he is still travelling home after
-     the last paid day are those hours added, at returnHour each, at most
-     returnMaxPerDay in any 24 hours. The team confirms the exact price on the
-     call (the quote calculator in /admin works it out from the driver's cost). */
+     The customer picks a destination and the start time; the site counts the
+     one-way km and the driving days (prices.outstation each, 24 h from the
+     start). One-way: from the start time it predicts when he drops the car,
+     which regular train/bus home he catches and when he is home. Home before
+     the last driving day ends: nothing more. Otherwise ONE return day
+     (returnMaxPerDay), and if he is still travelling after that, returnHour
+     for each late hour (at most returnMaxPerDay in any 24 h). The customer
+     books his ticket home. The final bill uses the time he really gets home.
+     The team confirms the exact price on the call (the quote calculator in
+     /admin works it out from the driver's cost). */
   outstation: {
     hoursPerDay: 12, //        driving hours in one outstation day
-    sameDayMaxHours: 16, //    a round trip with up to this much driving there and back is home within the 24 h: ONE day
+    sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
     extraHour: 120, //         each hour of driving beyond hoursPerDay
-    returnHour: 120, //        each hour the driver is still travelling home after the paid days
-    returnMaxPerDay: 1200, //  the most those return hours cost in any 24 hours
+    returnHour: 120, //        each late hour: still travelling home after the return day
+    returnMaxPerDay: 1200, //  the return day — and the most late hours cost in any 24 hours
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
-    kmPerDay: 400, //          how far one driver drives in a day, with breaks
-    averageKmh: 45, //         highway average with stops
+    kmPerDay: 600, //          how far one driver drives in a day (about 12 h at averageKmh)
+    averageKmh: 50, //         highway average with stops
     busKmh: 50, //             way home for a place not in the list: bus/train average, with stops
     stationHours: 1, //        getting to the bus stand or station and waiting
     localWithinKm: 60, //      closer than this, the form suggests a local package instead

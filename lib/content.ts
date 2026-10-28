@@ -362,11 +362,11 @@ export const services: Service[] = [
     ],
     quote: {
       title: 'Charged by the day',
-      body: `${priceText.outstation} a day. Each day covers the driver's full 24 hours from the start, his bus or train home included — so a drop to Nagpur is one day. Only if he is still on his way home after the last paid day do you pay ${priceText.outstationReturnHour} an hour (at most ${priceText.outstationReturnMax} a day) for those hours. Pick the destination on the booking form to see the estimate; we confirm the exact figure on the call, before the driver sets off.`,
+      body: `${priceText.outstation} a driving day, each the driver's 24 hours from the start — a drop to Nagpur is one day, he is home that evening. If he is not home when the driving days end, one return day (${priceText.outstationReturnMax}) is added; still travelling after that, ${priceText.outstationReturnHour} an hour (at most ${priceText.outstationReturnMax} a day). Pick the destination and start time on the booking form to see the estimate, with the train he will take home; we confirm the exact figure on the call, before the driver sets off.`,
       factors: [
         'Days for the distance',
-        'Any hours he is still travelling home after the last day',
-        'His bus or train ticket, at cost',
+        'A return day if he is not home when the driving days end',
+        'His bus or train ticket home — you book it',
       ],
       whatsapp:
         'Hi DriveBuddy, I need a one-way car drop.\nFrom (city / area):\nTo (city / address):\nDate and time:\nCar model:',
@@ -379,7 +379,7 @@ export const services: Service[] = [
       },
       {
         q: 'Is the driver’s return journey included in the price?',
-        a: `Yes. Each day you pay covers the driver's 24 hours from the start, including his way home. Only if he is still travelling after the last paid day do you pay ${priceText.outstationReturnHour} an hour (at most ${priceText.outstationReturnMax} a day) for those hours, plus his ticket at cost. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
+        a: `If he is home before the driving days end, yes. If not, one return day (${priceText.outstationReturnMax}) is added — Raipur → Mumbai is 2 driving days + 1 return day — and ${priceText.outstationReturnHour} an hour (at most ${priceText.outstationReturnMax} a day) if he is still travelling after it. You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
       },
     ],
   },
@@ -496,9 +496,9 @@ export const extraRates = [
     price: priceText.outstationExtraHour,
   },
   {
-    label: 'Driver’s return after a one-way drop',
-    detail: `Only for hours after the last paid day, max ${priceText.outstationReturnMax} a day, plus the ticket`,
-    price: `${priceText.outstationReturnHour}/hour`,
+    label: 'Driver’s return day after a one-way drop',
+    detail: `Only if he is not home when the driving days end; after it, ${priceText.outstationReturnHour} an hour (max ${priceText.outstationReturnMax} a day). You book his ticket`,
+    price: priceText.outstationReturnMax,
   },
   {
     label: 'Wedding & event drivers',
@@ -829,7 +829,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can a driver take my car to another city one way?',
-    a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back by bus or train. You pay ${priceText.outstation} a day — each day covers his 24 hours, his way home included — and ${priceText.outstationReturnHour} an hour (at most ${priceText.outstationReturnMax} a day) only for hours he is still travelling after the last paid day. The booking form shows the estimate.`,
+    a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back by bus or train. You pay ${priceText.outstation} a driving day, plus one return day (${priceText.outstationReturnMax}) if he is not home when the driving days end, and ${priceText.outstationReturnHour} an hour (at most ${priceText.outstationReturnMax} a day) if he is still travelling after that. You book his ticket home. The booking form shows the estimate.`,
   },
   {
     q: 'Do you serve places outside Raipur, Bhilai, Durg and Bilaspur?',

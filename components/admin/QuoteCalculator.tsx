@@ -18,6 +18,8 @@ const MIN_PROFIT = settings.outstation.minProfitPercent;
 const PARTNER = settings.partners.commissionPercent;
 /** What a driver usually gets per return hour: the customer's rate less the minimum profit, to ₹10. */
 const DEFAULT_RETURN_PAY = Math.floor((tripRules.returnHour * (1 - MIN_PROFIT / 100)) / 10) * 10;
+/** The return day is this many late hours: returnMaxPerDay ÷ returnHour (₹1,200 ÷ ₹120 = 10). */
+const RETURN_DAY_HOURS = Math.round(tripRules.returnMaxPerDay / tripRules.returnHour);
 
 const int = (v: string) => {
   const n = Math.round(Number(v));
@@ -79,7 +81,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
       const note =
         `Price ${rupees(q.total)} (${quoteBreakdown(agreed)}). ` +
         `Driver ${rupees(int(cost))} a day` +
-        (agreed.returnHours ? `, ${rupees(int(returnPay))} a return hour` : '') +
+        (agreed.returnHours ? `, ${rupees(int(returnPay))} a late hour (return day ${rupees(int(returnPay) * RETURN_DAY_HOURS)})` : '') +
         ` → driver gets ${rupees(q.driverPay)}` +
         (q.partnerPay ? `, partner ${rupees(q.partnerPay)}` : '') +
         `, profit ${rupees(q.profit)} (${q.profitPercent}%).`;
@@ -144,14 +146,15 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
             {num('Driving days', days, setDays)}
             {oneWay &&
               num(
-                'Return hours after the last day',
+                'Hours after the driving days until he is home',
                 back,
                 setBack,
-                `Hours he is still travelling home after the paid days end. ${priceText.outstationReturnHour} each to the customer, max ${priceText.outstationReturnMax} a day`,
+                `Any at all: a return day (${priceText.outstationReturnMax} to the customer). Past 24: late hours, ${priceText.outstationReturnHour} each, max ${priceText.outstationReturnMax} a day. For the final bill, use when he really got home`,
               )}
-            {oneWay && num('Driver’s pay a return hour', returnPay, setReturnPay)}
+            {oneWay &&
+              num('Driver’s pay a late hour', returnPay, setReturnPay, `His return day is ${RETURN_DAY_HOURS} of them`)}
             {num('Extra hours (whole trip)', extraHours, setExtraHours, `Beyond ${priceText.outstationHours} a day`)}
-            {oneWay && num('Bus/train ticket', ticket, setTicket, 'Passed on at cost')}
+            {oneWay && num('Ticket, if we bought it', ticket, setTicket, 'Usually 0 — the customer books it. Passed on at cost')}
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input
