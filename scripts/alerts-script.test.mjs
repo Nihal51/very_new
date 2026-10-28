@@ -558,6 +558,74 @@ describe('customer updates', () => {
   });
 });
 
+describe('trip clock', () => {
+  let env;
+  beforeEach(() => (env = load()));
+  const at = (iso) => ({ timestampValue: new Date(iso).toISOString() });
+  const KEY = 'Ab3dEf6hJk9mNp2qRs5tUv8wXy';
+  function seedLink(fields) {
+    env.store.docs.set(`tripLinks/${KEY}`, {
+      bookingId: s('b1'), ref: s('DB-1042'), to: s('Bengaluru'), kind: s('one-way'), nonstop: { booleanValue: true },
+      driverName: s('Suresh Verma'), closed: { booleanValue: false }, createdAt: ts(3_600_000), updatedAt: ts(1000), ...fields,
+    });
+  }
+
+  test('each tap is copied to the booking and told to Telegram once', () => {
+    seedBooking(env.store, 'b1', { extra: { ref: s('DB-1042'), status: s('assigned'), package: s('one-way-drop') } });
+    const before = env.store.docs.get('bookings/b1').updatedAt;
+    seedLink({ startAt: at('2026-10-29T02:15:00Z'), updatedAt: ts(2000) });
+    env.ctx.syncTripClocks_();
+    let b = env.store.docs.get('bookings/b1');
+    assert.equal(b.clock.mapValue.fields.startAt.timestampValue, '2026-10-29T02:15:00.000Z');
+    assert.equal(b.updatedAt, before, 'the robot never touches updatedAt');
+    assert.equal(env.telegram.length, 1);
+    assert.match(env.telegram[0].text, /DB-1042: trip started/);
+    assert.match(env.telegram[0].text, /Suresh Verma left for Bengaluru – Thu 29 Oct, 7:45 AM/);
+    assert.match(env.telegram[0].reply_markup.inline_keyboard[0][0].url, /\/admin\/\?b=b1$/);
+
+    env.ctx.syncTripClocks_(); // next minute, nothing new
+    assert.equal(env.telegram.length, 1);
+
+    seedLink({ startAt: at('2026-10-29T02:15:00Z'), dropAt: at('2026-10-30T07:10:00Z'), updatedAt: ts(500) });
+    env.ctx.syncTripClocks_();
+    b = env.store.docs.get('bookings/b1');
+    assert.equal(b.clock.mapValue.fields.dropAt.timestampValue, '2026-10-30T07:10:00.000Z');
+    assert.equal(env.telegram.length, 2);
+    assert.match(env.telegram[1].text, /car dropped in Bengaluru<\/b>\nFri 30 Oct, 12:40 PM – 28 h 55 m after the start/);
+
+    seedLink({ startAt: at('2026-10-29T02:15:00Z'), dropAt: at('2026-10-30T07:10:00Z'), homeAt: at('2026-10-31T20:50:00Z'), updatedAt: ts(100) });
+    env.ctx.syncTripClocks_();
+    assert.equal(env.telegram.length, 3);
+    assert.match(env.telegram[2].text, /Suresh Verma is home<\/b>\nSun 1 Nov, 2:20 AM\. The final bill is ready/);
+  });
+
+  test('an admin undoing a tap clears it from the booking, without a Telegram', () => {
+    seedBooking(env.store, 'b1', { extra: { clock: { mapValue: { fields: { startAt: at('2026-10-29T02:15:00Z'), dropAt: at('2026-10-29T03:00:00Z') } } } } });
+    seedLink({ startAt: at('2026-10-29T02:15:00Z'), updatedAt: ts(100) });
+    env.ctx.syncTripClocks_();
+    const c = env.store.docs.get('bookings/b1').clock.mapValue.fields;
+    assert.ok(c.startAt && !c.dropAt);
+    assert.equal(env.telegram.length, 0);
+  });
+
+  test('pure helpers', () => {
+    const d = (iso) => new Date(iso);
+    // (Arrays from the sandbox: compared as plain copies.)
+    assert.deepEqual([...env.ctx.tripClockNews({ startAt: d('2026-10-29T02:15:00Z') }, { startAt: d('2026-10-29T02:15:00Z'), dropAt: d('2026-10-30T07:10:00Z') })], ['drop']);
+    assert.deepEqual([...env.ctx.tripClockNews(null, { startAt: d('2026-10-29T02:15:00Z') })], ['start']);
+    assert.equal(env.ctx.sameClock({ startAt: d('2026-10-29T02:15:00Z') }, { startAt: d('2026-10-29T02:15:00Z') }), true);
+    assert.equal(env.ctx.sameClock({}, { startAt: d('2026-10-29T02:15:00Z') }), false);
+    assert.equal(env.ctx.hoursText(104_100_000), '28 h 55 m');
+    const round = env.ctx.tripTelegram({
+      link: { kind: 'round', driverName: 'Raju', to: 'Puri', ref: '', homeAt: d('2026-11-04T05:40:00Z') }, step: 'home', booking: null, id: 'b9', siteUrl: 'https://x',
+    });
+    assert.match(round.text, /b9: trip over – Raju is back/);
+    // Customer text cannot inject markup.
+    const evil = env.ctx.tripTelegram({ link: { driverName: '<b>x</b>', to: '<i>', startAt: d('2026-10-29T02:15:00Z') }, step: 'start', booking: { ref: 'DB-1' }, id: 'b1', siteUrl: 'https://x' });
+    assert.doesNotMatch(evil.text, /<i>|<b>x/);
+  });
+});
+
 describe('formatting', () => {
   const { ctx } = load();
   test('India time is read as written, never shifted', () => {

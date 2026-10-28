@@ -45,6 +45,8 @@ export type SiteSettings = {
     averageKmh: number;
     busKmh: number;
     stationHours: number;
+    /** Final bill: minutes of an hour not charged (15: 4 h 15 m = 4 h). */
+    graceMinutes: number;
     localWithinKm: number;
     /** Used only by the /admin quote calculator; not published to the app. */
     minProfitPercent: number;
@@ -167,6 +169,7 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   count('outstation.busKmh', o.busKmh, 100);
   if (o.busKmh < 20) problems.push('outstation.busKmh must be at least 20');
   count('outstation.stationHours', o.stationHours, 6);
+  count('outstation.graceMinutes', o.graceMinutes, 59);
   count('outstation.localWithinKm', o.localWithinKm, 150);
   count('outstation.minProfitPercent', o.minProfitPercent, 60);
   if (o.extraHour * o.hoursPerDay > s.prices.outstation.to * 2)

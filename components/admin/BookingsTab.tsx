@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
 import { QuoteCalculator } from '@/components/admin/QuoteCalculator';
+import { TripClock } from '@/components/admin/TripClock';
 import { WhatsappIcon } from '@/components/icons';
 import { addBookingNote, blockPhone, changeBookingStatus, isPhoneBlocked, unblockPhone } from '@/lib/admin';
 import { driverAssignedMessage, type MessageLanguage } from '@/lib/customer-messages';
@@ -738,6 +739,7 @@ function BookingDetail({
         </div>
 
         {isTripPackage(b.package) && <QuoteCalculator key={b.id} b={b} user={user} />}
+        {isTripPackage(b.package) && b.status !== 'cancelled' && <TripClock key={`clock-${b.id}`} b={b} user={user} />}
 
         <div className="border-border mt-5 border-t pt-5">
           <SectionTitle>History &amp; internal notes</SectionTitle>
@@ -802,7 +804,9 @@ function History({ bookingId, user }: { bookingId: string; user: User }) {
                     ? 'Note'
                     : ev.type === 'quote'
                       ? 'Price agreed (admins only)'
-                    : `${statusLabel(ev.from)} → ${statusLabel(ev.to)}`}
+                      : ev.type === 'bill'
+                        ? 'Final bill saved (admins only)'
+                        : `${statusLabel(ev.from)} → ${statusLabel(ev.to)}`}
               </p>
               {ev.note && <p className="text-fg-muted">{ev.note}</p>}
               <p className="text-fg-subtle text-xs">

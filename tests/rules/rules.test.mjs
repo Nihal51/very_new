@@ -304,6 +304,131 @@ describe('bookings — admin workflow', () => {
   });
 });
 
+describe('trip links and the final bill', () => {
+  const KEY = 'Ab3dEf6hJk9mNp2qRs5tUv8wXy';
+  const stamp = (extra) => ({ ...extra, updatedAt: serverTimestamp(), updatedBy: 'admin1' });
+  const link = (extra = {}) => ({
+    bookingId: 'b1', ref: 'DB-1001', to: 'Bengaluru', kind: 'one-way', nonstop: true, driverName: 'Suresh Verma',
+    closed: false, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), by: 'admin1', ...extra,
+  });
+  const tap = (step, extra = {}) => ({
+    [`${step}At`]: serverTimestamp(), [`${step}Phone`]: new Date(), updatedAt: serverTimestamp(), ...extra,
+  });
+  async function seedLink(extra = {}) {
+    await seedBooking('b1', { package: 'one-way-drop', customerUid: 'cust1', status: 'assigned' });
+    await env.withSecurityRulesDisabled((ctx) =>
+      setDoc(doc(ctx.firestore(), 'tripLinks', KEY), { ...link(), createdAt: new Date(), updatedAt: new Date(), ...extra }),
+    );
+  }
+
+  test('only an admin makes a link, for a real booking, with a long random key', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    await assertFails(setDoc(doc(guest(), 'tripLinks', KEY), link({ by: 'x' })));
+    await assertFails(setDoc(doc(notAdmin(), 'tripLinks', KEY), link({ by: 'google1' })));
+    await assertFails(setDoc(doc(admin(), 'tripLinks', 'short1'), link()));
+    await assertFails(setDoc(doc(admin(), 'tripLinks', KEY), link({ bookingId: 'nope' })));
+    await assertFails(setDoc(doc(admin(), 'tripLinks', KEY), link({ startAt: serverTimestamp() })));
+    await assertSucceeds(setDoc(doc(admin(), 'tripLinks', KEY), link()));
+  });
+
+  test('anyone with the key can open it; nobody but an admin can list them', async () => {
+    await seedLink();
+    await assertSucceeds(getDoc(doc(guest(), 'tripLinks', KEY)));
+    await assertFails(getDocs(collection(guest(), 'tripLinks')));
+    await assertFails(getDocs(query(collection(customer('cust1'), 'tripLinks'), where('bookingId', '==', 'b1'))));
+    await assertSucceeds(getDocs(query(collection(admin(), 'tripLinks'), where('bookingId', '==', 'b1'))));
+  });
+
+  test('the driver taps start → drop → home, each once, in order, at the server time', async () => {
+    await seedLink();
+    const ref = doc(guest(), 'tripLinks', KEY);
+    await assertFails(updateDoc(ref, tap('drop')));
+    await assertFails(updateDoc(ref, tap('home')));
+    await assertSucceeds(updateDoc(ref, tap('start', { startLoc: { lat: 21.25, lng: 81.63, acc: 20 } })));
+    await assertFails(updateDoc(ref, tap('start')));
+    await assertFails(updateDoc(ref, tap('home')));
+    await assertSucceeds(updateDoc(ref, tap('drop')));
+    await assertSucceeds(updateDoc(ref, tap('home')));
+    await assertFails(updateDoc(ref, tap('home')));
+  });
+
+  test('a round trip has no drop: start → home', async () => {
+    await seedLink({ kind: 'round' });
+    const ref = doc(guest(), 'tripLinks', KEY);
+    await assertSucceeds(updateDoc(ref, tap('start')));
+    await assertFails(updateDoc(ref, tap('drop')));
+    await assertSucceeds(updateDoc(ref, tap('home')));
+  });
+
+  test('a tap cannot pick its own time, change the trip or carry anything else', async () => {
+    await seedLink();
+    const ref = doc(guest(), 'tripLinks', KEY);
+    await assertFails(updateDoc(ref, { ...tap('start'), startAt: new Date(Date.now() - 3600_000) }));
+    await assertFails(updateDoc(ref, { ...tap('start'), startPhone: new Date(Date.now() + 3600_000) }));
+    await assertFails(updateDoc(ref, { ...tap('start'), startPhone: new Date(Date.now() - 2 * 86_400_000) }));
+    await assertFails(updateDoc(ref, { startAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref, tap('start', { nonstop: false })));
+    await assertFails(updateDoc(ref, tap('start', { closed: true })));
+    await assertFails(updateDoc(ref, tap('start', { startLoc: { lat: 500, lng: 81, acc: 1 } })));
+    await assertFails(updateDoc(ref, tap('start', { note: 'hi' })));
+    await assertFails(deleteDoc(ref));
+  });
+
+  test('a closed link takes no more taps', async () => {
+    await seedLink({ closed: true });
+    await assertFails(updateDoc(doc(guest(), 'tripLinks', KEY), tap('start')));
+  });
+
+  test('an admin corrects a time, switches day and night and closes the link — in order, never null', async () => {
+    await seedLink();
+    const ref = doc(admin(), 'tripLinks', KEY);
+    const at = (h) => new Date(Date.UTC(2026, 9, 29, 2) + h * 3600_000);
+    const fix = (extra) => ({ ...extra, updatedAt: serverTimestamp(), by: 'admin1' });
+    await assertSucceeds(updateDoc(ref, fix({ startAt: at(0), dropAt: at(29), homeAt: at(67), nonstop: false })));
+    await assertFails(updateDoc(ref, fix({ dropAt: at(70) })));
+    await assertFails(updateDoc(ref, fix({ homeAt: null })));
+    await assertFails(updateDoc(ref, fix({ bookingId: 'b2' })));
+    await assertFails(updateDoc(ref, { startAt: at(1), updatedAt: serverTimestamp(), by: 'someone-else' }));
+    await assertFails(updateDoc(doc(notAdmin(), 'tripLinks', KEY), fix({ startAt: at(1), by: 'google1' })));
+    await assertSucceeds(updateDoc(ref, fix({ closed: true })));
+  });
+
+  const finalBill = (extra = {}) => ({
+    amount: 2 * 1600 + 600 + 2400, dayRate: 1600, days: 2, extraHours: 5, extraHourRate: 120, extraCharge: 600,
+    returnHours: 38, returnHourRate: 120, returnCharge: 2400, ticket: 0, nonstop: true, at: serverTimestamp(), ...extra,
+  });
+  const clock = () => ({ startAt: new Date(Date.UTC(2026, 9, 29, 2, 15)), dropAt: new Date(Date.UTC(2026, 9, 30, 7, 10)), homeAt: new Date(Date.UTC(2026, 9, 31, 20, 50)) });
+
+  test('an admin saves the final bill and the times; the customer sees them', async () => {
+    await seedLink();
+    const db = admin();
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'bookings', 'b1'), stamp({ bill: finalBill(), clock: clock() }));
+    batch.set(doc(collection(db, 'bookings', 'b1', 'events')), {
+      type: 'bill', from: null, to: null, note: 'Driver pay and profit here', by: 'owner@example.com', at: serverTimestamp(),
+    });
+    batch.update(doc(db, 'tripLinks', KEY), { closed: true, updatedAt: serverTimestamp(), by: 'admin1' });
+    await assertSucceeds(batch.commit());
+    const seen = await getDoc(doc(customer('cust1'), 'bookings', 'b1'));
+    if (seen.data().bill.amount !== 6200) throw new Error('customer should see the final bill');
+  });
+
+  test('a bill cannot add up wrong, overcharge extra hours, hide a cost or be backdated', async () => {
+    await seedLink();
+    const db = admin();
+    const save = (b) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ bill: b }));
+    await assertFails(save(finalBill({ amount: 9999 })));
+    await assertFails(save(finalBill({ extraCharge: 700, amount: 3200 + 700 + 2400 })));
+    await assertFails(save(finalBill({ extraHours: 20, extraCharge: 2400, amount: 3200 + 2400 + 2400 })));
+    await assertFails(save(finalBill({ returnCharge: 5000, amount: 3200 + 600 + 5000 })));
+    await assertFails(save(finalBill({ driverPay: 4000 })));
+    await assertFails(save(finalBill({ at: new Date(2020, 0, 1) })));
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ clock: { startAt: new Date(2026, 9, 30), homeAt: new Date(2026, 9, 29) } })));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { bill: finalBill() }));
+    await assertFails(updateDoc(doc(guest(), 'bookings', 'b1'), { clock: clock() }));
+  });
+});
+
 describe('drivers', () => {
   test('anyone can apply; only an admin can read or change status', async () => {
     const ref = await assertSucceeds(addDoc(collection(guest(), 'drivers'), driverApp()));

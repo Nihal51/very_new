@@ -10,7 +10,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  billDays,
+  chargeHours,
   destinationTable,
+  finalBill,
   destinations,
   estimate,
   findDestination,
@@ -382,4 +385,115 @@ test('profit guard: a price too low stops the build, without printing the cost',
   );
   assert.throws(() => checkSettings(settings, 'outstation 1000'), /part 1 cannot be read/);
   assert.throws(() => checkSettings(settings, 'taxi=100'), /"taxi", which is not one of the prices/);
+});
+
+/* ------------------------------------------------------ the final bill -- */
+
+const GRACE = settings.outstation.graceMinutes;
+/** India time → epoch ms. */
+const ist = (s) => Date.parse(`${s}:00+05:30`);
+const bill = (over) =>
+  finalBill(rules, {
+    kind: 'one-way',
+    nonstop: false,
+    dayRate: 1600,
+    extraHourRate: 120,
+    returnHourRate: 120,
+    ticket: 0,
+    graceMinutes: GRACE,
+    ...over,
+  });
+
+test('final bill: the first 15 minutes of an hour are free', () => {
+  assert.equal(GRACE, 15);
+  assert.equal(chargeHours(0, 15), 0);
+  assert.equal(chargeHours(15, 15), 0);
+  assert.equal(chargeHours(16, 15), 1);
+  assert.equal(chargeHours(4 * 60 + 15, 15), 4);
+  assert.equal(chargeHours(4 * 60 + 16, 15), 5);
+  assert.equal(chargeHours(-30, 15), 0);
+  assert.equal(chargeHours(NaN, 15), 0);
+});
+
+test('final bill: days from the clock — 24 h with a night rest, or 12 h day and night', () => {
+  const h = (hours, min = 0) => hours * 60 + min;
+  // Day and night: every 12 h a day.
+  assert.deepEqual(billDays(rules, h(28, 55), true, GRACE), { days: 2, hours: 5 });
+  assert.deepEqual(billDays(rules, h(27, 25), true, GRACE), { days: 2, hours: 4 });
+  assert.deepEqual(billDays(rules, h(11, 10), true, GRACE), { days: 0, hours: 11 });
+  // With the night's rest: 24 h = a day, then 12 h driving = a day, the rest by the hour.
+  assert.deepEqual(billDays(rules, h(6, 5), false, GRACE), { days: 0, hours: 6 }); // Nagpur, a short drive
+  assert.deepEqual(billDays(rules, h(12), false, GRACE), { days: 1, hours: 0 });
+  assert.deepEqual(billDays(rules, h(37, 10), false, GRACE), { days: 2, hours: 1 }); // Delhi, Mon 6:00 → Tue 19:10
+  assert.deepEqual(billDays(rules, h(51, 25), false, GRACE), { days: 2, hours: 4 }); // Bengaluru with two nights
+  assert.deepEqual(billDays(rules, h(48), false, GRACE), { days: 2, hours: 0 });
+});
+
+test('final bill: Raipur → Bengaluru day and night, the example shown to the owner', () => {
+  const real = bill({
+    nonstop: true,
+    startAt: ist('2026-10-29T07:45'),
+    dropAt: ist('2026-10-30T12:40'), // 28 h 55 m
+    homeAt: ist('2026-11-01T02:20'), // 37 h 40 m after the drop
+  });
+  assert.equal(real.driveMinutes, 28 * 60 + 55);
+  assert.equal(real.returnMinutes, 37 * 60 + 40);
+  assert.deepEqual(
+    [real.days, real.extraHours, real.extraCharge, real.returnHours, real.returnCharge, real.amount],
+    [2, 5, 600, 38, 2400, 6200],
+  );
+  // The estimate's times (start 7:30, drop ~10:55, home ~00:05 Sun) give ₹6,080 at ₹1,600 a day.
+  const est = bill({
+    nonstop: true,
+    startAt: ist('2026-10-29T07:30'),
+    dropAt: ist('2026-10-30T10:55'),
+    homeAt: ist('2026-11-01T00:05'),
+  });
+  assert.deepEqual([est.days, est.extraHours, est.returnHours, est.amount], [2, 4, 37, 6080]); // 37 h 10 m: 10 minutes free
+});
+
+test('final bill: a short one-way drop is all by the hour', () => {
+  const b = bill({ startAt: ist('2026-11-02T07:00'), dropAt: ist('2026-11-02T13:20'), homeAt: ist('2026-11-02T20:10') });
+  assert.deepEqual([b.days, b.extraHours, b.extraCharge, b.returnHours, b.returnCharge, b.amount], [0, 7, 840, 7, 840, 1680]);
+});
+
+test('final bill: round trips — 24 h a day plus hours, at least one day', () => {
+  const round = (start, back, nonstop = false) =>
+    bill({ kind: 'round', nonstop, startAt: ist(start), homeAt: ist(back) });
+  // Back after 2 days 5 h: 2 days + 5 h.
+  let b = round('2026-11-02T06:00', '2026-11-04T11:00');
+  assert.deepEqual([b.days, b.extraHours, b.returnHours, b.returnCharge, b.amount], [2, 5, 0, 0, 2 * 1600 + 600]);
+  // Same-day trip of 8 h: still one day.
+  b = round('2026-11-02T08:00', '2026-11-02T16:00');
+  assert.deepEqual([b.days, b.extraHours, b.amount], [1, 0, 1600]);
+  // 16 h out: one day + 4 h.
+  b = round('2026-11-02T06:00', '2026-11-02T22:00');
+  assert.deepEqual([b.days, b.extraHours, b.amount], [1, 4, 1600 + 480]);
+  // Day and night: every 12 h a day.
+  b = round('2026-11-02T06:00', '2026-11-03T13:30', true); // 31 h 30 m
+  assert.deepEqual([b.days, b.extraHours, b.amount], [2, 8, 2 * 1600 + 960]);
+});
+
+test('final bill: extra hours never cost more than a day; the ticket is passed on', () => {
+  const b = bill({ extraHourRate: 200, ticket: 650, startAt: ist('2026-11-02T07:00'), dropAt: ist('2026-11-02T18:40'), homeAt: ist('2026-11-02T18:40') });
+  assert.equal(b.extraHours, 12);
+  assert.equal(b.extraCharge, 1600, '12 h × ₹200 = ₹2,400 is capped at one day');
+  assert.equal(b.amount, 1600 + 650);
+});
+
+test('final bill: matches the estimate when the trip goes exactly to plan', () => {
+  for (const id of ['nagpur', 'jabalpur', 'hyderabad', 'bengaluru', 'delhi', 'mumbai', 'kolkata']) {
+    const dest = findDestination(id);
+    for (const nonstop of [false, true]) {
+      const plan = planTrip(rules, roadKm('Raipur', dest), 'one-way', 0, homeWay(dest, 'Raipur'), { hour: 7, weekday: 1 }, nonstop);
+      const start = ist('2026-11-02T07:00'); // a Monday
+      const at = (h) => start + Math.round(h * 60) * 60000;
+      const real = bill({ nonstop, dayRate: rules.dayRate.from, startAt: start, dropAt: at(plan.dropAt), homeAt: at(plan.homeAt) });
+      const est = estimate({ ...rules, dayRate: { from: rules.dayRate.from, to: rules.dayRate.from } }, plan);
+      // The estimate rounds every started hour up; the bill forgives 15 minutes — never dearer.
+      assert.ok(real.amount <= est.from, `${id}${nonstop ? ' non-stop' : ''}: bill ${real.amount} > estimate ${est.from}`);
+      assert.ok(est.from - real.amount <= 2 * rules.extraHour, `${id}${nonstop ? ' non-stop' : ''}: bill ${real.amount} far below ${est.from}`);
+      assert.equal(real.days, plan.fullDays, `${id}${nonstop ? ' non-stop' : ''}: days`);
+    }
+  }
 });

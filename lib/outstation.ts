@@ -27,6 +27,12 @@
  *   - Round trips: the days of the trip (the driver is with the customer).
  *   - The customer books and pays for the driver's ticket home. The FINAL bill
  *     uses the real times; the estimate predicts them.
+ *   - Final bill (finalBill, decided 29 Oct 2026): the driver taps Start, Drop
+ *     and Home on his trip link. Driving is start → drop: each 24 h is a day
+ *     (12 driving, 12 rest) and what is left after the last 24 is driving
+ *     (12 h a day, the rest by the hour); day and night: every 12 h a day.
+ *     The first 15 minutes of an hour are free. Round trips: start → back,
+ *     the same way, at least one day.
  *   - The customer sees an estimate; the team quotes the exact price on the
  *     call, from the driver's real cost plus at least the minimum profit.
  */
@@ -545,6 +551,133 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
     profitPercent,
     ok: profitPercent + 1e-9 >= input.minProfitPercent,
     aboveShownRange: dayRate > rules.dayRate.to || (back > 0 && returnHourRate > rules.returnHour),
+  };
+}
+
+/* --------------------------------------------------------- final bill ---- */
+
+/**
+ * Whole hours to charge for `minutes`: the first `graceMinutes` of an hour are
+ * free, a minute more and the hour counts (grace 15: 4 h 15 m → 4 h,
+ * 4 h 16 m → 5 h).
+ */
+export function chargeHours(minutes: number, graceMinutes: number): number {
+  const m = Math.max(0, Math.floor(Number.isFinite(minutes) ? minutes : 0));
+  const h = Math.floor(m / 60);
+  return m - h * 60 > Math.max(0, graceMinutes) ? h + 1 : h;
+}
+
+/**
+ * A stretch on the road from the real times → full days and the hours left
+ * over. Day and night (`nonstop`): every hoursPerDay is a day. Otherwise he
+ * rests at night, so each 24 hours from the start is one day (12 driving + 12
+ * rest), and what is left after the last full 24 is driving: hoursPerDay of
+ * it is one more day, the rest by the hour.
+ */
+export function billDays(
+  rules: Pick<TripRules, 'hoursPerDay'>,
+  minutes: number,
+  nonstop: boolean,
+  graceMinutes: number,
+): { days: number; hours: number } {
+  const m = Math.max(0, Math.floor(Number.isFinite(minutes) ? minutes : 0));
+  const day = rules.hoursPerDay * 60;
+  if (nonstop) {
+    const days = Math.floor(m / day);
+    return { days, hours: chargeHours(m - days * day, graceMinutes) };
+  }
+  const cycles = Math.floor(m / 1440);
+  const rest = m - cycles * 1440;
+  const more = Math.floor(rest / day);
+  return { days: cycles + more, hours: chargeHours(rest - more * day, graceMinutes) };
+}
+
+/** The real times of a trip, epoch milliseconds. */
+export type TripTimes = {
+  /** He left with the car. */
+  startAt: number;
+  /** One-way: he handed over the car. */
+  dropAt?: number;
+  /** One-way: he is home. Round trip: the trip is over (he is back). */
+  homeAt: number;
+};
+
+export type BillInput = TripTimes & {
+  kind: TripKind;
+  /** Driven day and night at the customer's request. */
+  nonstop: boolean;
+  dayRate: number;
+  extraHourRate: number;
+  returnHourRate: number;
+  /** Ticket home, if we bought it (passed on at cost). */
+  ticket: number;
+  /** Minutes of an hour not charged (site-settings.ts outstation.graceMinutes). */
+  graceMinutes: number;
+};
+
+export type Bill = {
+  /** One-way: start → drop. Round trip: start → back. */
+  driveMinutes: number;
+  days: number;
+  extraHours: number;
+  /** extraHours × extraHourRate, never more than one day. */
+  extraCharge: number;
+  /** One-way: drop → home (0 on a round trip). */
+  returnMinutes: number;
+  returnHours: number;
+  /** The way home with the daily maximum. */
+  returnCharge: number;
+  dayRate: number;
+  extraHourRate: number;
+  returnHourRate: number;
+  ticket: number;
+  amount: number;
+};
+
+const minutesBetween = (a: number | undefined, b: number | undefined) =>
+  a === undefined || b === undefined || !Number.isFinite(a) || !Number.isFinite(b) ? 0 : Math.max(0, Math.floor((b - a) / 60000));
+
+/**
+ * The FINAL bill from the real times, with the agreed rates. The same rules
+ * as the estimate, on the clock instead of the prediction:
+ *   - Driving (one-way: start → drop; round trip: start → back): billDays.
+ *     A round trip is at least one day.
+ *   - The extra hours never cost more than one more day.
+ *   - The way home (one-way: drop → home), by the hour with the daily maximum
+ *     (returnMaxPerDay ÷ returnHour hours, as in the quote).
+ */
+export function finalBill(rules: TripRules, input: BillInput): Bill {
+  const oneWay = input.kind === 'one-way';
+  const driveEnd = oneWay ? (input.dropAt ?? input.homeAt) : input.homeAt;
+  const driveMinutes = minutesBetween(input.startAt, driveEnd);
+  const returnMinutes = oneWay ? minutesBetween(driveEnd, input.homeAt) : 0;
+
+  let { days, hours } = billDays(rules, driveMinutes, input.nonstop, input.graceMinutes);
+  if (!oneWay && days === 0) {
+    days = 1;
+    hours = 0;
+  }
+  const dayRate = whole(input.dayRate);
+  const extraHourRate = whole(input.extraHourRate);
+  const returnHourRate = whole(input.returnHourRate);
+  const ticket = whole(input.ticket);
+  const extraCharge = Math.min(hours * extraHourRate, dayRate);
+  const returnHours = oneWay ? chargeHours(returnMinutes, input.graceMinutes) : 0;
+  const capHours = rules.returnMaxPerDay / rules.returnHour;
+  const returnCharge = returnCost(returnHours, returnHourRate, returnHourRate * capHours);
+  return {
+    driveMinutes,
+    days,
+    extraHours: hours,
+    extraCharge,
+    returnMinutes,
+    returnHours,
+    returnCharge,
+    dayRate,
+    extraHourRate,
+    returnHourRate,
+    ticket,
+    amount: days * dayRate + extraCharge + returnCharge + ticket,
   };
 }
 

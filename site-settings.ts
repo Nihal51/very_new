@@ -106,6 +106,7 @@ export const settings = {
     averageKmh: 50, //         highway average with stops
     busKmh: 50, //             way home for a place not in the list: bus/train average, with stops
     stationHours: 1, //        from the drop to the bus stand or station
+    graceMinutes: 15, //       final bill: minutes of an hour not charged (4 h 15 m = 4 h, 4 h 16 m = 5 h)
     localWithinKm: 60, //      closer than this, the form suggests a local package instead
     minProfitPercent: 15, //   the /admin quote calculator never quotes below this profit
   },

@@ -8,7 +8,7 @@ import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { CheckCircleIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
 import { TripEstimate } from '@/components/TripEstimate';
 import { currentUser, loadProfile, mightBeSignedIn } from '@/lib/auth';
-import { isTripPackage, type BookingTrip } from '@/lib/bookings';
+import { NONSTOP_NOTE, isTripPackage, type BookingTrip } from '@/lib/bookings';
 import { findDestination } from '@/lib/outstation';
 import { bookingPackages, cities } from '@/lib/content';
 import { submitDoc } from '@/lib/firebase';
@@ -60,9 +60,6 @@ const EMPTY: Values = {
   nonstop: '',
   notes: '',
 };
-
-/** The note the team sees for a day-and-night drive. */
-const NONSTOP_NOTE = 'Day and night driving (non-stop).';
 
 /** The customer's notes, with the day-and-night request first when they asked for it. */
 function notesOf(v: Values): string {

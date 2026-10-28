@@ -41,6 +41,10 @@ export const BOOKING_STATUS: Record<
 
 export type DriverRef = { id: string; name: string; phone: string };
 
+/** Put first in the notes by the booking form and the app when the customer wants a drop driven day and night. */
+export const NONSTOP_NOTE = 'Day and night driving (non-stop).';
+export const wantsNonstop = (notes: string) => (notes ?? '').trim().startsWith(NONSTOP_NOTE);
+
 /** Packages that carry a trip (lib/outstation.ts), and which kind each is. */
 export const TRIP_PACKAGES = { outstation: 'round', 'one-way-drop': 'one-way' } as const;
 export type TripPackage = keyof typeof TRIP_PACKAGES;
@@ -76,6 +80,28 @@ export type BookingQuote = {
   at?: Date;
 };
 
+/** The real times of the trip, from the driver's trip link (firestore.rules: isClock; lib/tripclock.ts). */
+export type BookingClock = { startAt?: Date; dropAt?: Date; homeAt?: Date };
+
+/** The final bill from the real times (firestore.rules: isBill). Customer-visible: no costs here. */
+export type BookingBill = {
+  amount: number;
+  dayRate: number;
+  days: number;
+  extraHours: number;
+  extraHourRate: number;
+  /** extraHours × extraHourRate, at most one day. */
+  extraCharge: number;
+  returnHours: number;
+  returnHourRate: number;
+  /** The way home with the daily maximum applied. */
+  returnCharge: number;
+  ticket: number;
+  /** Driven day and night (every 12 h a day). */
+  nonstop: boolean;
+  at?: Date;
+};
+
 /** A booking document as stored. Fields after `source` are written by the server or an admin. */
 export type Booking = {
   id: string;
@@ -92,6 +118,8 @@ export type Booking = {
   customerUid?: string;
   trip?: BookingTrip;
   quote?: BookingQuote | null;
+  clock?: BookingClock | null;
+  bill?: BookingBill | null;
   ref?: string;
   number?: number;
   isReturning?: boolean;
@@ -233,6 +261,32 @@ export function toDate(v: unknown): Date | undefined {
   if (typeof v === 'object' && v && 'toDate' in v && typeof (v as { toDate: unknown }).toDate === 'function')
     return (v as { toDate: () => Date }).toDate();
   return undefined;
+}
+
+/** A stored clock (Timestamps) → Dates; null when there is none. */
+export function toClock(v: unknown): BookingClock | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  const out: BookingClock = {};
+  for (const k of ['startAt', 'dropAt', 'homeAt'] as const) {
+    const d = toDate(c[k]);
+    if (d) out[k] = d;
+  }
+  return out.startAt ? out : null;
+}
+
+/** A stored final bill → typed, with its date; null when there is none or it is not whole. */
+export function toBill(v: unknown): BookingBill | null {
+  if (!v || typeof v !== 'object') return null;
+  const b = v as Record<string, unknown>;
+  const n = (k: string) => (typeof b[k] === 'number' && Number.isFinite(b[k]) ? (b[k] as number) : NaN);
+  const keys = ['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'ticket'] as const;
+  if (keys.some((k) => Number.isNaN(n(k)))) return null;
+  return {
+    ...(Object.fromEntries(keys.map((k) => [k, n(k)])) as Record<(typeof keys)[number], number>),
+    nonstop: b.nonstop === true,
+    at: toDate(b.at),
+  };
 }
 
 /** The DB-number, or why there isn't one: the robot numbers new bookings within a minute; older ones never got one. */

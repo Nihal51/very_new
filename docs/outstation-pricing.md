@@ -109,6 +109,50 @@ it in My account and the app). The driver's cost and your profit go in the
 booking's history, which only admins can read. Nothing about costs is ever in
 this public repository.
 
+## The final bill — the trip clock
+
+The estimate predicts the times; the final bill uses the real ones.
+
+1. **Make the link.** Open the booking in `/admin` once a driver is
+   assigned → *Trip clock & final bill* → **Make …'s trip link** →
+   **Send to …** (WhatsApp, Hindi and English). The driver needs no app and
+   no login; the link works for that one trip only. Practice page for a new
+   driver: `/trip/?k=demo` (saves nothing).
+2. **He taps.** One big button for the next step: **Trip started** → **Car
+   dropped** (one-way only) → **Home** (round trip: **Back**). Each tap saves
+   the server's time, his phone's time (in case he had no network) and, if
+   he allows it, where he was. He cannot change or undo a tap.
+3. **You watch.** Telegram gets a message for each tap (the alerts robot,
+   `apps-script/Code.js`), and the customer sees the times in My account and
+   the app. While he is on the road `/admin` shows the bill so far.
+4. **Check and save.** When he is home, `/admin` shows the final bill next
+   to the agreed price, with a warning if the drive or the way home took
+   much longer than the plan for his real start. Fix any time (**Change**,
+   **Use his phone's time**, **Undo**), then **Save final bill** and **Send
+   the bill** to the customer on WhatsApp. Saving closes the link. Type the
+   driver's cost to see his pay and your profit (kept in the admin-only
+   history).
+
+How the times are charged (`finalBill` in `lib/outstation.ts`):
+
+| | Rule |
+| --- | --- |
+| Driving | One-way: start → drop. Round trip: start → back |
+| Normal trip | Each 24 h from the start is a day (12 h driving + 12 h rest); what is left after the last 24 h is driving: 12 h of it is one more day, the rest ₹120 an hour |
+| Day and night | Every 12 h is a day, the rest ₹120 an hour (tick *Driven day and night*; it starts ticked if the customer asked) |
+| Extra hours | Never more than one more day |
+| Round trip | At least one day |
+| Way home (one-way) | Drop → home, ₹120 an hour, at most ₹1,200 in any 24 h |
+| Minutes | The first 15 minutes of an hour are free (`outstation.graceMinutes`): 4 h 15 m = 4 h, 4 h 16 m = 5 h |
+
+Raipur → Bengaluru, day and night, ₹1,600 a day: left Thu 7:45 AM, dropped
+Fri 12:40 PM (28 h 55 m → 2 days + 5 h = ₹3,800), home Sun 2:20 AM (37 h
+40 m → 38 h = ₹2,400): **₹6,200**.
+
+Before the first use: publish the new `firestore.rules` (the *Deploy backend*
+workflow, or paste them in the Firebase console) and paste the new
+`apps-script/Code.js` into the Apps Script editor.
+
 ## The profit guard (optional)
 
 Add a GitHub secret `DRIVER_COSTS` (Settings → Secrets and variables →
@@ -135,6 +179,7 @@ All in `site-settings.ts`:
 | `outstation.sameDayMaxHours` | 14 | Round trip driving that still fits in one day |
 | `outstation.busKmh` | 50 | Bus/train average on the way home |
 | `outstation.stationHours` | 1 | From the drop to the bus stand or station |
+| `outstation.graceMinutes` | 15 | Final bill: minutes of an hour not charged |
 | `outstation.localWithinKm` | 60 | Below this, suggest Local Full Day |
 | `outstation.minProfitPercent` | 15 | Floor for the `/admin` calculator and the profit guard |
 

@@ -153,6 +153,49 @@ service cloud.firestore {
         && q.at == request.time;
     }
 
+    // A time on a trip, if it is there at all (never null).
+    function isOptTime(m, k) {
+      return !(k in m) || m[k] is timestamp;
+    }
+
+    function inOrder(m, a, b) {
+      return !(a in m) || !(b in m) || m[a] <= m[b];
+    }
+
+    // The real times of the trip, copied from the driver's trip link by the
+    // alerts robot (and by /admin with the final bill), so the customer sees
+    // when he started, dropped the car and got home.
+    function isClock(c) {
+      return c is map
+        && c.keys().hasOnly(['startAt', 'dropAt', 'homeAt'])
+        && isOptTime(c, 'startAt') && isOptTime(c, 'dropAt') && isOptTime(c, 'homeAt')
+        && inOrder(c, 'startAt', 'dropAt') && inOrder(c, 'dropAt', 'homeAt') && inOrder(c, 'startAt', 'homeAt');
+    }
+
+    // The final bill from the real times (lib/outstation.ts finalBill), saved
+    // from /admin. Like the quote it holds only what the customer pays; the
+    // driver's pay and the profit go in the admin-only timeline.
+    function isBill(b) {
+      return b is map
+        && b.keys().hasOnly(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'ticket', 'nonstop', 'at'])
+        && b.keys().hasAll(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'ticket', 'nonstop', 'at'])
+        && b.amount is int && b.amount > 0 && b.amount <= 1000000
+        && b.dayRate is int && b.dayRate > 0 && b.dayRate <= 100000
+        && b.days is int && b.days >= 0 && b.days <= 60 && (b.days >= 1 || b.extraHours >= 1)
+        && b.extraHours is int && b.extraHours >= 0 && b.extraHours <= 200
+        && b.extraHourRate is int && b.extraHourRate >= 0 && b.extraHourRate <= 10000
+        // Never more than hours × rate, and never more than one more day.
+        && b.extraCharge is int && b.extraCharge >= 0
+        && b.extraCharge <= b.extraHourRate * b.extraHours && b.extraCharge <= b.dayRate
+        && b.returnHours is int && b.returnHours >= 0 && b.returnHours <= 400
+        && b.returnHourRate is int && b.returnHourRate >= 0 && b.returnHourRate <= 10000
+        && b.returnCharge is int && b.returnCharge >= 0 && b.returnCharge <= b.returnHourRate * b.returnHours
+        && b.ticket is int && b.ticket >= 0 && b.ticket <= 100000
+        && b.nonstop is bool
+        && b.amount == b.dayRate * b.days + b.extraCharge + b.returnCharge + b.ticket
+        && b.at == request.time;
+    }
+
     match /bookings/{bookingId} {
       // Admins see everything; a customer sees only bookings tied to their login.
       allow read: if isAdmin()
@@ -201,11 +244,17 @@ service cloud.firestore {
       // Internal notes do NOT live here — the customer can read this document —
       // they go in the admin-only timeline below.
       allow update: if isAdmin()
-        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'quote', 'updatedAt', 'updatedBy'])
+        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'quote', 'clock', 'bill', 'updatedAt', 'updatedBy'])
         && request.resource.data.status in bookingStatuses()
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['quote'])
             || request.resource.data.get('quote', null) == null
             || isQuote(request.resource.data.quote))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['clock'])
+            || request.resource.data.get('clock', null) == null
+            || isClock(request.resource.data.clock))
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['bill'])
+            || request.resource.data.get('bill', null) == null
+            || isBill(request.resource.data.bill))
         && (request.resource.data.get('assignedDriver', null) == null
             || isDriverRef(request.resource.data.assignedDriver))
         && isOptionalText(request.resource.data.get('cancelReason', ''), 200)
@@ -215,13 +264,14 @@ service cloud.firestore {
 
       // The timeline: one entry per change or note, append-only, admins only.
       // Status changes are written in the same batch as the change itself; so
-      // is a quote, whose entry keeps the driver's cost and the profit.
+      // is a quote or a final bill, whose entry keeps the driver's pay and the
+      // profit.
       match /events/{eventId} {
         allow read: if isAdmin();
         allow create: if isAdmin()
           && request.resource.data.keys().hasOnly(['type', 'from', 'to', 'note', 'by', 'at'])
           && request.resource.data.keys().hasAll(['type', 'from', 'to', 'note', 'by', 'at'])
-          && request.resource.data.type in ['status', 'driver', 'note', 'quote']
+          && request.resource.data.type in ['status', 'driver', 'note', 'quote', 'bill']
           && (request.resource.data.from == null || request.resource.data.from in bookingStatuses())
           && (request.resource.data.to == null || request.resource.data.to in bookingStatuses())
           && isOptionalText(request.resource.data.note, 500)
@@ -229,6 +279,94 @@ service cloud.firestore {
           && request.resource.data.at == request.time;
         allow update, delete: if false;
       }
+    }
+
+    /* -------------------------------------------------------- trip links -- */
+    //  The driver's trip clock (lib/tripclock.ts, the page /trip/?k=…). An
+    //  admin makes one for an outstation trip or one-way drop and sends the
+    //  link to the driver on WhatsApp. He needs no login: the document id IS
+    //  the key (24–40 random letters and digits), so only someone who was sent
+    //  the link can open or tap it, and nobody can list them. Each tap sets the
+    //  next time to the server's clock, once and in order: start → drop (the
+    //  car handed over; one-way only) → home. The alerts robot copies the times
+    //  to the booking (clock) and tells Telegram; /admin works out the final
+    //  bill and can correct a time.
+
+    function isLoc(l) {
+      return l is map
+        && l.keys().hasOnly(['lat', 'lng', 'acc'])
+        && l.keys().hasAll(['lat', 'lng', 'acc'])
+        && l.lat is number && l.lat >= -90 && l.lat <= 90
+        && l.lng is number && l.lng >= -180 && l.lng <= 180
+        && l.acc is number && l.acc >= 0 && l.acc <= 100000;
+    }
+
+    // One tap for `step` ('start', 'drop' or 'home'): the server's time; the
+    // phone's own clock (it may have been offline: at most a day earlier,
+    // never more than 10 minutes ahead); where he was, if he allowed it.
+    function isTap(step) {
+      let d = request.resource.data;
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly([step + 'At', step + 'Phone', step + 'Loc', 'updatedAt'])
+        && d[step + 'At'] == request.time
+        && d[step + 'Phone'] is timestamp
+        && d[step + 'Phone'] > request.time - duration.value(24, 'h')
+        && d[step + 'Phone'] < request.time + duration.value(10, 'm')
+        && (!((step + 'Loc') in d) || isLoc(d[step + 'Loc']))
+        && d.updatedAt == request.time;
+    }
+
+    function isDriverTap() {
+      let o = resource.data;
+      return o.closed == false
+        && ((!('startAt' in o) && isTap('start'))
+          || (o.kind == 'one-way' && ('startAt' in o) && !('dropAt' in o) && isTap('drop'))
+          || (('startAt' in o) && (o.kind == 'round' || ('dropAt' in o)) && !('homeAt' in o) && isTap('home')));
+    }
+
+    function tripLinkKeys() {
+      return ['bookingId', 'ref', 'to', 'kind', 'nonstop', 'driverName', 'closed', 'createdAt', 'updatedAt', 'by'];
+    }
+
+    match /tripLinks/{key} {
+      allow get: if true;
+      allow list: if isAdmin();
+
+      allow create: if isAdmin()
+        && key.matches('^[A-Za-z0-9]{24,40}$')
+        && request.resource.data.keys().hasOnly(tripLinkKeys())
+        && request.resource.data.keys().hasAll(tripLinkKeys())
+        && isText(request.resource.data.bookingId, 1, 128)
+        && exists(/databases/$(database)/documents/bookings/$(request.resource.data.bookingId))
+        && isOptionalText(request.resource.data.ref, 20)
+        && isText(request.resource.data.to, 2, 60)
+        && request.resource.data.kind in ['one-way', 'round']
+        && request.resource.data.nonstop is bool
+        && isText(request.resource.data.driverName, 2, 60)
+        && request.resource.data.closed == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.by == request.auth.uid;
+
+      // An admin correcting the times (a time is removed, never set to
+      // null), switching day-and-night driving, or closing the link once the
+      // bill is saved; or the driver's tap.
+      allow update: if (isAdmin()
+          && changedOnly(['startAt', 'dropAt', 'homeAt', 'nonstop', 'closed', 'updatedAt', 'by'])
+          && isOptTime(request.resource.data, 'startAt')
+          && isOptTime(request.resource.data, 'dropAt')
+          && isOptTime(request.resource.data, 'homeAt')
+          && (request.resource.data.kind == 'one-way' || !('dropAt' in request.resource.data))
+          && inOrder(request.resource.data, 'startAt', 'dropAt')
+          && inOrder(request.resource.data, 'dropAt', 'homeAt')
+          && inOrder(request.resource.data, 'startAt', 'homeAt')
+          && request.resource.data.nonstop is bool
+          && request.resource.data.closed is bool
+          && request.resource.data.updatedAt == request.time
+          && request.resource.data.by == request.auth.uid)
+        || isDriverTap();
+
+      allow delete: if false;
     }
 
     /* ----------------------------------------------------------- drivers -- */

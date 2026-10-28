@@ -16,6 +16,9 @@
  *                     DriveBuddy app (confirmed, driver assigned, completed,
  *                     cancelled), and — once WhatsApp is set up — a WhatsApp
  *                     message when a driver is assigned
+ *   • trip clock    → when a driver taps Start, Car dropped or Home on his trip
+ *                     link, the time is copied to the booking (the customer
+ *                     sees it) and Telegram hears about it
  *
  * It reads and writes Firestore through the REST API as the Google account that
  * owns this script, so it must be the account that owns the Firebase project.
@@ -340,6 +343,61 @@ function reminderTelegram(c) {
   return {
     text: '⏰ <b>Not handled yet: ' + escapeHtml(c.booking.ref || c.id) + '</b>\n' + escapeHtml(c.booking.name) + ', ' +
       escapeHtml(prettyPhone(c.booking.phone)) + ' – waiting ' + c.minutes + ' min.\nCall the customer, then mark it Confirmed in the admin panel.',
+    reply_markup: { inline_keyboard: [[{ text: 'Open in admin panel', url: c.siteUrl + '/admin/?b=' + encodeURIComponent(c.id) }]] },
+  };
+}
+
+/* ----------------------------------------------------------- trip clock */
+
+var TRIP_STEPS = ['start', 'drop', 'home'];
+
+/** The times on a trip link → the booking's clock: { startAt, dropAt, homeAt }, only those there. */
+function tripClockOf(link) {
+  var c = {};
+  TRIP_STEPS.forEach(function (s) { if (link[s + 'At']) c[s + 'At'] = link[s + 'At']; });
+  return c;
+}
+
+/** The steps the new clock has that the booking's did not, in order. */
+function tripClockNews(had, now) {
+  had = had || {};
+  return TRIP_STEPS.filter(function (s) { return now[s + 'At'] && !had[s + 'At']; });
+}
+
+function sameClock(a, b) {
+  a = a || {};
+  b = b || {};
+  return TRIP_STEPS.every(function (s) {
+    var x = a[s + 'At'], y = b[s + 'At'];
+    return (!x && !y) || (x && y && x.getTime() === y.getTime());
+  });
+}
+
+/** 104100000 ms → "28 h 55 m". */
+function hoursText(ms) {
+  var m = Math.max(0, Math.floor(ms / 60000));
+  var h = Math.floor(m / 60);
+  return h + ' h ' + (m - h * 60) + ' m';
+}
+
+function tripTelegram(c) {
+  var l = c.link;
+  var ref = escapeHtml((c.booking && c.booking.ref) || l.ref || c.id);
+  var who = escapeHtml(l.driverName || 'The driver');
+  var at = formatIst(l[c.step + 'At']);
+  var text;
+  if (c.step === 'start') {
+    text = '🚗 <b>' + ref + ': trip started</b>\n' + who + ' left for ' + escapeHtml(l.to) + ' – ' + at;
+  } else if (c.step === 'drop') {
+    text = '📍 <b>' + ref + ': car dropped in ' + escapeHtml(l.to) + '</b>\n' + at +
+      (l.startAt ? ' – ' + hoursText(l.dropAt.getTime() - l.startAt.getTime()) + ' after the start' : '') +
+      '. ' + who + ' is on his way home.';
+  } else {
+    text = (l.kind === 'round' ? '🏁 <b>' + ref + ': trip over – ' + who + ' is back</b>' : '🏠 <b>' + ref + ': ' + who + ' is home</b>') +
+      '\n' + at + '. The final bill is ready to check in the admin panel.';
+  }
+  return {
+    text: text,
     reply_markup: { inline_keyboard: [[{ text: 'Open in admin panel', url: c.siteUrl + '/admin/?b=' + encodeURIComponent(c.id) }]] },
   };
 }
@@ -691,7 +749,7 @@ function driversTable_() {
 
 /** Runs every minute (set up by setup()): the safety net behind the instant ping below. */
 function tick() {
-  var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_];
+  var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_];
   if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_);
   runSteps_(steps, 5000);
 }
@@ -733,7 +791,7 @@ function ping_() {
   var cache = CacheService.getScriptCache();
   if (!cache.get('ping')) {
     cache.put('ping', '1', 3);
-    runSteps_([processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_], 25000);
+    runSteps_([processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_], 25000);
   }
   return ContentService.createTextOutput('ok');
 }
@@ -951,6 +1009,35 @@ function notifyCustomer_(id, b) {
     updateMask: { fieldPaths: keys },
     currentDocument: { exists: true },
   }]);
+}
+
+/**
+ * The driver's taps on his trip link (and an admin's corrections): copy the
+ * times to the booking, so the customer sees them, and tell Telegram about
+ * each new step once. The robot's write leaves updatedAt alone.
+ */
+function syncTripClocks_() {
+  return changedSince_('tripLinks', 'tripClockMs', function (rows) {
+    rows.forEach(function (row) { syncTripClock_(row.id, row.data); });
+  });
+}
+
+function syncTripClock_(key, link) {
+  if (!link.bookingId) return;
+  var b = fsGet_('bookings/' + link.bookingId);
+  if (!b) return;
+  var clock = tripClockOf(link);
+  var news = tripClockNews(b.clock, clock);
+  if (!sameClock(b.clock, clock)) {
+    fsCommit_([{
+      update: { name: docName_('bookings/' + link.bookingId), fields: toFields({ clock: clock }) },
+      updateMask: { fieldPaths: ['clock'] },
+      currentDocument: { exists: true },
+    }]);
+  }
+  news.forEach(function (step) {
+    sendTelegram_(tripTelegram({ link: link, step: step, booking: b, id: link.bookingId, siteUrl: prop_('SITE_URL') }));
+  });
 }
 
 /** A booking still New 10 minutes after it came in gets one Telegram nudge. */
@@ -1227,5 +1314,6 @@ if (typeof module !== 'undefined') {
     bookingRecord: bookingRecord, driverRecord: driverRecord, columnLetter: columnLetter,
     toValue: toValue, fromValue: fromValue, toFields: toFields, fromFields: fromFields,
     updateKey: updateKey, customerPush: customerPush, whatsappAssigned: whatsappAssigned, floodTelegram: floodTelegram,
+    tripClockOf: tripClockOf, tripClockNews: tripClockNews, sameClock: sameClock, hoursText: hoursText, tripTelegram: tripTelegram,
   };
 }

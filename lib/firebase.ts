@@ -77,7 +77,7 @@ async function startAppCheck(app: Parameters<typeof import('firebase/app-check')
  * every-minute check still finds the booking), and `keepalive` lets the ping
  * finish even if the customer closes the page straight away.
  */
-function pingAlerts() {
+export function pingAlerts() {
   const url = settings.alerts.pingUrl;
   if (!url) return;
   try {

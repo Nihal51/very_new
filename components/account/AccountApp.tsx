@@ -19,12 +19,15 @@ import {
   formatPreferred,
   packageName,
   prettyPhone,
+  toBill,
+  toClock,
   toDate,
   type Booking,
 } from '@/lib/bookings';
 import { getFirebaseApp, isFirebaseConfigured } from '@/lib/firebase';
 import { rupees } from '@/lib/settings';
 import { quoteBreakdown, tripSummary } from '@/lib/trip';
+import { billBreakdown, clockText } from '@/lib/tripclock';
 import { normalisePhone, validateName, validatePhone } from '@/lib/validate';
 
 type State =
@@ -205,6 +208,8 @@ function Dashboard({ user, profile, onProfile }: { user: User; profile: Profile;
                   ...(data as Omit<Booking, 'id'>),
                   id: d.id,
                   createdAt: toDate(data.createdAt),
+                  clock: toClock(data.clock),
+                  bill: toBill(data.bill),
                 };
               })
               .sort((a, b) => (b.createdAt?.getTime() ?? 9e15) - (a.createdAt?.getTime() ?? 9e15)),
@@ -317,6 +322,21 @@ function BookingRow({ b }: { b: Booking }) {
             <dd>
               <strong className="text-fg tabular">{rupees(b.quote.amount)}</strong>{' '}
               <span className="text-fg-subtle text-sm">({quoteBreakdown(b.quote)})</span>
+            </dd>
+          </div>
+        )}
+        {b.clock && b.trip && (
+          <div className="sm:col-span-2">
+            <dt className="text-fg-subtle text-xs">Trip times</dt>
+            <dd>{clockText(b.clock, b.trip.kind)}</dd>
+          </div>
+        )}
+        {b.bill && (
+          <div className="sm:col-span-2">
+            <dt className="text-fg-subtle text-xs">Final bill (from the real times)</dt>
+            <dd>
+              <strong className="text-fg tabular">{rupees(b.bill.amount)}</strong>{' '}
+              <span className="text-fg-subtle text-sm">({billBreakdown(b.bill)})</span>
             </dd>
           </div>
         )}
