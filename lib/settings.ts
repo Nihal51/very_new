@@ -40,8 +40,15 @@ export const priceText = {
   oneHour: rupees(p.oneHour),
   threeHours: rupees(p.threeHours),
   fullDay: rupeeRange(p.fullDay.from, p.fullDay.to),
-  /** Per day of an outstation trip or one-way drop. */
+  /** Per day of an outstation trip or one-way drop farther than the nearby tiers (and of every long drive). */
   outstation: rupeeRange(p.outstation.from, p.outstation.to),
+  /** Per day of an outstation trip, nearest to farthest: "₹1,300–1,650". */
+  outstationSpan: rupeeRange(Math.min(p.outstation.from, ...p.outstationNear.map((t) => t.from)), p.outstation.to),
+  /** "₹1,300–1,400 a day up to 150 km away, ₹1,450–1,550 up to 300 km, ₹1,550–1,650 farther" */
+  outstationByDistance: [
+    ...p.outstationNear.map((t, i) => `${rupeeRange(t.from, t.to)}${i === 0 ? ' a day' : ''} up to ${t.upToKm} km${i === 0 ? ' away' : ''}`),
+    `${rupeeRange(p.outstation.from, p.outstation.to)}${p.outstationNear.length ? ' farther' : ' a day'}`,
+  ].join(', '),
   /** Per hour the driver is still travelling home after the paid days, and the daily maximum. */
   outstationReturnHour: rupees(settings.outstation.returnHour),
   outstationReturnMax: rupees(settings.outstation.returnMaxPerDay),
@@ -76,7 +83,7 @@ export const priceText = {
 
 /** Whole-rupee bounds of everything sold at a listed price, for JSON-LD priceRange/minPrice. */
 export const priceBounds = {
-  min: Math.min(p.oneHour, p.threeHours, p.fullDay.from, p.outstation.from, p.nightFrom),
+  min: Math.min(p.oneHour, p.threeHours, p.fullDay.from, p.outstation.from, ...p.outstationNear.map((t) => t.from), p.nightFrom),
   max: Math.max(p.oneHour, p.threeHours, p.fullDay.to, p.outstation.to, p.nightFrom),
 };
 
@@ -95,6 +102,7 @@ export const railLookupUrl = (settings.trains.lookupUrl || settings.alerts.pingU
 /** The trip rules for lib/outstation.ts, from the checked settings. */
 export const tripRules: TripRules = {
   dayRate: { from: p.outstation.from, to: p.outstation.to },
+  nearRates: p.outstationNear.map((t) => ({ upToKm: t.upToKm, from: t.from, to: t.to })),
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,

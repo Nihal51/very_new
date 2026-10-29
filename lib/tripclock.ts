@@ -9,7 +9,7 @@
  */
 
 import type { Booking, BookingBill, BookingClock } from './bookings.ts';
-import { finalBill, returnCost, returnWords, type Bill, type TripKind, type TripRules } from './outstation.ts';
+import { dayRateFor, finalBill, returnCost, returnWords, type Bill, type TripKind, type TripRules } from './outstation.ts';
 
 export type TripStep = 'start' | 'drop' | 'home';
 
@@ -141,10 +141,10 @@ export type BillRates = {
   ticket: number;
 };
 
-/** The rates for the bill: the agreed price's, or the lowest rates customers were shown. */
-export function billRates(quote: Booking['quote'], rules: TripRules): BillRates {
+/** The rates for the bill: the agreed price's, or the lowest rates customers were shown for the distance (`km`, one way). */
+export function billRates(quote: Booking['quote'], rules: TripRules, km?: number): BillRates {
   return {
-    dayRate: quote?.dayRate ?? rules.dayRate.from,
+    dayRate: quote?.dayRate ?? dayRateFor(rules, km).from,
     extraHourRate: quote?.extraHourRate ?? rules.extraHour,
     returnHourRate: quote?.returnHourRate ?? rules.returnHour,
     ticket: quote?.ticket ?? 0,

@@ -459,12 +459,13 @@ export const plans: Plan[] = [
     eyebrow: 'Outstation',
     name: 'Outstation Trip',
     blurb: 'Long-distance journeys and one-way drops, by the day.',
-    price: priceText.outstation,
-    min: settings.prices.outstation.from,
+    price: priceText.outstationSpan,
+    min: Math.min(settings.prices.outstation.from, ...settings.prices.outstationNear.map((t) => t.from)),
     max: settings.prices.outstation.to,
     unit: 'per day',
     features: [
       `Up to ${priceText.outstationHours} of driving a day`,
+      `By distance: ${priceText.outstationByDistance}`,
       'Highway-experienced driver',
       'Night halts on request',
       'Your own vehicle',
@@ -517,7 +518,7 @@ export const bookingPackages = [
   { value: '1-hour-300', label: `1 Hour — ${priceText.oneHour}` },
   { value: '3-hours-600', label: `3 Hours — ${priceText.threeHours} (most popular)` },
   { value: 'local-full-day', label: `Local Full Day, 8 hrs — ${priceText.fullDay}` },
-  { value: 'outstation', label: `Outstation Trip — ${priceText.outstation} a day` },
+  { value: 'outstation', label: `Outstation Trip — ${priceText.outstationSpan} a day, by distance` },
   { value: 'night-driver', label: `Night Driver, 8 PM – 6 AM — from ${priceText.nightFrom}` },
   { value: 'medical-emergency', label: 'Hospital / Emergency — priority' },
   { value: 'monthly-basic', label: `Monthly Driver, Basic plan — ${priceText.basic} a month` },
@@ -785,7 +786,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'How much does it cost to hire a driver?',
-    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstation} a day for outstation trips and one-way car drops; the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
+    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstationSpan} a day for outstation trips, by distance (${priceText.outstationByDistance}), with one-way car drops by the hour or the day; the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
   },
   {
     q: 'How quickly will a driver arrive?',
@@ -797,7 +798,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'What is the difference between Local and Outstation?',
-    a: `Local Full Day (${priceText.fullDay}) covers eight hours of driving inside city limits. Outstation (${priceText.outstation} a day, up to ${priceText.outstationHours} of driving) is for journeys beyond the city, on highways, and can include an overnight halt. Pick your destination on the booking form to see the estimate for the whole trip, or call us on ${phone}.`,
+    a: `Local Full Day (${priceText.fullDay}) covers eight hours of driving inside city limits. Outstation (${priceText.outstationByDistance} — up to ${priceText.outstationHours} of driving a day) is for journeys beyond the city, on highways, and can include an overnight halt. Pick your destination on the booking form to see the estimate for the whole trip, or call us on ${phone}.`,
   },
   {
     q: 'What if I need to extend my booking?',

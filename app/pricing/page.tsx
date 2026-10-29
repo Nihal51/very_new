@@ -20,7 +20,7 @@ const trail = [{ name: 'Pricing', path: '/pricing/' }];
 export const metadata: Metadata = pageMeta({
   title: 'Driver Charges & Hourly Rates in Chhattisgarh',
   description:
-    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.outstation} a day outstation, from ${priceText.nightFrom} at night. No surge, no hidden fees.`,
+    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.outstationSpan} a day outstation by distance, from ${priceText.nightFrom} at night. No surge, no hidden fees.`,
   path: '/pricing/',
 });
 
@@ -92,12 +92,13 @@ export default function PricingPage() {
               ))}
             </ul>
             <p className="text-fg-subtle mt-6 text-sm">
-              Outstation trips and one-way drops: {priceText.outstation} for each{' '}
+              Outstation round trips, by how far the place is from your city: {priceText.outstationByDistance}.
+              One-way drops: {priceText.outstation} for each{' '}
               {priceText.outstationHours} of driving, and {priceText.outstationExtraHour} for each
               hour beyond (more than {settings.outstation.extraFullDayAfterHours} hours beyond = a full day) (a shorter drive is all by the hour). After a one-way drop, the
               driver&apos;s way home — from the drop until he is home, waiting for his train
               included — is {priceText.outstationReturnRule}. Round trips are charged by the days of the
-              trip.
+              trip, at the day price for the distance.
               Pick your destination on the booking form for an estimate — or see{' '}
               <Link href="/one-way-drop/" className="text-accent-text font-semibold underline underline-offset-4">
                 one-way drop prices by route

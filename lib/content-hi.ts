@@ -261,7 +261,7 @@ const night: Faq = {
 
 const price: Faq = {
   q: 'ड्राइवर का चार्ज कितना है?',
-  a: `1 घंटे के ${priceText.oneHour}, 3 घंटे के ${priceText.threeHours}, शहर में पूरे दिन (8 घंटे) के ${priceText.fullDay} और आउटस्टेशन ट्रिप या वन-वे ड्रॉप के ${priceText.outstation} प्रति दिन। मंथली ड्राइवर बेसिक प्लान में ${priceText.basic} और प्रीमियम में ${priceText.premium} प्रति माह। यह सिर्फ़ ड्राइवर का चार्ज है — गाड़ी और ईंधन आपका। कोई सर्ज प्राइसिंग या छुपा चार्ज नहीं।`,
+  a: `1 घंटे के ${priceText.oneHour}, 3 घंटे के ${priceText.threeHours}, शहर में पूरे दिन (8 घंटे) के ${priceText.fullDay} और आउटस्टेशन ट्रिप के ${priceText.outstationSpan} प्रति दिन (दूरी के हिसाब से — पास की जगह सस्ती)। मंथली ड्राइवर बेसिक प्लान में ${priceText.basic} और प्रीमियम में ${priceText.premium} प्रति माह। यह सिर्फ़ ड्राइवर का चार्ज है — गाड़ी और ईंधन आपका। कोई सर्ज प्राइसिंग या छुपा चार्ज नहीं।`,
 };
 
 const car: Faq = {

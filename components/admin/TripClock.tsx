@@ -329,7 +329,7 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
         returnHourRate: saved.returnHourRate,
         ticket: saved.ticket,
       }
-    : billRates(b.quote, tripRules);
+    : billRates(b.quote, tripRules, b.trip?.km);
   const [dayRate, setDayRate] = useState(String(rates.dayRate));
   const [cost, setCost] = useState('');
   const [returnPay, setReturnPay] = useState(String(DEFAULT_RETURN_PAY));

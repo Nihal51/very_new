@@ -94,7 +94,13 @@ export const settings = {
     oneHour: 300,
     threeHours: 600,
     fullDay: { from: 1000, to: 1200 }, //     Local Full Day, 8 hours
-    outstation: { from: 1550, to: 1650 }, //  per DAY of an outstation trip or one-way drop (rules below)
+    outstation: { from: 1550, to: 1650 }, //  per DAY of an outstation trip or one-way drop, farther than the last nearby tier
+    /* Cheaper days for places closer by (one-way road km from the pickup city),
+       nearest first. Bilaspur (113 km) is a short day; Nagpur (284 km) a long one. */
+    outstationNear: [
+      { upToKm: 150, from: 1300, to: 1400 }, //  e.g. Bilaspur, Rajnandgaon, Dhamtari, Kanker
+      { upToKm: 300, from: 1450, to: 1550 }, //  e.g. Korba, Raigarh, Gondia, Nagpur, Jagdalpur
+    ],
     nightFrom: 500, //                        Night driver, 8 PM – 6 AM, "from ₹500"
   },
 

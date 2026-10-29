@@ -15,6 +15,9 @@
  *   - Driving (one-way): the hours of driving at averageKmh. Each hoursPerDay
  *     of driving (12 h, about 600 km) is one day (dayRate); the hours left
  *     over — or the whole drive, if it is shorter — extraHour each.
+ *   - The day price depends on how far the place is (decided 29 Oct 2026):
+ *     nearRates for places close by (e.g. up to 150 km ₹1,300–1,400, up to
+ *     300 km ₹1,450–1,550), dayRate beyond — see dayRateFor.
  *   - Timings: from the start date and time. Normally he drives 12 hours and
  *     rests 12 (up to an hour more finishes that evening); or, if the customer
  *     wants it, day and night without the rest (same price). That gives the
@@ -44,8 +47,14 @@
 
 /** The trip rules from site-settings.ts (`outstation`), plus the per-day price range. */
 export type TripRules = {
-  /** Customer price per day (24 h from the start, up to hoursPerDay driving) — the range customers are shown. */
+  /** Customer price per day (24 h from the start, up to hoursPerDay driving) for places farther than the last nearRates tier. */
   dayRate: { from: number; to: number };
+  /**
+   * Cheaper days for places closer by, nearest first: up to `upToKm` (one
+   * way, by road, from the pickup city) a day is from–to. Left out: dayRate
+   * everywhere. See dayRateFor.
+   */
+  nearRates?: readonly NearRate[];
   /** Customer price per hour of the driver's way home (one-way: from the drop until he is home). */
   returnHour: number;
   /** The most the way home costs in any 24 hours. */
@@ -249,6 +258,22 @@ export const DEFAULT_START_HOUR = 7;
 
 /** When the driver leaves: the hour of the day and, if the date is known, the weekday (0 = Sunday). */
 export type TripStart = { hour: number; weekday?: number };
+
+/** A day price for places up to `upToKm` away (one way, by road). */
+export type NearRate = { upToKm: number; from: number; to: number };
+
+/**
+ * The day price for a place `km` away (one way, by road, from the pickup
+ * city): the first nearby tier it falls in, else dayRate. A place not in the
+ * list (km 0, unknown) gets dayRate — the team quotes it on the call.
+ *   Bilaspur 113 km → ₹1,300–1,400; Nagpur 284 km → ₹1,450–1,550;
+ *   Jabalpur 383 km → ₹1,550–1,650.
+ */
+export function dayRateFor(rules: Pick<TripRules, 'dayRate' | 'nearRates'>, km: number | undefined): { from: number; to: number } {
+  const d = Math.round(Number(km) || 0);
+  const tier = d > 0 ? rules.nearRates?.find((t) => d <= t.upToKm) : undefined;
+  return tier ? { from: tier.from, to: tier.to } : { from: rules.dayRate.from, to: rules.dayRate.to };
+}
 
 /** Hours of driving for a distance, at averageKmh. */
 export const driveHours = (rules: Pick<TripRules, 'averageKmh'>, km: number) => km / rules.averageKmh;
@@ -456,15 +481,16 @@ export type Estimate = {
   returnCharge: number;
 };
 
-/** What the customer sees: a range, from the per-day price range, plus the extra hours and the way home. */
+/** What the customer sees: a range, from the per-day price range for the distance, plus the extra hours and the way home. */
 export function estimate(
   rules: TripRules,
-  plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'>,
+  plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'> & Partial<Pick<TripPlan, 'km'>>,
 ): Estimate {
+  const rate = dayRateFor(rules, plan.km);
   const extraCharge = plan.extraHours * rules.extraHour;
   const driving = {
-    from: plan.fullDays * rules.dayRate.from + extraCharge,
-    to: plan.fullDays * rules.dayRate.to + extraCharge,
+    from: plan.fullDays * rate.from + extraCharge,
+    to: plan.fullDays * rate.to + extraCharge,
   };
   const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay, rules.returnFullDayAfter);
   return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, extraCharge, returnCharge };
@@ -489,6 +515,8 @@ export type QuoteInput = {
   partnerPercent: number;
   /** The lowest acceptable profit, % of what the customer pays. */
   minProfitPercent: number;
+  /** One-way road km to the place, for the day price customers were shown (dayRateFor). */
+  km?: number;
 };
 
 export type Quote = {
@@ -567,7 +595,7 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
     profit,
     profitPercent,
     ok: profitPercent + 1e-9 >= input.minProfitPercent,
-    aboveShownRange: dayRate > rules.dayRate.to || (back > 0 && returnHourRate > rules.returnHour),
+    aboveShownRange: dayRate > dayRateFor(rules, input.km).to || (back > 0 && returnHourRate > rules.returnHour),
   };
 }
 

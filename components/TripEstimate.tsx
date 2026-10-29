@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { ReturnTrains } from '@/components/useReturnTrains';
 import { Spinner } from '@/components/ui/Spinner';
 import { cn } from '@/lib/cn';
+import { dayRateFor } from '@/lib/outstation';
 import type { ReturnOption } from '@/lib/rail';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import {
@@ -45,7 +46,9 @@ export function TripEstimate({
   className?: string;
 }) {
   const oneWay = view.kind === 'one-way';
-  const dayRate = `${priceText.outstation} a day`;
+  const dayRate = `${priceText.outstationSpan} a day, by distance`;
+  // This trip's day price (nearer places cost less a day).
+  const dayText = (({ from, to }) => rupeeRange(from, to))(dayRateFor(tripRules, view.plan?.km || view.km));
   const returnRate = `his way home from the drop, ${priceText.outstationReturnRule}`;
 
   let body: ReactNode;
@@ -131,7 +134,7 @@ export function TripEstimate({
         {oneWay ? (
           <ul className="mt-1 list-disc pl-5">
             <li>
-              Driving: every {priceText.outstationHours} of driving is one day ({priceText.outstation}). Hours left
+              Driving: every {priceText.outstationHours} of driving is one day ({dayText}). Hours left
               over: up to {settings.outstation.extraFullDayAfterHours} are {rupees(tripRules.extraHour)} each; more than{' '}
               {settings.outstation.extraFullDayAfterHours} count as one more full day. A drive shorter than that is by
               the hour.
@@ -150,7 +153,8 @@ export function TripEstimate({
           <ul className="mt-1 list-disc pl-5">
             <li>
               Your days are counted from the time the driver starts: each 24 hours is one day (
-              {priceText.outstation}, up to {priceText.outstationHours} of driving).
+              {dayText}, up to {priceText.outstationHours} of driving). The day price depends on how far the place is:{' '}
+              {priceText.outstationByDistance}.
             </li>
             <li>
               If he is back later than that time on the last day, each extra hour is{' '}

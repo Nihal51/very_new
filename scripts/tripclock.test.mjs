@@ -27,6 +27,7 @@ import { settings } from '../site-settings.ts';
 
 const rules = {
   dayRate: { ...settings.prices.outstation },
+  nearRates: settings.prices.outstationNear,
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
@@ -73,6 +74,9 @@ test('a tap that reached us late shows the phone time', () => {
 
 test('rates: the agreed price, or the lowest shown', () => {
   assert.deepEqual(billRates(null, rules), { dayRate: rules.dayRate.from, extraHourRate: 120, returnHourRate: 120, ticket: 0 });
+  // No agreed price: the lowest day price shown for the distance (Bilaspur, 113 km).
+  assert.equal(billRates(null, rules, 113).dayRate, 1300);
+  assert.equal(billRates({ dayRate: 1350, extraHourRate: 120, returnHourRate: 120, ticket: 0 }, rules, 113).dayRate, 1350);
   assert.deepEqual(billRates({ dayRate: 1600, extraHourRate: 130, returnHourRate: 120, ticket: 650 }, rules), {
     dayRate: 1600, extraHourRate: 130, returnHourRate: 120, ticket: 650,
   });

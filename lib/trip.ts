@@ -15,6 +15,7 @@ import {
   pickupStations,
   planTrip,
   returnWords,
+  dayRateFor,
   roadKm,
   withReturn,
   type Destination,
@@ -316,7 +317,8 @@ export function tripSummary(t: BookingTrip, city: string): string {
 export function estimateLines(view: TripView): { label: string; amount: string }[] {
   const p = view.plan;
   if (!view.est || !p) return [];
-  const rate = rupeeRange(tripRules.dayRate.from, tripRules.dayRate.to);
+  const day = dayRateFor(tripRules, p.km);
+  const rate = rupeeRange(day.from, day.to);
   if (view.kind === 'round') {
     return [{ label: `${plural(p.fullDays, 'day')} × ${rate}`, amount: rupeeRange(view.est.driving.from, view.est.driving.to) }];
   }
@@ -324,7 +326,7 @@ export function estimateLines(view: TripView): { label: string; amount: string }
   if (p.fullDays > 0)
     lines.push({
       label: `${plural(p.fullDays, 'driving day')} (${tripRules.hoursPerDay} h each) × ${rate}`,
-      amount: rupeeRange(p.fullDays * tripRules.dayRate.from, p.fullDays * tripRules.dayRate.to),
+      amount: rupeeRange(p.fullDays * day.from, p.fullDays * day.to),
     });
   if (p.extraHours > 0)
     lines.push({

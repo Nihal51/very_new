@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/Field';
 import { saveQuote } from '@/lib/admin';
 import { formatDateTime, type Booking } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
-import { planTrip, quote as workOut } from '@/lib/outstation';
+import { dayRateFor, planTrip, quote as workOut } from '@/lib/outstation';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import { quoteBreakdown } from '@/lib/trip';
 
@@ -49,6 +49,8 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
   const [err, setErr] = useState('');
   const [saved, setSaved] = useState(false);
 
+  // The day price customers were shown for this distance.
+  const shownDay = (({ from, to }) => rupeeRange(from, to))(dayRateFor(tripRules, b.trip?.km));
   const q =
     int(cost) > 0
       ? workOut(tripRules, {
@@ -60,6 +62,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
           ticket: int(ticket),
           partnerPercent: partner ? PARTNER : 0,
           minProfitPercent: MIN_PROFIT,
+          ...(b.trip?.km ? { km: b.trip.km } : {}),
         })
       : null;
 
@@ -214,7 +217,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
               )}
               {q.aboveShownRange && (
                 <p className="text-fg-muted mt-2">
-                  Above the range customers are shown ({priceText.outstation} a day,{' '}
+                  Above the range customers are shown ({shownDay} a day,{' '}
                   {priceText.outstationReturnHour} a return hour). Tell the customer why before you confirm.
                 </p>
               )}

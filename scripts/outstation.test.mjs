@@ -23,6 +23,7 @@ import {
   pickupCities,
   planTrip,
   quote,
+  dayRateFor,
   returnCost,
   roadKm,
 } from '../lib/outstation.ts';
@@ -32,6 +33,7 @@ import { settings } from '../site-settings.ts';
 /** The same mapping as tripRules in lib/settings.ts (which uses the @/ alias Node cannot read). */
 const rules = {
   dayRate: { ...settings.prices.outstation },
+  nearRates: settings.prices.outstationNear,
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
@@ -209,6 +211,39 @@ test('a round trip is days of the trip; back home within the 24 hours is ONE day
   assert.equal(trip('jharsuguda', 'round', 2).days, 2);
 });
 
+test('the day price by distance (decided 29 Oct 2026): nearer places cost less a day', () => {
+  // Up to 150 km ₹1,300–1,400; up to 300 km ₹1,450–1,550; farther ₹1,550–1,650.
+  assert.deepEqual(dayRateFor(rules, 113), { from: 1300, to: 1400 }, 'Bilaspur');
+  assert.deepEqual(dayRateFor(rules, 150), { from: 1300, to: 1400 }, 'up to and including 150 km');
+  assert.deepEqual(dayRateFor(rules, 151), { from: 1450, to: 1550 });
+  assert.deepEqual(dayRateFor(rules, 284), { from: 1450, to: 1550 }, 'Nagpur');
+  assert.deepEqual(dayRateFor(rules, 301), { from: 1550, to: 1650 });
+  assert.deepEqual(dayRateFor(rules, 0), { from: 1550, to: 1650 }, 'a place not in the list: the long-trip price (quoted on the call)');
+  assert.deepEqual(dayRateFor({ dayRate: rules.dayRate }, 113), { from: 1550, to: 1650 }, 'no tiers: one price everywhere');
+
+  // Round trips: the days at the price for the distance.
+  assert.deepEqual(price(trip('bilaspur', 'round')), [1300, 1400]);
+  assert.deepEqual(price(trip('rajnandgaon', 'round')), [1300, 1400]);
+  assert.deepEqual(price(trip('korba', 'round')), [1450, 1550]);
+  assert.deepEqual(price(trip('nagpur', 'round')), [1450, 1550]);
+  assert.deepEqual(price(trip('bilaspur', 'round', 3)), [3900, 4200], '3 days at Bilaspur');
+  assert.deepEqual(price(trip('jabalpur', 'round')), [3100, 3300], 'farther than 300 km: the full price');
+  // From Bilaspur, Raipur itself is close by.
+  assert.deepEqual(dayRateFor(rules, roadKm('Bilaspur', findDestination('raipur'))), { from: 1300, to: 1400 });
+  // One-way: a short drop stays by the hour; long drops are farther than every tier.
+  assert.deepEqual(price(trip('bilaspur')), [720, 720]);
+  assert.deepEqual(price(trip('mumbai')), [4300, 4500]);
+});
+
+test('quote: "above what customers were shown" uses the price for the distance', () => {
+  const base = { driverDayCost: 1150, driverReturnHourPay: 100, days: 1, returnHours: 0, extraHours: 0, ticket: 0, partnerPercent: 0, minProfitPercent: 15 };
+  const q = quote(rules, { ...base, km: 113 });
+  assert.equal(q.dayRate, 1400); // 1150 / 0.85 = 1352.9 → ₹1,400
+  assert.equal(q.aboveShownRange, false, 'Bilaspur was shown ₹1,300–1,400');
+  assert.equal(quote(rules, { ...base, driverDayCost: 1200, km: 113 }).aboveShownRange, true, '₹1,450 > ₹1,400');
+  assert.equal(quote(rules, { ...base, driverDayCost: 1200, km: 400 }).aboveShownRange, false, 'a long trip was shown ₹1,550–1,650');
+});
+
 test('closer than localWithinKm is flagged as a local trip; a strange start falls back to 7 AM', () => {
   assert.equal(planTrip(rules, fromRaipur('bhilai'), 'one-way').local, true);
   assert.equal(planTrip(rules, fromRaipur('rajnandgaon'), 'one-way').local, false);
@@ -308,6 +343,15 @@ test('site-settings.ts passes its own checks', () => {
   assert.doesNotThrow(() => checkSettings(settings));
 });
 
+test('the nearby day prices are checked: nearest first, never dearer than farther ones or the long-trip price', () => {
+  const near = (outstationNear) => ({ ...settings, prices: { ...settings.prices, outstationNear } });
+  assert.doesNotThrow(() => checkSettings(near([])), 'no tiers: one price everywhere');
+  assert.throws(() => checkSettings(near([{ upToKm: 300, from: 1450, to: 1550 }, { upToKm: 150, from: 1300, to: 1400 }])), /must be farther than the tier before/);
+  assert.throws(() => checkSettings(near([{ upToKm: 150, from: 1500, to: 1600 }, { upToKm: 300, from: 1450, to: 1550 }])), /must not be cheaper than the nearer tier/);
+  assert.throws(() => checkSettings(near([{ upToKm: 150, from: 1600, to: 1700 }])), /must not cost more than prices\.outstation/);
+  assert.throws(() => checkSettings(near([{ upToKm: 150, from: 1400, to: 1300 }])), /is bigger than/);
+});
+
 test('profit guard: passes when the prices cover the costs', () => {
   assert.doesNotThrow(() => checkSettings(settings, 'outstation=1000-1100; fullDay=700'));
   assert.doesNotThrow(() => checkSettings(settings, ''));
@@ -323,7 +367,17 @@ test('profit guard: a price too low stops the build, without printing the cost',
       return true;
     },
   );
+  // The nearby days pay the same driver: a cost the long-trip price covers can still be too much for them.
+  assert.throws(
+    () => checkSettings(settings, 'outstation=1200-1300'),
+    (err) => {
+      assert.match(err.message, /prices\.outstationNear\[1\]\.from/);
+      assert.doesNotMatch(err.message, /prices\.outstation\.from/);
+      return true;
+    },
+  );
   assert.throws(() => checkSettings(settings, 'outstation 1000'), /part 1 cannot be read/);
+  assert.throws(() => checkSettings(settings, 'outstationNear=100'), /not one of the prices/);
   assert.throws(() => checkSettings(settings, 'taxi=100'), /"taxi", which is not one of the prices/);
 });
 

@@ -102,7 +102,7 @@ export default async function PlacePage({ params }: Props) {
     { q: `How soon can a driver reach ${p.name}?`, a: t.eta },
     {
       q: `What does a driver cost in ${p.name}?`,
-      a: `The same as everywhere we work: ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day and ${priceText.outstation} a day for outstation trips. A monthly driver starts from ${priceText.basicFrom} a month. You provide the car and fuel.`,
+      a: `The same as everywhere we work: ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day and ${priceText.outstationSpan} a day for outstation trips, by distance. A monthly driver starts from ${priceText.basicFrom} a month. You provide the car and fuel.`,
     },
     ...general,
   ];

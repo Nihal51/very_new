@@ -51,8 +51,19 @@ full days × prices.outstation          each hoursPerDay (12 h, ~600 km) of driv
 
 ### Round trips
 
-The days of the trip × `prices.outstation` (the driver is with the customer
-the whole time). Back home within the 24 hours — up to `sameDayMaxHours` (14)
+The days of the trip × the day price for the distance (the driver is with
+the customer the whole time). Nearer places cost less a day (decided 29 Oct
+2026), by one-way road km from the pickup city — `prices.outstationNear`:
+
+| One way from the pickup city | Per day | For example, from Raipur |
+| --- | --- | --- |
+| up to 150 km | ₹1,300–1,400 | Bilaspur, Rajnandgaon, Dhamtari, Kanker |
+| up to 300 km | ₹1,450–1,550 | Korba, Raigarh, Gondia, Nagpur, Jagdalpur |
+| farther | ₹1,550–1,650 (`prices.outstation`) | Ambikapur, Jabalpur and beyond |
+
+The same day price applies to a one-way drop's full days, but those only
+happen on drives of 12 hours or more (about 600 km), so in practice one-way
+drops use `prices.outstation`; a short drop is all by the hour. Back home within the 24 hours — up to `sameDayMaxHours` (14)
 of driving there and back — is one day; longer ones drive the distance twice.
 
 Small print for both: fuel, tolls and parking are extra; give the driver his
@@ -208,7 +219,9 @@ Add a GitHub secret `DRIVER_COSTS` (Settings → Secrets and variables →
 Actions), for example `outstation=1000-1100; fullDay=700` with your real
 figures. Every deploy then checks that each listed price still earns the
 minimum profit on those costs, and stops with a plain message if a typo
-(say 1150 for 1450) would lose money. The message names the price, never the
+(say 1150 for 1450) would lose money. The `outstation` cost is checked
+against every nearby day price too (`prices.outstationNear`), since the same
+driver does those trips. The message names the price, never the
 cost, because build logs of a public repository are public.
 
 ## Changing the rules
@@ -217,7 +230,8 @@ All in `site-settings.ts`:
 
 | Setting | Today | Meaning |
 | --- | --- | --- |
-| `prices.outstation` | 1550–1650 | Customer price per driving day |
+| `prices.outstation` | 1550–1650 | Customer price per day, farther than the nearby tiers |
+| `prices.outstationNear` | ≤150 km 1300–1400, ≤300 km 1450–1550 | Cheaper days for places closer by (one-way road km); nearest first; `[]` = one price everywhere |
 | `outstation.returnHour` | 120 | Per hour of the way home, from the drop until he is home |
 | `outstation.returnMaxPerDay` | 1200 | The most the way home costs in any 24 hours |
 | `outstation.extraHour` | 120 | Per driving hour beyond the full days |

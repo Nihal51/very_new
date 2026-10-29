@@ -13,6 +13,8 @@
  */
 
 type Range = { from: number; to: number };
+/** A day price for trips up to `upToKm` away (one way, by road). */
+export type NearRate = Range & { upToKm: number };
 
 export type SiteSettings = {
   notice: { show: boolean; text: string };
@@ -34,8 +36,10 @@ export type SiteSettings = {
     oneHour: number;
     threeHours: number;
     fullDay: Range;
-    /** Per day of an outstation trip or one-way drop. */
+    /** Per day of an outstation trip or one-way drop farther than the last nearby tier. */
     outstation: Range;
+    /** Cheaper days for places closer by: one-way road km from the pickup city, nearest first. */
+    outstationNear: readonly NearRate[];
     nightFrom: number;
   };
   /** Trip rules for the outstation estimate (lib/outstation.ts). */
@@ -161,6 +165,20 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   price('prices.threeHours', s.prices.threeHours);
   range('prices.fullDay', s.prices.fullDay);
   range('prices.outstation', s.prices.outstation);
+  /* Nearby tiers: nearest first, each cheaper than (or the same as) the next, none above the long-trip price. */
+  const near = Array.isArray(s.prices.outstationNear) ? s.prices.outstationNear : [];
+  if (!Array.isArray(s.prices.outstationNear)) problems.push('prices.outstationNear must be a list [ … ] (it can be empty)');
+  if (near.length > 6) problems.push('prices.outstationNear: at most 6 tiers');
+  near.forEach((t, i) => {
+    const name = `prices.outstationNear[${i + 1}]`;
+    range(name, t);
+    count(`${name}.upToKm`, t.upToKm, 1000);
+    const before = near[i - 1];
+    if (before && t.upToKm <= before.upToKm) problems.push(`${name}.upToKm (${t.upToKm}) must be farther than the tier before (${before.upToKm})`);
+    if (before && (t.from < before.from || t.to < before.to)) problems.push(`${name} must not be cheaper than the nearer tier before it`);
+    if (t.from > s.prices.outstation.from || t.to > s.prices.outstation.to)
+      problems.push(`${name} (${t.from}–${t.to}) must not cost more than prices.outstation (${s.prices.outstation.from}–${s.prices.outstation.to})`);
+  });
   price('prices.nightFrom', s.prices.nightFrom);
 
   const o = s.outstation;
@@ -247,7 +265,7 @@ export function checkDriverCosts(s: SiteSettings, driverCosts?: string): string[
   if (!driverCosts?.trim()) return [];
   const problems: string[] = [];
   const keep = 1 - s.outstation.minProfitPercent / 100;
-  const prices = s.prices as Record<string, number | Range>;
+  const prices = s.prices as unknown as Record<string, number | Range>;
   const parts = driverCosts.split(/[;,\n]+/).map((p) => p.trim()).filter(Boolean);
   parts.forEach((part, i) => {
     const m = /^([a-zA-Z]+)\s*=\s*(\d+)(?:\s*-\s*(\d+))?$/.exec(part);
@@ -259,8 +277,9 @@ export function checkDriverCosts(s: SiteSettings, driverCosts?: string): string[
     const a = m[2] ?? '0';
     const b = m[3];
     const sold = prices[name];
-    if (sold === undefined) {
-      problems.push(`DRIVER_COSTS: part ${i + 1} names "${name}", which is not one of the prices (${Object.keys(prices).join(', ')})`);
+    if (sold === undefined || Array.isArray(sold)) {
+      const names = Object.keys(prices).filter((k) => !Array.isArray(prices[k]));
+      problems.push(`DRIVER_COSTS: part ${i + 1} names "${name}", which is not one of the prices (${names.join(', ')})`);
       return;
     }
     const at = typeof sold === 'number' ? { from: sold, to: sold } : sold;
@@ -270,6 +289,14 @@ export function checkDriverCosts(s: SiteSettings, driverCosts?: string): string[
       problems.push(`prices.${name}${typeof sold === 'number' ? '' : '.from'} (${at.from}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
     if (b !== undefined && low(at.to, Number(b)))
       problems.push(`prices.${name}.to (${at.to}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
+    // The nearby outstation days pay the same driver: each must earn the margin too.
+    if (name === 'outstation')
+      s.prices.outstationNear.forEach((t, j) => {
+        if (low(t.from, Number(a)))
+          problems.push(`prices.outstationNear[${j + 1}].from (${t.from}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
+        if (b !== undefined && low(t.to, Number(b)))
+          problems.push(`prices.outstationNear[${j + 1}].to (${t.to}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
+      });
   });
   return problems;
 }

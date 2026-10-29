@@ -30,6 +30,8 @@ export function GET() {
       threeHours: prices.threeHours,
       fullDay: { from: prices.fullDay.from, to: prices.fullDay.to },
       outstation: { from: prices.outstation.from, to: prices.outstation.to },
+      /* Cheaper days for places closer by (one-way road km from the pickup city), nearest first. */
+      outstationNear: prices.outstationNear.map((t) => ({ upToKm: t.upToKm, from: t.from, to: t.to })),
       nightFrom: prices.nightFrom,
     },
     monthly: {
@@ -48,7 +50,8 @@ export function GET() {
        for the date) and from each pickup city the km, the hours of driving
        and the typical way home (lib/outstation.ts destinationTable). The app redoes
        planTrip for the customer's start: each hoursPerDay of driving a day at
-       prices.outstation, the rest extraHour an hour; the way home from the
+       the day price for the distance (prices.outstationNear, else
+       prices.outstation), the rest extraHour an hour; the way home from the
        drop: each 24 h returnMaxPerDay, the hours left over returnHour each up
        to returnFullDayAfterHours, more = a full day. */
     outstation: {
