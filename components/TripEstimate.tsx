@@ -238,7 +238,9 @@ function TrainsHome({ rail, view, city }: { rail: ReturnTrains; view: TripView; 
         <p className="bg-error-subtle text-fg rounded-lg p-2">
           {rail.status === 'none'
             ? `No train home found for that day, direct${view.dest?.rail?.hubs?.length ? ' or with one change' : ''}. `
-            : 'We could not check the trains just now. '}
+            : (lookup?.problems ?? []).some((p) => p.error === 'busy' || p.error === 'rate-limited')
+              ? 'The train check has reached its limit for today, so the trains were not checked. '
+              : 'We could not check the trains just now. '}
           The price uses the typical time home, which may be different — please check before you travel, and we
           confirm on the call.
         </p>

@@ -326,7 +326,12 @@ export function estimateLines(view: TripView): { label: string; amount: string }
       amount: rupees(view.est.extraCharge),
     });
   const w = wayHome(view);
-  const split = w ? ` (waiting ${aboutHours(w.wait).replace('about ', '')} + ${view.ret ? 'on the train' : 'travelling'} ${aboutHours(w.travel).replace('about ', '')})` : '';
+  // A real train: the wait and the ride. No train confirmed: the typical time, said plainly — not a "wait".
+  const split = !w
+    ? ''
+    : view.ret
+      ? ` (waiting ${aboutHours(w.wait).replace('about ', '')} + on the train ${aboutHours(w.travel).replace('about ', '')})`
+      : ' (typical time, no train confirmed yet)';
   lines.push(
     p.returnHours > 0
       ? {

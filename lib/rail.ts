@@ -281,10 +281,23 @@ export function planReturn(input: {
     }
   }
 
+  // Routes that end on the same last train get him home at the same time and
+  // cost the same: offer that ending once — direct if there is one, else the
+  // change with the most time between the trains (the safest).
   const seen = new Set<string>();
+  const last = (o: ReturnOption) => {
+    const l = o.legs[o.legs.length - 1]!;
+    return `${l.train.number}@${l.arrive}`;
+  };
   return options
-    .sort((x, y) => x.arrive - y.arrive || x.legs.length - y.legs.length || y.depart - x.depart)
-    .filter((o) => (seen.has(o.id) ? false : (seen.add(o.id), true)))
+    .sort(
+      (x, y) =>
+        x.arrive - y.arrive ||
+        x.legs.length - y.legs.length ||
+        (y.transfer?.minutes ?? 0) - (x.transfer?.minutes ?? 0) ||
+        y.depart - x.depart,
+    )
+    .filter((o) => (seen.has(last(o)) ? false : (seen.add(last(o)), true)))
     .slice(0, Math.max(1, rules.maxOptions));
 }
 
@@ -369,8 +382,9 @@ export type RailFetcher = (queries: RailQuery[], live: boolean) => Promise<RailR
 /**
  * The whole lookup for a drop: direct trains first; if none leaves soon
  * enough, connections through the destination's change stations. Any search
- * that fails is reported in `problems`; status 'error' only when nothing at
- * all could be checked, 'none' when the searches worked but found no route.
+ * that fails is reported in `problems`; status 'none' only when EVERY search
+ * worked and found no route, 'error' when nothing was found and any search
+ * failed (so "no train" is never said about a search that did not happen).
  */
 export async function findReturn(args: {
   fetcher: RailFetcher;
@@ -415,24 +429,25 @@ export async function findReturn(args: {
       legs.push(...out.legs);
       if (out.dropped.length) problems.push({ query: r.query, dropped: out.dropped });
     }
-    return { legs, answered: results.some((r) => r.ok) };
+    return { legs, failed: results.some((r) => !r.ok) };
   };
 
   const direct = await run(directQueries(valid, home, ready));
   let toHub: RailLeg[] = [];
   let fromHub: RailLeg[] = [];
-  let answered = direct.answered;
+  let failed = direct.failed;
   const hubCodes = hubs.filter(isStationCode).filter((h) => h !== home && !valid.includes(h));
   if (hubCodes.length && !hasGoodDirect(direct.legs, ready, rules)) {
     const hubbed = await run(hubQueries(valid, hubCodes, home, ready));
-    answered ||= hubbed.answered;
+    failed ||= hubbed.failed;
     toHub = hubbed.legs.filter((l) => hubCodes.includes(l.to.code));
     fromHub = hubbed.legs.filter((l) => hubCodes.includes(l.from.code));
   }
 
   const options = planReturn({ drop, ready, direct: direct.legs, toHub, fromHub, stations: valid, rules });
   return {
-    status: options.length ? 'ok' : answered ? 'none' : 'error',
+    // "No train" only when every search worked; a search that failed means "could not check".
+    status: options.length ? 'ok' : failed ? 'error' : 'none',
     options,
     problems,
     ...(checked.length && { checkedAt: Math.min(...checked) }),

@@ -358,3 +358,28 @@ test('a train that does not get him home after the drop is ignored', () => {
   assert.equal(withReturn(plan, plan.dropAt - 2, plan.dropAt - 1), plan);
   assert.equal(withReturn(planTrip(rules, 300, 'round'), 1, 2).homeBasis, undefined);
 });
+
+test('the busy cap or any failed search is never reported as "no train"', async () => {
+  const res = await findReturn({
+    fetcher: async (qs) => qs.map((q) => (q.from === 'NGP' ? ok(q.from, q.to, q.date, []) : { ok: false, query: q, error: 'busy' })),
+    stations: ['NDLS'], hubs: ['NGP'], home: 'R', drop, ready, now: drop, rules: RULES,
+  });
+  assert.equal(res.status, 'error');
+  assert.ok(res.problems.some((p) => p.error === 'busy'));
+});
+
+test('routes ending on the same last train are offered once — the safest change', () => {
+  const opts = planReturn({
+    drop, ready, stations: ['SBC', 'YPR'], rules: RULES, direct: [],
+    toHub: [
+      leg('12213', 'YPR', 'NGP', '2026-10-31T23:40', '2026-11-01T16:15'),
+      leg('22691', 'SBC', 'NGP', '2026-10-31T20:00', '2026-11-01T14:56'),
+    ],
+    fromHub: [
+      leg('12833', 'NGP', 'R', '2026-11-01T18:05', '2026-11-01T23:15'),
+      leg('12859', 'NGP', 'R', '2026-11-01T19:00', '2026-11-01T23:30'),
+    ],
+  });
+  assert.deepEqual(opts.map((o) => o.legs.at(-1).train.number), ['12833', '12859']);
+  assert.equal(opts[0].id, '22691+12833', '3 h 9 m to change beats 1 h 50 m');
+});
