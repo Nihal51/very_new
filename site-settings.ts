@@ -69,7 +69,7 @@ export const settings = {
      Telegram and email arrive in seconds. Leave '' and alerts still come
      within a minute. */
   alerts: {
-    pingUrl: '',
+    pingUrl: 'https://script.google.com/macros/s/AKfycbyJPR141acpum3KirDFgF8BFt79pE7Jf6wUPwbAzF0oyTjLCYuf3KTVdrKsYlIjHyvK/exec',
   },
 
   /* --------------------------------------- the driver's train home -------
@@ -80,7 +80,7 @@ export const settings = {
      ends in /exec). Empty: alerts.pingUrl is used; both empty: no lookup,
      and the estimate uses the typical time home, labelled as such. */
   trains: {
-    lookupUrl: '',
+    lookupUrl: 'https://script.google.com/macros/s/AKfycbyJPR141acpum3KirDFgF8BFt79pE7Jf6wUPwbAzF0oyTjLCYuf3KTVdrKsYlIjHyvK/exec',
     transferBufferMinutes: 90, // the least time to change trains (e.g. at Nagpur)
     maxTransferHours: 12, //      a longer wait at the change is not offered as a connection
     directWithinHours: 24, //     no direct train leaving within this long → look for a change
