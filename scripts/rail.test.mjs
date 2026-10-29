@@ -18,6 +18,7 @@ import {
   istInstant,
   legsFrom,
   planReturn,
+  returnParts,
   weekdayOf,
 } from '../lib/rail.ts';
 import { makeFetcher, parseLookup } from '../lib/rail-client.ts';
@@ -148,6 +149,17 @@ test('no direct train soon enough: a connection whose BOTH trains were confirmed
   assert.equal(o.transfer.minutes, 120);
   assert.ok(o.warnings.some((w) => /Two tickets/.test(w)));
   assert.ok(!o.warnings.some((w) => /tight change/.test(w)), '2 h is a comfortable change');
+  // The wait at Nagpur for the second train is charged: from the drop (31 Oct 12 PM) to home in
+  // Raipur (1 Nov 2:30 PM) = 2 h at the station + 18 h to Nagpur + 2 h at Nagpur + 4 h 30 m to Raipur.
+  assert.equal(o.totalMinutes, 26 * 60 + 30);
+  assert.deepEqual(returnParts(o), [
+    'waiting 2 h at SBC stn',
+    'train to NGP stn 18 h',
+    'waiting 2 h at NGP stn',
+    'train to R stn 4 h 30 m',
+  ]);
+  // 26 h 30 m → 27 h charged = 1 day + 3 h = ₹1,200 + 3 × ₹120.
+  assert.equal(returnCost(Math.ceil(o.totalMinutes / 60), 120, 1200, 6), 1560);
   // 1 h 45 m: allowed (over the 90 min buffer) but flagged as tight.
   const tight = planReturn({
     drop, ready, stations: ['SBC'], rules: RULES, direct: [],

@@ -141,7 +141,8 @@ export function TripEstimate({
               too</strong>: each 24 hours is {priceText.outstationReturnMax}; the hours left over are{' '}
               {priceText.outstationReturnHour} each, and more than {settings.outstation.returnFullDayAfterHours} hours
               count as a full day ({priceText.outstationReturnMax}). So 56 hours = 2 days + 8 hours = 3 days. For example: he drops the car on 2 Oct at 12 PM and his train leaves at 3 PM — that is 3 hours of
-              waiting, then the hours on the train until he reaches home.
+              waiting, then the hours on the train until he reaches home. If he changes trains (Bengaluru →
+              Nagpur → Raipur), the wait at Nagpur for the second train counts too.
             </li>
             <li>The final bill uses the real times; a late train adds hours, an early one saves them.</li>
           </ul>
@@ -289,10 +290,10 @@ function TrainsHome({ rail, view, city }: { rail: ReturnTrains; view: TripView; 
                       ))}
                       <span className="text-fg-muted block text-[0.8125rem]">
                         {o.transfer
-                          ? `Change at ${o.transfer.station.name}: ${hmText(o.transfer.minutes)} between the trains · `
+                          ? `Change at ${o.transfer.station.name}: waits ${hmText(o.transfer.minutes)} there for the next train · `
                           : 'Direct · '}
                         waits {hmText(o.waitMinutes)} after the drop · home {o.scheduled ? 'about ' : ''}
-                        {whenText(o.expectedArrive)} · {hmText(o.totalMinutes)} in all
+                        {whenText(o.expectedArrive)} · {hmText(o.totalMinutes)} in all, every wait counted
                       </span>
                       <span className="text-fg-subtle block text-xs">
                         {i === 0

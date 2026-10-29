@@ -335,6 +335,26 @@ function option(legs: RailLeg[], drop: number, rules?: RailRules): ReturnOption 
   };
 }
 
+/**
+ * Every piece of the way home, in order — each wait and each train — so a
+ * change of trains shows its wait too: "waiting 2 h at SBC + train to NGP
+ * 18 h + waiting 2 h at NGP + train to R 4 h 30 m". The pieces add up to
+ * totalMinutes, the time charged (before rounding up to whole hours).
+ */
+export function returnParts(o: ReturnOption): string[] {
+  const first = o.legs[0];
+  if (!first) return [];
+  const many = o.legs.length > 1;
+  const parts = [`waiting ${hm(o.waitMinutes)}${many ? ` at ${first.from.name}` : ''}`];
+  o.legs.forEach((l, i) => {
+    const before = o.legs[i - 1];
+    if (before) parts.push(`waiting ${hm(minutes(l.depart - before.arrive))} at ${l.from.name}`);
+    const ride = hm(minutes(l.arrive - l.depart));
+    parts.push(many ? `train to ${l.to.name} ${ride}` : `on the train ${ride}`);
+  });
+  return parts;
+}
+
 /* ------------------------------------------------------------- queries ---- */
 
 /**

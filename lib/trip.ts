@@ -23,7 +23,7 @@ import {
   type TripKind,
   type TripPlan,
 } from './outstation';
-import type { ReturnOption } from './rail';
+import { returnParts, type ReturnOption } from './rail';
 import { rupeeRange, rupees, settings, tripRules } from './settings';
 
 /** The picker's value for a place that is not in the list. */
@@ -252,7 +252,12 @@ export function tripTimeline(view: TripView, city: string): { label: string; val
         label: `${o.legs.length > 1 ? `Train ${i + 1}` : 'Train home'}: ${l.train.number} ${l.train.name}`,
         value: `${l.from.name} ${whenText(l.depart)} → ${l.to.name} ${whenText(l.arrive)}`,
       });
-      if (i === 0 && o.transfer) rows.push({ label: `Change at ${o.transfer.station.name}`, value: `${hmText(o.transfer.minutes)} between the trains` });
+      const next = o.legs[i + 1];
+      if (next)
+        rows.push({
+          label: `Waits at ${l.to.name} for train ${i + 2} (counted)`,
+          value: hmText((next.depart - l.arrive) / 60_000),
+        });
     });
     rows.push({ label: `Home in ${city}`, value: `${o.scheduled ? 'about ' : ''}${whenText(o.expectedArrive)}` });
   } else {
@@ -331,7 +336,7 @@ export function estimateLines(view: TripView): { label: string; amount: string }
   const split = !w
     ? ''
     : view.ret
-      ? ` (waiting ${aboutHours(w.wait).replace('about ', '')} + on the train ${aboutHours(w.travel).replace('about ', '')})`
+      ? ` (${returnParts(view.ret).join(' + ')})`
       : ' (typical time, no train confirmed yet)';
   lines.push(
     p.returnHours > 0
