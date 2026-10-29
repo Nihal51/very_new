@@ -13,7 +13,7 @@ import { CheckIcon, CloseIcon } from '@/components/icons';
 import { faqs } from '@/lib/content';
 import { breadcrumbSchema, faqSchema, pricingSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
-import { priceText } from '@/lib/settings';
+import { priceText, settings } from '@/lib/settings';
 
 const trail = [{ name: 'Pricing', path: '/pricing/' }];
 
@@ -94,10 +94,9 @@ export default function PricingPage() {
             <p className="text-fg-subtle mt-6 text-sm">
               Outstation trips and one-way drops: {priceText.outstation} for each{' '}
               {priceText.outstationHours} of driving, and {priceText.outstationExtraHour} for each
-              hour beyond (a shorter drive is all by the hour). After a one-way drop, the
+              hour beyond (more than {settings.outstation.extraFullDayAfterHours} hours beyond = a full day) (a shorter drive is all by the hour). After a one-way drop, the
               driver&apos;s way home — from the drop until he is home, waiting for his train
-              included — is {priceText.outstationReturnHour} an hour, at most{' '}
-              {priceText.outstationReturnMax} a day. Round trips are charged by the days of the
+              included — is {priceText.outstationReturnRule}. Round trips are charged by the days of the
               trip.
               Pick your destination on the booking form for an estimate — or see{' '}
               <Link href="/one-way-drop/" className="text-accent-text font-semibold underline underline-offset-4">

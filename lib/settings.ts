@@ -45,6 +45,8 @@ export const priceText = {
   /** Per hour the driver is still travelling home after the paid days, and the daily maximum. */
   outstationReturnHour: rupees(settings.outstation.returnHour),
   outstationReturnMax: rupees(settings.outstation.returnMaxPerDay),
+  /** "₹120 an hour — more than 6 hours in a day counts as a full day (₹1,200)" */
+  outstationReturnRule: `${rupees(settings.outstation.returnHour)} an hour — more than ${settings.outstation.returnFullDayAfterHours} hours in a day counts as a full day (${rupees(settings.outstation.returnMaxPerDay)})`,
   outstationExtraHour: rupees(settings.outstation.extraHour),
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
   mealAllowance: rupees(settings.outstation.mealAllowance),
@@ -95,6 +97,8 @@ export const tripRules: TripRules = {
   dayRate: { from: p.outstation.from, to: p.outstation.to },
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
+  returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
+  extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,

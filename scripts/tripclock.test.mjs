@@ -29,6 +29,8 @@ const rules = {
   dayRate: { ...settings.prices.outstation },
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
+  returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
+  extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,
@@ -98,7 +100,7 @@ test('the bill so far, then the final bill — Raipur → Bengaluru day and nigh
   assert.deepEqual(billLines(now.bill, rules), [
     { label: '2 days × ₹1,600', amount: '₹3,200' },
     { label: '5 driving hours more × ₹120', amount: '₹600' },
-    { label: 'Driver’s way home: 38 h × ₹120 (max ₹1,200 a day)', amount: '₹2,400' },
+    { label: 'Driver’s way home: 38 h = 2 days × ₹1,200 (1 day + 14 h; more than 6 h left over = a full day)', amount: '₹2,400' },
   ]);
   // What is saved on the booking: the customer's numbers only.
   assert.deepEqual(Object.keys(bookingBill(now.bill, true)).sort(), [

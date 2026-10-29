@@ -49,13 +49,16 @@ export function GET() {
        and the typical way home (lib/outstation.ts destinationTable). The app redoes
        planTrip for the customer's start: each hoursPerDay of driving a day at
        prices.outstation, the rest extraHour an hour; the way home from the
-       drop returnHour an hour, at most returnMaxPerDay in any 24 h. */
+       drop: each 24 h returnMaxPerDay, the hours left over returnHour each up
+       to returnFullDayAfterHours, more = a full day. */
     outstation: {
       hoursPerDay: outstation.hoursPerDay,
       sameDayMaxHours: outstation.sameDayMaxHours,
       extraHour: outstation.extraHour,
       returnHour: outstation.returnHour,
       returnMaxPerDay: outstation.returnMaxPerDay,
+      returnFullDayAfterHours: outstation.returnFullDayAfterHours,
+      extraFullDayAfterHours: outstation.extraFullDayAfterHours,
       mealAllowance: outstation.mealAllowance,
       kmPerDay: outstation.kmPerDay,
       localWithinKm: outstation.localWithinKm,

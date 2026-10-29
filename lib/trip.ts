@@ -14,6 +14,7 @@ import {
   pickupCities,
   pickupStations,
   planTrip,
+  returnWords,
   roadKm,
   withReturn,
   type Destination,
@@ -335,7 +336,7 @@ export function estimateLines(view: TripView): { label: string; amount: string }
   lines.push(
     p.returnHours > 0
       ? {
-          label: `Driver’s way home: ${plural(p.returnHours, 'hour')} from the drop until he is home${split} × ${rupees(tripRules.returnHour)}, max ${rupees(tripRules.returnMaxPerDay)} a day`,
+          label: `Driver’s way home: ${plural(p.returnHours, 'hour')} from the drop until he is home${split} = ${returnWords(p.returnHours, tripRules.returnHour, tripRules.returnMaxPerDay, tripRules.returnFullDayAfter, rupees)}`,
           amount: rupees(view.est.returnCharge),
         }
       : { label: 'Driver’s way home', amount: 'No charge' },

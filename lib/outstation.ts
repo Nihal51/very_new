@@ -25,7 +25,8 @@
  *     train, use the typical hours home as a labelled allowance (decided
  *     29 Oct 2026: no train times are typed into this file).
  *   - The way home (one-way): from the drop until he is home — the waiting
- *     included — returnHour an hour, at most returnMaxPerDay in any 24 hours.
+ *     included — each 24 hours a day (returnMaxPerDay); the hours left over
+ *     returnHour each up to returnFullDayAfter (6), more = a full day.
  *   - Round trips: the days of the trip (the driver is with the customer).
  *   - The customer books and pays for the driver's ticket home. The FINAL bill
  *     uses the real times; the estimate predicts them.
@@ -49,6 +50,18 @@ export type TripRules = {
   returnHour: number;
   /** The most the way home costs in any 24 hours. */
   returnMaxPerDay: number;
+  /**
+   * The way home's hours left over after its full days (24 h each, at
+   * returnMaxPerDay): up to this many are charged by the hour, more count as
+   * a full day (decided 29 Oct 2026: 6).
+   */
+  returnFullDayAfter: number;
+  /**
+   * Driving hours left over after the full days: up to this many at
+   * extraHour, more count as one more full day at dayRate (decided
+   * 29 Oct 2026: 7). A shorter drive than this is all by the hour.
+   */
+  extraFullDayAfter: number;
   /** Customer price per driving hour beyond the full days (or of a drive shorter than a day). */
   extraHour: number;
   /** Driving hours in one outstation day. */
@@ -351,8 +364,10 @@ export function planTrip(
     ? Math.max(1, Math.ceil((lastDayAt - 1e-9) / 24))
     : full + (rest > 1 + 1e-9 || full === 0 ? 1 : 0);
   const extraDays = booked > calendar ? booked - calendar : 0;
-  const fullDays = extraDays > 0 ? booked : full;
-  const extraHours = extraDays > 0 ? 0 : leftover;
+  // More than extraFullDayAfter hours left over: one more full day instead of the hours.
+  const roundUp = leftover > (rules.extraFullDayAfter ?? 24);
+  const fullDays = extraDays > 0 ? booked : full + (roundUp ? 1 : 0);
+  const extraHours = extraDays > 0 || roundUp ? 0 : leftover;
 
   // The way home (the allowance): getting to the station, then the typical hours home.
   const dropAt = lastDayAt + (nonstop ? 0 : extraDays * 24);
@@ -390,11 +405,41 @@ export function withReturn(plan: TripPlan, leaveAt: number, homeAt: number): Tri
   };
 }
 
-/** What `hours` cost at `rate` an hour, at most `maxPerDay` in any 24 hours. */
-export function returnCost(hours: number, rate: number, maxPerDay: number): number {
+/**
+ * The way home's charge in words: "2 days × ₹1,200 (1 day + 14 h; more than
+ * 6 h left over = a full day)", "1 day × ₹1,200 + 5 h × ₹120", "6 h × ₹120".
+ * `money` formats rupees (passed in: this file has no formatting).
+ */
+export function returnWords(
+  hours: number,
+  rate: number,
+  maxPerDay: number,
+  fullDayAfter: number,
+  money: (n: number) => string,
+): string {
+  const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
+  const days = Math.floor(h / 24);
+  const left = h - days * 24;
+  const day = Math.min(24 * rate, maxPerDay);
+  const d = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;
+  if (left > fullDayAfter)
+    return `${d(days + 1)} × ${money(day)} (${days ? `${d(days)} + ` : ''}${left} h; more than ${fullDayAfter} h left over = a full day)`;
+  const parts = [days ? `${d(days)} × ${money(day)}` : null, left ? `${left} h × ${money(rate)}` : null].filter(Boolean);
+  return parts.join(' + ') || 'no charge';
+}
+
+/**
+ * What `hours` of the way home cost: each full 24 hours is a day
+ * (`maxPerDay`); the hours left over are `rate` each up to `fullDayAfter`,
+ * and more than that count as one more day (never more than a day).
+ *   6 → 6 × ₹120 = ₹720;  8 → ₹1,200;  32 → ₹1,200 + ₹1,200;  56 → ₹3,600.
+ */
+export function returnCost(hours: number, rate: number, maxPerDay: number, fullDayAfter = 24): number {
   const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
   const fullDays = Math.floor(h / 24);
-  return fullDays * Math.min(24 * rate, maxPerDay) + Math.min((h - 24 * fullDays) * rate, maxPerDay);
+  const left = h - 24 * fullDays;
+  const day = Math.min(24 * rate, maxPerDay);
+  return fullDays * day + (left > fullDayAfter ? day : Math.min(left * rate, maxPerDay));
 }
 
 /* ----------------------------------------------------------- estimate ---- */
@@ -421,7 +466,7 @@ export function estimate(
     from: plan.fullDays * rules.dayRate.from + extraCharge,
     to: plan.fullDays * rules.dayRate.to + extraCharge,
   };
-  const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay);
+  const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay, rules.returnFullDayAfter);
   return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, extraCharge, returnCharge };
 }
 
@@ -482,9 +527,12 @@ const whole = (n: number) => Math.max(0, Math.round(Number.isFinite(n) ? n : 0))
  */
 export function quote(rules: TripRules, input: QuoteInput): Quote {
   const back = whole(input.returnHours);
-  const hours = whole(input.extraHours);
+  const typedHours = whole(input.extraHours);
+  // More than extraFullDayAfter driving hours left over are one more full day.
+  const roundUp = typedHours > (rules.extraFullDayAfter ?? 24);
+  const hours = roundUp ? 0 : typedHours;
   // 0 full days is a drive shorter than a day, priced by the hour; nothing at all is one day.
-  const days = Math.min(60, whole(input.days) || (hours > 0 ? 0 : 1));
+  const days = Math.min(60, whole(input.days) + (roundUp ? 1 : 0) || (hours > 0 ? 0 : 1));
   const cost = whole(input.driverDayCost);
   const backPay = whole(input.driverReturnHourPay);
   const margin = Math.min(90, Math.max(0, input.minProfitPercent)) / 100;
@@ -497,10 +545,12 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
   const extraHourRate = Math.max(rules.extraHour, roundUpTo(hourCost / keep, 10));
   const returnHourRate = Math.max(rules.returnHour, roundUpTo(backPay / keep, 10));
   const capHours = rules.returnMaxPerDay / rules.returnHour;
-  const returnCharge = returnCost(back, returnHourRate, returnHourRate * capHours);
+  const returnCharge = returnCost(back, returnHourRate, returnHourRate * capHours, rules.returnFullDayAfter);
 
   const charges = days * dayRate + returnCharge + hours * extraHourRate;
-  const driverPay = Math.round(days * cost + returnCost(back, backPay, backPay * capHours) + hours * hourCost);
+  const driverPay = Math.round(
+    days * cost + returnCost(back, backPay, backPay * capHours, rules.returnFullDayAfter) + hours * hourCost,
+  );
   const partnerPay = Math.round(charges * partner);
   const profit = charges - driverPay - partnerPay;
   const profitPercent = charges > 0 ? Math.round((profit / charges) * 1000) / 10 : 0;
@@ -542,21 +592,24 @@ export function chargeHours(minutes: number, graceMinutes: number): number {
  * it is one more day, the rest by the hour.
  */
 export function billDays(
-  rules: Pick<TripRules, 'hoursPerDay'>,
+  rules: Pick<TripRules, 'hoursPerDay'> & Partial<Pick<TripRules, 'extraFullDayAfter'>>,
   minutes: number,
   nonstop: boolean,
   graceMinutes: number,
 ): { days: number; hours: number } {
   const m = Math.max(0, Math.floor(Number.isFinite(minutes) ? minutes : 0));
   const day = rules.hoursPerDay * 60;
+  // More than extraFullDayAfter hours left over: one more full day instead.
+  const after = rules.extraFullDayAfter ?? 24;
+  const round = (days: number, hours: number) => (hours > after ? { days: days + 1, hours: 0 } : { days, hours });
   if (nonstop) {
     const days = Math.floor(m / day);
-    return { days, hours: chargeHours(m - days * day, graceMinutes) };
+    return round(days, chargeHours(m - days * day, graceMinutes));
   }
   const cycles = Math.floor(m / 1440);
   const rest = m - cycles * 1440;
   const more = Math.floor(rest / day);
-  return { days: cycles + more, hours: chargeHours(rest - more * day, graceMinutes) };
+  return round(cycles + more, chargeHours(rest - more * day, graceMinutes));
 }
 
 /** The real times of a trip, epoch milliseconds. */
@@ -631,7 +684,7 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
   const extraCharge = Math.min(hours * extraHourRate, dayRate);
   const returnHours = oneWay ? chargeHours(returnMinutes, input.graceMinutes) : 0;
   const capHours = rules.returnMaxPerDay / rules.returnHour;
-  const returnCharge = returnCost(returnHours, returnHourRate, returnHourRate * capHours);
+  const returnCharge = returnCost(returnHours, returnHourRate, returnHourRate * capHours, rules.returnFullDayAfter);
   return {
     driveMinutes,
     days,
@@ -653,8 +706,8 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
 /**
  * Everything the mobile app needs for its estimate, worked out here once so
  * the app and the website can never disagree: for each destination its
- * regular trains home, and from each pickup city the km, the hours of
- * driving, the average way home (`homeHours`), and — for a 7 AM start on an
+ * railway stations (for the train lookup), and from each pickup city the
+ * km, the hours of driving, the average way home (`homeHours`), and — for a 7 AM start on an
  * unknown day — the calendar days and the hours of the way home; plus the
  * fewest days for a round trip. The app repeats planTrip for the customer's
  * own start (lib/outstation.ts is the reference).
@@ -681,7 +734,10 @@ export function destinationTable(rules: TripRules) {
               days: one.minDays,
               returnHours: one.returnHours,
               driveHours: r3(one.driveHours),
-              homeHours: r3(way.hours ?? 0),
+              // The hours planTrip used (a place without a figure: by bus at busKmh).
+              homeHours: r3(
+                one.homeAt !== undefined && one.leaveAt !== undefined ? one.homeAt - one.leaveAt : (way.hours ?? 0),
+              ),
             },
             roundDays: round.minDays,
           },

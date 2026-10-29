@@ -156,7 +156,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
                 'Hours from the drop until he is home',
                 back,
                 setBack,
-                `His way home, waiting included: ${priceText.outstationReturnHour} each to the customer, max ${priceText.outstationReturnMax} a day. For the final bill, use when he really got home`,
+                `His way home, waiting included: ${priceText.outstationReturnRule}. For the final bill, use when he really got home`,
               )}
             {oneWay &&
               num('Driver’s pay an hour home', returnPay, setReturnPay, `At most ${RETURN_DAY_HOURS} of them in any 24 hours`)}

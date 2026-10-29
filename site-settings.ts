@@ -115,8 +115,10 @@ export const settings = {
     hoursPerDay: 12, //        driving hours in one outstation day
     sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
     extraHour: 120, //         each driving hour beyond the full days (or of a drive shorter than a day)
+    extraFullDayAfterHours: 7, // driving hours left over after the full days: up to this many at extraHour; more = a full day
     returnHour: 120, //        each hour of his way home after a one-way drop (from the drop, waiting included)
-    returnMaxPerDay: 1200, //  the most the way home costs in any 24 hours
+    returnMaxPerDay: 1200, //  a full day of the way home (each 24 hours)
+    returnFullDayAfterHours: 6, // the hours left over after the full days: up to this many by the hour; more = a full day
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 600, //          how far one driver drives in a day (about 12 h at averageKmh)
     averageKmh: 50, //         highway average with stops

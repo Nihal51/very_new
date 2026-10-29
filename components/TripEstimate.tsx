@@ -46,7 +46,7 @@ export function TripEstimate({
 }) {
   const oneWay = view.kind === 'one-way';
   const dayRate = `${priceText.outstation} a day`;
-  const returnRate = `his way home from the drop, ${priceText.outstationReturnHour} an hour (max ${priceText.outstationReturnMax} a day)`;
+  const returnRate = `his way home from the drop, ${priceText.outstationReturnRule}`;
 
   let body: ReactNode;
   if (!city) {
@@ -131,13 +131,16 @@ export function TripEstimate({
         {oneWay ? (
           <ul className="mt-1 list-disc pl-5">
             <li>
-              Driving: every {priceText.outstationHours} of driving is one day ({priceText.outstation}); each hour
-              more is {rupees(tripRules.extraHour)}. A short drive is all by the hour.
+              Driving: every {priceText.outstationHours} of driving is one day ({priceText.outstation}). Hours left
+              over: up to {settings.outstation.extraFullDayAfterHours} are {rupees(tripRules.extraHour)} each; more than{' '}
+              {settings.outstation.extraFullDayAfterHours} count as one more full day. A drive shorter than that is by
+              the hour.
             </li>
             <li>
-              After he hands over the car, every hour until he is home is {priceText.outstationReturnHour} —{' '}
-              <strong>waiting for his train counts too</strong> — at most {priceText.outstationReturnMax} in any 24
-              hours. For example: he drops the car on 2 Oct at 12 PM and his train leaves at 3 PM — that is 3 hours of
+              After he hands over the car, the time until he is home counts — <strong>waiting for his train
+              too</strong>: each 24 hours is {priceText.outstationReturnMax}; the hours left over are{' '}
+              {priceText.outstationReturnHour} each, and more than {settings.outstation.returnFullDayAfterHours} hours
+              count as a full day ({priceText.outstationReturnMax}). So 56 hours = 2 days + 8 hours = 3 days. For example: he drops the car on 2 Oct at 12 PM and his train leaves at 3 PM — that is 3 hours of
               waiting, then the hours on the train until he reaches home.
             </li>
             <li>The final bill uses the real times; a late train adds hours, an early one saves them.</li>

@@ -144,8 +144,10 @@ service cloud.firestore {
         && q.days is int && q.days >= 0 && q.days <= 60 && (q.days >= 1 || q.extraHours >= 1)
         && q.returnHours is int && q.returnHours >= 0 && q.returnHours <= 200
         && q.returnHourRate is int && q.returnHourRate >= 0 && q.returnHourRate <= 10000
-        // The daily maximum can only lower the return charge, never raise it.
-        && q.returnCharge is int && q.returnCharge >= 0 && q.returnCharge <= q.returnHourRate * q.returnHours
+        // The way home: each 24 h a day (10 hours' worth), the hours left over by
+        // the hour or — more than 6 — one more day. Never more than that.
+        && q.returnCharge is int && q.returnCharge >= 0
+        && q.returnCharge <= q.returnHourRate * 10 * (q.returnHours / 24 + 1)
         && q.extraHours is int && q.extraHours >= 0 && q.extraHours <= 200
         && q.extraHourRate is int && q.extraHourRate >= 0 && q.extraHourRate <= 10000
         && q.ticket is int && q.ticket >= 0 && q.ticket <= 100000
@@ -189,7 +191,8 @@ service cloud.firestore {
         && b.extraCharge <= b.extraHourRate * b.extraHours && b.extraCharge <= b.dayRate
         && b.returnHours is int && b.returnHours >= 0 && b.returnHours <= 400
         && b.returnHourRate is int && b.returnHourRate >= 0 && b.returnHourRate <= 10000
-        && b.returnCharge is int && b.returnCharge >= 0 && b.returnCharge <= b.returnHourRate * b.returnHours
+        && b.returnCharge is int && b.returnCharge >= 0
+        && b.returnCharge <= b.returnHourRate * 10 * (b.returnHours / 24 + 1)
         && b.ticket is int && b.ticket >= 0 && b.ticket <= 100000
         && b.nonstop is bool
         && b.amount == b.dayRate * b.days + b.extraCharge + b.returnCharge + b.ticket

@@ -9,7 +9,7 @@
  */
 
 import type { Booking, BookingBill, BookingClock } from './bookings.ts';
-import { finalBill, returnCost, type Bill, type TripKind, type TripRules } from './outstation.ts';
+import { finalBill, returnCost, returnWords, type Bill, type TripKind, type TripRules } from './outstation.ts';
 
 export type TripStep = 'start' | 'drop' | 'home';
 
@@ -220,7 +220,7 @@ export function billLines(
     | 'returnCharge'
     | 'ticket'
   >,
-  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay'>,
+  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): { label: string; amount: string }[] {
   const lines: { label: string; amount: string }[] = [];
   if (b.days > 0)
@@ -238,7 +238,7 @@ export function billLines(
   if (b.returnHours > 0) {
     const max = Math.round((b.returnHourRate * rules.returnMaxPerDay) / rules.returnHour);
     lines.push({
-      label: `Driver’s way home: ${b.returnHours} h × ${rupees(b.returnHourRate)} (max ${rupees(max)} a day)`,
+      label: `Driver’s way home: ${b.returnHours} h = ${returnWords(b.returnHours, b.returnHourRate, max, rules.returnFullDayAfter, rupees)}`,
       amount: rupees(b.returnCharge),
     });
   }
@@ -280,13 +280,13 @@ export function driverPay(
   b: Pick<Bill, 'days' | 'extraHours' | 'returnHours'>,
   dayCost: number,
   returnHourPay: number,
-  rules: Pick<TripRules, 'hoursPerDay' | 'returnHour' | 'returnMaxPerDay'>,
+  rules: Pick<TripRules, 'hoursPerDay' | 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): number {
   const capHours = rules.returnMaxPerDay / rules.returnHour;
   return Math.round(
     b.days * dayCost +
       Math.min((b.extraHours * dayCost) / rules.hoursPerDay, dayCost) +
-      returnCost(b.returnHours, returnHourPay, returnHourPay * capHours),
+      returnCost(b.returnHours, returnHourPay, returnHourPay * capHours, rules.returnFullDayAfter),
   );
 }
 
@@ -314,7 +314,7 @@ export function billMessage(
   b: Pick<Booking, 'name' | 'ref' | 'city'>,
   l: Pick<TripLink, 'to' | 'kind' | 'startAt' | 'dropAt' | 'homeAt'>,
   bill: Bill,
-  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay'>,
+  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): string {
   const rows = [
     `Hi ${firstName(b.name)}, thank you for travelling with DriveBuddy.`,

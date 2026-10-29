@@ -279,6 +279,15 @@ describe('bookings — admin workflow', () => {
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { quote: agreed() }));
   });
 
+  test('the way home: more than 6 h left over is a full day — allowed; more than a day per 24 h is not', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    const db = admin();
+    // 8 h home = a full day, ₹1,200 (more than 8 × ₹120).
+    await assertSucceeds(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ returnHours: 8, returnCharge: 1200, amount: 3 * 1550 + 1200 + 650 }) })));
+    // 8 h can never cost two days.
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: agreed({ returnHours: 8, returnCharge: 2400, amount: 3 * 1550 + 2400 + 650 }) })));
+  });
+
   test('a drive shorter than a day: 0 full days, the driving hours priced by the hour', async () => {
     await seedBooking('b1', { package: 'one-way-drop' });
     const db = admin();

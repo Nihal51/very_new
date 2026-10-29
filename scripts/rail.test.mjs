@@ -321,6 +321,8 @@ const rules = {
   dayRate: { ...settings.prices.outstation },
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
+  returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
+  extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,
@@ -350,7 +352,9 @@ test('a short wait and train: by the hour, under the cap', () => {
   const plan = planTrip(rules, 284, 'one-way', 0, { hours: 5 }, 7); // Nagpur
   const t2 = withReturn(plan, plan.dropAt + 3, plan.dropAt + 7.5); // the user's example: 3 h waiting + 4.5 h train
   assert.equal(t2.returnHours, 8);
-  assert.equal(estimate(rules, t2).returnCharge, 8 * 120);
+  assert.equal(estimate(rules, t2).returnCharge, 1200, 'more than 6 h: a full day');
+  const t3 = withReturn(plan, plan.dropAt + 2, plan.dropAt + 6);
+  assert.equal(estimate(rules, t3).returnCharge, 6 * 120, 'up to 6 h: by the hour');
 });
 
 test('a train that does not get him home after the drop is ignored', () => {

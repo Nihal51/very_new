@@ -362,7 +362,7 @@ export const services: Service[] = [
     ],
     quote: {
       title: 'Charged by the day',
-      body: `${priceText.outstation} for each ${priceText.outstationHours} of driving (about 600 km), and ${priceText.outstationExtraHour} for each hour beyond — a shorter drive is all by the hour. After the drop, his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnHour} an hour, at most ${priceText.outstationReturnMax} a day. Pick the destination and the start date and time on the booking form: the estimate shows when he drops the car, the train he takes home and when he is home; we confirm the exact figure on the call, before the driver sets off.`,
+      body: `${priceText.outstation} for each ${priceText.outstationHours} of driving (about 600 km), and ${priceText.outstationExtraHour} for each hour beyond (more than ${settings.outstation.extraFullDayAfterHours} hours beyond = a full day) — a shorter drive is all by the hour. After the drop, his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. Pick the destination and the start date and time on the booking form: the estimate shows when he drops the car, the train he takes home and when he is home; we confirm the exact figure on the call, before the driver sets off.`,
       factors: [
         'Hours of driving for the distance',
         'His way home, from the drop until he is home',
@@ -379,7 +379,7 @@ export const services: Service[] = [
       },
       {
         q: 'Is the driver’s return journey included in the price?',
-        a: `It is charged by the hour: his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnHour} an hour, at most ${priceText.outstationReturnMax} a day (Raipur → Nagpur, home that evening: about 6 hours). You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
+        a: `It is charged by the hour: his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule} (Raipur → Nagpur, home that evening: about 6 hours). You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
       },
     ],
   },
@@ -497,7 +497,7 @@ export const extraRates = [
   },
   {
     label: 'Driver’s way home after a one-way drop',
-    detail: `From the drop until he is home, waiting included; max ${priceText.outstationReturnMax} a day. You book his ticket`,
+    detail: `From the drop until he is home, waiting included; more than ${settings.outstation.returnFullDayAfterHours} h in a day = a full day (${priceText.outstationReturnMax}). You book his ticket`,
     price: `${priceText.outstationReturnHour}/hour`,
   },
   {
@@ -829,7 +829,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can a driver take my car to another city one way?',
-    a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back by bus or train. You pay ${priceText.outstation} for each ${priceText.outstationHours} of driving and ${priceText.outstationExtraHour} for each hour beyond, plus his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnHour} an hour, at most ${priceText.outstationReturnMax} a day. You book his ticket home. The booking form shows the estimate.`,
+    a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back by bus or train. You pay ${priceText.outstation} for each ${priceText.outstationHours} of driving and ${priceText.outstationExtraHour} for each hour beyond (more than ${settings.outstation.extraFullDayAfterHours} hours beyond = a full day), plus his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. You book his ticket home. The booking form shows the estimate.`,
   },
   {
     q: 'Do you serve places outside Raipur, Bhilai, Durg and Bilaspur?',

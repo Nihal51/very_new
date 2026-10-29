@@ -18,7 +18,7 @@ import { DEFAULT_START_HOUR } from '@/lib/outstation';
 
 const trail = [{ name: 'One-Way Drop', path: '/one-way-drop/' }];
 const perDriveDay = `${priceText.outstation} for each ${priceText.outstationHours} of driving`;
-const late = `${priceText.outstationReturnHour} an hour, at most ${priceText.outstationReturnMax} a day`;
+const late = priceText.outstationReturnRule;
 
 export const metadata: Metadata = pageMeta({
   title: 'One-Way Drop Driver: You & Your Car to Any City',

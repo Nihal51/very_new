@@ -44,10 +44,14 @@ export type SiteSettings = {
     /** A round trip with up to this many hours of driving there and back is back within the 24 hours: one day. */
     sameDayMaxHours: number;
     extraHour: number;
+    /** Driving hours left over after the full days: more than this count as a full day. */
+    extraFullDayAfterHours: number;
     /** Per hour the driver is still travelling home after the paid days. */
     returnHour: number;
     /** The most return hours cost in any 24 hours. */
     returnMaxPerDay: number;
+    /** Way home: the hours left over after full days — more than this counts as a full day. */
+    returnFullDayAfterHours: number;
     /** Per day, if the customer does not give the driver his meals. */
     mealAllowance: number;
     kmPerDay: number;
@@ -168,6 +172,7 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   price('outstation.extraHour', o.extraHour);
   price('outstation.returnHour', o.returnHour);
   price('outstation.returnMaxPerDay', o.returnMaxPerDay);
+  count('outstation.returnFullDayAfterHours', o.returnFullDayAfterHours, 23);
   if (o.returnMaxPerDay < o.returnHour)
     problems.push('outstation.returnMaxPerDay must be at least one returnHour');
   price('outstation.mealAllowance', o.mealAllowance);
@@ -179,6 +184,9 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   if (o.busKmh < 20) problems.push('outstation.busKmh must be at least 20');
   count('outstation.stationHours', o.stationHours, 6);
   count('outstation.graceMinutes', o.graceMinutes, 59);
+  count('outstation.extraFullDayAfterHours', o.extraFullDayAfterHours, 23);
+  if (o.extraFullDayAfterHours >= o.hoursPerDay)
+    problems.push('outstation.extraFullDayAfterHours must be less than hoursPerDay');
   const tr = s.trains;
   if (tr.lookupUrl && !/^https:\/\/script\.google(usercontent)?\.com\//.test(tr.lookupUrl))
     problems.push('trains.lookupUrl must be the alerts robot’s web app address (https://script.google.com/…/exec) or empty');
