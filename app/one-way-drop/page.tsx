@@ -90,6 +90,7 @@ const steps = [
 const included = [
   'A police-verified, sober, highway-experienced driver',
   `${priceText.outstation} for each ${priceText.outstationHours} of driving, ${priceText.outstationExtraHour} an hour beyond`,
+  `A drive shorter than a day: ${priceText.shortDrive}`,
   'The estimate times his train home from your start date and time',
   'Ride along or send the car alone — the same price',
 ];

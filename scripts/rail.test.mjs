@@ -332,6 +332,12 @@ test('the client: one GET per batch, a time limit, and answers remembered for th
 const rules = {
   dayRate: { ...settings.prices.outstation },
   nearRates: settings.prices.outstationNear,
+  shortDrive: {
+    firstHours: settings.outstation.shortDriveFirstHours,
+    firstPrice: settings.prices.threeHours,
+    localDayAfter: settings.outstation.shortDriveLocalDayAfterHours,
+    localDay: { ...settings.prices.fullDay },
+  },
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,

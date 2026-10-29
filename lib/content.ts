@@ -362,7 +362,7 @@ export const services: Service[] = [
     ],
     quote: {
       title: 'Charged by the day',
-      body: `${priceText.outstation} for each ${priceText.outstationHours} of driving (about 600 km), and ${priceText.outstationExtraHour} for each hour beyond (more than ${settings.outstation.extraFullDayAfterHours} hours beyond = a full day) — a shorter drive is all by the hour. After the drop, his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. Pick the destination and the start date and time on the booking form: the estimate shows when he drops the car, the train he takes home and when he is home; we confirm the exact figure on the call, before the driver sets off.`,
+      body: `${priceText.outstation} for each ${priceText.outstationHours} of driving (about 600 km), and ${priceText.outstationExtraHour} for each hour beyond (more than ${settings.outstation.extraFullDayAfterHours} hours beyond = a full day). A shorter drive: ${priceText.shortDrive}. After the drop, his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. Pick the destination and the start date and time on the booking form: the estimate shows when he drops the car, the train he takes home and when he is home; we confirm the exact figure on the call, before the driver sets off.`,
       factors: [
         'Hours of driving for the distance',
         'His way home, from the drop until he is home',
@@ -830,7 +830,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can a driver take my car to another city one way?',
-    a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back by bus or train. You pay ${priceText.outstation} for each ${priceText.outstationHours} of driving and ${priceText.outstationExtraHour} for each hour beyond (more than ${settings.outstation.extraFullDayAfterHours} hours beyond = a full day), plus his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. You book his ticket home. The booking form shows the estimate.`,
+    a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back by bus or train. You pay ${priceText.outstation} for each ${priceText.outstationHours} of driving and ${priceText.outstationExtraHour} for each hour beyond (more than ${settings.outstation.extraFullDayAfterHours} hours beyond = a full day) — a shorter drive: ${priceText.shortDrive} — plus his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. You book his ticket home. The booking form shows the estimate.`,
   },
   {
     q: 'Do you serve places outside Raipur, Bhilai, Durg and Bilaspur?',

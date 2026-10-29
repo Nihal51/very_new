@@ -76,6 +76,8 @@ export type BookingQuote = {
   returnCharge: number;
   extraHours: number;
   extraHourRate: number;
+  /** The extra hours' charge (quotes from 29 Oct 2026): a drive shorter than a day at the short-drive price. Missing: extraHours × extraHourRate. */
+  extraCharge?: number;
   ticket: number;
   at?: Date;
 };

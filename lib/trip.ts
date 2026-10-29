@@ -17,6 +17,7 @@ import {
   returnWords,
   dayRateFor,
   roadKm,
+  shortDriveWords,
   withReturn,
   type Destination,
   type Estimate,
@@ -328,7 +329,13 @@ export function estimateLines(view: TripView): { label: string; amount: string }
       label: `${plural(p.fullDays, 'driving day')} (${tripRules.hoursPerDay} h each) × ${rate}`,
       amount: rupeeRange(p.fullDays * day.from, p.fullDays * day.to),
     });
-  if (p.extraHours > 0)
+  if (p.fullDays === 0 && p.extraHours > 0 && tripRules.shortDrive)
+    // A drive shorter than a day: ₹600 for 3 h, then by the hour, more than 6 h a local full day.
+    lines.push({
+      label: shortDriveWords(tripRules, p.extraHours, rupees),
+      amount: rupeeRange(view.est.driving.from, view.est.driving.to),
+    });
+  else if (p.extraHours > 0)
     lines.push({
       label: `${plural(p.extraHours, 'driving hour')}${p.fullDays > 0 ? ' more' : ''} × ${rupees(tripRules.extraHour)}`,
       amount: rupees(view.est.extraCharge),
@@ -365,7 +372,11 @@ export function notIncluded(view: TripView): string[] {
 export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
   return [
     q.days > 0 ? `${rupees(q.dayRate)} × ${plural(q.days, 'day')}` : null,
-    q.extraHours > 0 ? `${rupees(q.extraHourRate)} × ${plural(q.extraHours, 'extra hour')}` : null,
+    q.extraHours > 0
+      ? q.days === 0 && q.extraCharge !== undefined && q.extraCharge !== q.extraHours * q.extraHourRate
+        ? `${rupees(q.extraCharge)} for ${q.extraHours} h of driving`
+        : `${rupees(q.extraHourRate)} × ${plural(q.extraHours, 'extra hour')}`
+      : null,
     q.returnHours > 0 ? `${rupees(q.returnCharge)} way home (${q.returnHours} h)` : null,
     q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
   ]

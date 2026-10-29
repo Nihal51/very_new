@@ -136,7 +136,7 @@ service cloud.firestore {
     // admin-only timeline, never here.
     function isQuote(q) {
       return q is map
-        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'ticket', 'at'])
+        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'extraCharge', 'ticket', 'at'])
         && q.keys().hasAll(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'ticket', 'at'])
         && q.amount is int && q.amount > 0 && q.amount <= 1000000
         && q.dayRate is int && q.dayRate > 0 && q.dayRate <= 100000
@@ -150,8 +150,13 @@ service cloud.firestore {
         && q.returnCharge <= q.returnHourRate * 10 * (q.returnHours / 24 + 1)
         && q.extraHours is int && q.extraHours >= 0 && q.extraHours <= 200
         && q.extraHourRate is int && q.extraHourRate >= 0 && q.extraHourRate <= 10000
+        // The extra hours' charge (newer quotes): hours × rate, or — a one-way
+        // drive shorter than a day — the short-drive price (₹600 for 3 h, …),
+        // never more than a day. Older quotes leave it out: hours × rate.
+        && (!('extraCharge' in q) || (q.extraCharge is int && q.extraCharge >= 0
+              && (q.extraCharge <= q.extraHourRate * q.extraHours || (q.days == 0 && q.extraCharge <= q.dayRate))))
         && q.ticket is int && q.ticket >= 0 && q.ticket <= 100000
-        && q.amount == q.dayRate * q.days + q.returnCharge + q.extraHourRate * q.extraHours + q.ticket
+        && q.amount == q.dayRate * q.days + q.returnCharge + q.get('extraCharge', q.extraHourRate * q.extraHours) + q.ticket
         && q.at == request.time;
     }
 
@@ -186,9 +191,10 @@ service cloud.firestore {
         && b.days is int && b.days >= 0 && b.days <= 60 && (b.days >= 1 || b.extraHours >= 1)
         && b.extraHours is int && b.extraHours >= 0 && b.extraHours <= 200
         && b.extraHourRate is int && b.extraHourRate >= 0 && b.extraHourRate <= 10000
-        // Never more than hours × rate, and never more than one more day.
+        // Never more than hours × rate — except a one-way drive shorter than a
+        // day, priced in steps (₹600 for 3 h, …) — and never more than one day.
         && b.extraCharge is int && b.extraCharge >= 0
-        && b.extraCharge <= b.extraHourRate * b.extraHours && b.extraCharge <= b.dayRate
+        && (b.extraCharge <= b.extraHourRate * b.extraHours || b.days == 0) && b.extraCharge <= b.dayRate
         && b.returnHours is int && b.returnHours >= 0 && b.returnHours <= 400
         && b.returnHourRate is int && b.returnHourRate >= 0 && b.returnHourRate <= 10000
         && b.returnCharge is int && b.returnCharge >= 0

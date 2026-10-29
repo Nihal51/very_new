@@ -298,6 +298,21 @@ describe('bookings — admin workflow', () => {
     await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: { ...short, extraHours: 0, amount: 720 } })));
   });
 
+  test('a drive shorter than a day at the short-drive price: ₹600 for 3 h, then ₹120 an hour (29 Oct 2026)', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    const db = admin();
+    const save = (q) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: q }));
+    // Raipur → Nagpur: 6 h of driving = ₹600 + 3 × ₹120 = ₹960, plus 6 h home (₹720).
+    const short = agreed({ days: 0, extraHours: 6, extraCharge: 960, returnHours: 6, returnCharge: 720, ticket: 0, amount: 960 + 720 });
+    await assertSucceeds(save(short));
+    // The amount must use that charge, not hours × rate…
+    await assertFails(save({ ...short, amount: 6 * 120 + 720 }));
+    // …never more than a day…
+    await assertFails(save({ ...short, extraCharge: 1600, amount: 1600 + 720 }));
+    // …and with full days, the extra hours stay hours × rate.
+    await assertFails(save(agreed({ extraHours: 2, extraCharge: 600, amount: 3 * 1550 + 1200 + 600 + 650 })));
+  });
+
   test('customers and guests cannot change a booking', async () => {
     await seedBooking('b1', { customerUid: 'cust1' });
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { status: 'cancelled' }));
@@ -428,6 +443,9 @@ describe('trip links and the final bill', () => {
     const save = (b) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ bill: b }));
     await assertFails(save(finalBill({ amount: 9999 })));
     await assertFails(save(finalBill({ extraCharge: 700, amount: 3200 + 700 + 2400 })));
+    // A one-way drive shorter than a day is priced in steps: 3 h = ₹600 (more than 3 × ₹120).
+    await assertSucceeds(save(finalBill({ days: 0, dayRate: 1300, extraHours: 3, extraCharge: 600, returnHours: 3, returnCharge: 360, amount: 600 + 360 })));
+    await assertFails(save(finalBill({ days: 0, dayRate: 1300, extraHours: 3, extraCharge: 1400, returnHours: 3, returnCharge: 360, amount: 1400 + 360 })));
     await assertFails(save(finalBill({ extraHours: 20, extraCharge: 2400, amount: 3200 + 2400 + 2400 })));
     await assertFails(save(finalBill({ returnCharge: 5000, amount: 3200 + 600 + 5000 })));
     await assertFails(save(finalBill({ driverPay: 4000 })));

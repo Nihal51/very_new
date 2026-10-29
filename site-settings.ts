@@ -108,8 +108,10 @@ export const settings = {
      How the trip estimate is worked out on the booking form and in the app.
      The customer picks a destination and the start date and time. One-way:
      each hoursPerDay of driving (about kmPerDay) is a day at
-     prices.outstation, each hour left over extraHour (a shorter drive: all by
-     the hour). From the start the site works out when he drops the car (12 h
+     prices.outstation, each hour left over extraHour. A drive shorter than a
+     day: the first shortDriveFirstHours at prices.threeHours, then extraHour
+     an hour, and more than shortDriveLocalDayAfterHours = a local full day
+     (prices.fullDay). From the start the site works out when he drops the car (12 h
      driving and 12 of rest, or day and night if the customer asks), the
      first regular train/bus home he can catch that day and when he is home;
      that way home, the waiting included, is returnHour an hour, at most
@@ -122,6 +124,8 @@ export const settings = {
     sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
     extraHour: 120, //         each driving hour beyond the full days (or of a drive shorter than a day)
     extraFullDayAfterHours: 7, // driving hours left over after the full days: up to this many at extraHour; more = a full day
+    shortDriveFirstHours: 3, //   a one-way drive shorter than a day: up to this many hours = prices.threeHours (₹600), then extraHour each
+    shortDriveLocalDayAfterHours: 6, // …and more than this many hours of driving = a local full day (prices.fullDay)
     returnHour: 120, //        each hour of his way home after a one-way drop (from the drop, waiting included)
     returnMaxPerDay: 1200, //  a full day of the way home (each 24 hours)
     returnFullDayAfterHours: 6, // the hours left over after the full days: up to this many by the hour; more = a full day

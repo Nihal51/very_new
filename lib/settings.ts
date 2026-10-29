@@ -55,6 +55,8 @@ export const priceText = {
   /** "₹120 an hour — more than 6 hours in a day counts as a full day (₹1,200)" */
   outstationReturnRule: `${rupees(settings.outstation.returnHour)} an hour — more than ${settings.outstation.returnFullDayAfterHours} hours in a day counts as a full day (${rupees(settings.outstation.returnMaxPerDay)})`,
   outstationExtraHour: rupees(settings.outstation.extraHour),
+  /** "₹600 for up to 3 hours of driving, then ₹120 an hour; more than 6 hours = a local full day (₹1,000–1,200)" */
+  shortDrive: `${rupees(p.threeHours)} for up to ${settings.outstation.shortDriveFirstHours} hours of driving, then ${rupees(settings.outstation.extraHour)} an hour; more than ${settings.outstation.shortDriveLocalDayAfterHours} hours = a local full day (${rupeeRange(p.fullDay.from, p.fullDay.to)})`,
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
   mealAllowance: rupees(settings.outstation.mealAllowance),
   nightFrom: rupees(p.nightFrom),
@@ -108,6 +110,12 @@ export const tripRules: TripRules = {
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
   extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
+  shortDrive: {
+    firstHours: settings.outstation.shortDriveFirstHours,
+    firstPrice: p.threeHours,
+    localDayAfter: settings.outstation.shortDriveLocalDayAfterHours,
+    localDay: { from: p.fullDay.from, to: p.fullDay.to },
+  },
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,
   kmPerDay: settings.outstation.kmPerDay,

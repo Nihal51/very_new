@@ -136,8 +136,8 @@ export function TripEstimate({
             <li>
               Driving: every {priceText.outstationHours} of driving is one day ({dayText}). Hours left
               over: up to {settings.outstation.extraFullDayAfterHours} are {rupees(tripRules.extraHour)} each; more than{' '}
-              {settings.outstation.extraFullDayAfterHours} count as one more full day. A drive shorter than that is by
-              the hour.
+              {settings.outstation.extraFullDayAfterHours} count as one more full day. A drive shorter than a day:{' '}
+              {priceText.shortDrive}.
             </li>
             <li>
               After he hands over the car, the time until he is home counts — <strong>waiting for his train

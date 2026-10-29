@@ -95,7 +95,7 @@ export default function PricingPage() {
               Outstation round trips, by how far the place is from your city: {priceText.outstationByDistance}.
               One-way drops: {priceText.outstation} for each{' '}
               {priceText.outstationHours} of driving, and {priceText.outstationExtraHour} for each
-              hour beyond (more than {settings.outstation.extraFullDayAfterHours} hours beyond = a full day) (a shorter drive is all by the hour). After a one-way drop, the
+              hour beyond (more than {settings.outstation.extraFullDayAfterHours} hours beyond = a full day); a shorter drive: {priceText.shortDrive}. After a one-way drop, the
               driver&apos;s way home — from the drop until he is home, waiting for his train
               included — is {priceText.outstationReturnRule}. Round trips are charged by the days of the
               trip, at the day price for the distance.

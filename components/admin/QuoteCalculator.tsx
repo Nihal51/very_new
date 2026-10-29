@@ -75,6 +75,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
     returnCharge: q.returnCharge,
     extraHours: int(extraHours),
     extraHourRate: q.extraHourRate,
+    extraCharge: q.extraCharge,
     ticket: int(ticket),
   };
 
@@ -167,7 +168,9 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
               'Extra driving hours',
               extraHours,
               setExtraHours,
-              oneWay ? `Beyond the full days (or the whole of a shorter drive), ${priceText.outstationExtraHour} each` : `Beyond ${priceText.outstationHours} a day`,
+              oneWay
+                ? `Beyond the full days, ${priceText.outstationExtraHour} each. A drive shorter than a day (0 full days): ${priceText.shortDrive}`
+                : `Beyond ${priceText.outstationHours} a day`,
             )}
             {oneWay && num('Ticket, if we bought it', ticket, setTicket, 'Usually 0 — the customer books it. Passed on at cost')}
           </div>

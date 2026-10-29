@@ -50,6 +50,10 @@ export type SiteSettings = {
     extraHour: number;
     /** Driving hours left over after the full days: more than this count as a full day. */
     extraFullDayAfterHours: number;
+    /** A one-way drive shorter than a day: up to this many hours cost prices.threeHours, then extraHour each. */
+    shortDriveFirstHours: number;
+    /** …and more than this many hours of driving cost a local full day (prices.fullDay). */
+    shortDriveLocalDayAfterHours: number;
     /** Per hour the driver is still travelling home after the paid days. */
     returnHour: number;
     /** The most return hours cost in any 24 hours. */
@@ -203,6 +207,16 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   count('outstation.stationHours', o.stationHours, 6);
   count('outstation.graceMinutes', o.graceMinutes, 59);
   count('outstation.extraFullDayAfterHours', o.extraFullDayAfterHours, 23);
+  count('outstation.shortDriveFirstHours', o.shortDriveFirstHours, 12);
+  if (o.shortDriveFirstHours < 1) problems.push('outstation.shortDriveFirstHours must be at least 1');
+  count('outstation.shortDriveLocalDayAfterHours', o.shortDriveLocalDayAfterHours, 12);
+  if (o.shortDriveLocalDayAfterHours < o.shortDriveFirstHours)
+    problems.push('outstation.shortDriveLocalDayAfterHours must be at least shortDriveFirstHours');
+  // The steps must only go up: the last hourly step stays below the local full day.
+  if (s.prices.threeHours + (o.shortDriveLocalDayAfterHours - o.shortDriveFirstHours) * o.extraHour > s.prices.fullDay.from)
+    problems.push(
+      'a short one-way drive would cost more just before shortDriveLocalDayAfterHours than the local full day after it — lower extraHour or shortDriveLocalDayAfterHours, or raise prices.fullDay.from',
+    );
   if (o.extraFullDayAfterHours >= o.hoursPerDay)
     problems.push('outstation.extraFullDayAfterHours must be less than hoursPerDay');
   const tr = s.trains;

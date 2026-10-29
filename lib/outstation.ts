@@ -71,8 +71,16 @@ export type TripRules = {
    * 29 Oct 2026: 7). A shorter drive than this is all by the hour.
    */
   extraFullDayAfter: number;
-  /** Customer price per driving hour beyond the full days (or of a drive shorter than a day). */
+  /** Customer price per driving hour beyond the full days (and after the first hours of a short drive). */
   extraHour: number;
+  /**
+   * A one-way drive shorter than a day (decided 29 Oct 2026): up to
+   * `firstHours` cost `firstPrice` (the 3-hour package, ₹600), each hour after
+   * that extraHour, and more than `localDayAfter` hours a local full day
+   * (`localDay`, ₹1,000–1,200). Left out: the whole drive at extraHour.
+   * His way home is charged on top, as for every one-way drop.
+   */
+  shortDrive?: { firstHours: number; firstPrice: number; localDayAfter: number; localDay: { from: number; to: number } };
   /** Driving hours in one outstation day. */
   hoursPerDay: number;
   /** A round trip with up to this many hours of driving in all is back within the 24 hours: one day. */
@@ -275,6 +283,48 @@ export function dayRateFor(rules: Pick<TripRules, 'dayRate' | 'nearRates'>, km: 
   return tier ? { from: tier.from, to: tier.to } : { from: rules.dayRate.from, to: rules.dayRate.to };
 }
 
+/**
+ * The driving charge of a one-way drive shorter than a day (`hours` whole
+ * hours, no full days), as a range: up to firstHours the 3-hour package,
+ * then `hourRate` an hour, and more than localDayAfter a local full day.
+ *   1–3 h → ₹600; 5 h → ₹600 + 2 × ₹120 = ₹840; 6 h → ₹960; 7 h → ₹1,000–1,200.
+ * `hourRate`: extraHour, or the agreed rate on a quote or bill. Without
+ * rules.shortDrive (older settings): hours × hourRate.
+ */
+export function shortDriveCharge(
+  rules: Pick<TripRules, 'extraHour' | 'shortDrive'>,
+  hours: number,
+  hourRate: number = rules.extraHour,
+): { from: number; to: number } {
+  const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
+  const s = rules.shortDrive;
+  if (h === 0) return { from: 0, to: 0 };
+  if (!s) return { from: h * hourRate, to: h * hourRate };
+  if (h > s.localDayAfter) return { from: s.localDay.from, to: s.localDay.to };
+  const n = s.firstPrice + Math.max(0, h - s.firstHours) * hourRate;
+  return { from: n, to: n };
+}
+
+/**
+ * A short drive's charge in words: "3 h of driving: up to 3 h = ₹600",
+ * "5 h of driving: ₹600 for the first 3 h + 2 h × ₹120", "7 h of driving:
+ * more than 6 h = a local full day". `money` formats rupees.
+ */
+export function shortDriveWords(
+  rules: Pick<TripRules, 'extraHour' | 'shortDrive'>,
+  hours: number,
+  money: (n: number) => string,
+  hourRate: number = rules.extraHour,
+): string {
+  const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
+  const s = rules.shortDrive;
+  if (!s) return `${h} driving ${h === 1 ? 'hour' : 'hours'} × ${money(hourRate)}`;
+  if (h <= s.firstHours) return `${h} h of driving: up to ${s.firstHours} h = ${money(s.firstPrice)}`;
+  if (h <= s.localDayAfter)
+    return `${h} h of driving: ${money(s.firstPrice)} for the first ${s.firstHours} h + ${h - s.firstHours} h × ${money(hourRate)}`;
+  return `${h} h of driving: more than ${s.localDayAfter} h = a local full day`;
+}
+
 /** Hours of driving for a distance, at averageKmh. */
 export const driveHours = (rules: Pick<TripRules, 'averageKmh'>, km: number) => km / rules.averageKmh;
 
@@ -475,7 +525,7 @@ export type Estimate = {
   to: number;
   /** The full days at dayRate, plus the extra driving hours. */
   driving: Money;
-  /** The extra driving hours alone. */
+  /** The extra driving hours alone (a drive shorter than a day: its whole charge, the low end). */
   extraCharge: number;
   /** The way home (one-way). */
   returnCharge: number;
@@ -487,11 +537,12 @@ export function estimate(
   plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'> & Partial<Pick<TripPlan, 'km'>>,
 ): Estimate {
   const rate = dayRateFor(rules, plan.km);
-  const extraCharge = plan.extraHours * rules.extraHour;
-  const driving = {
-    from: plan.fullDays * rate.from + extraCharge,
-    to: plan.fullDays * rate.to + extraCharge,
-  };
+  // A one-way drive shorter than a day: the 3-hour package, then by the hour, then a local day.
+  const short = plan.fullDays === 0 ? shortDriveCharge(rules, plan.extraHours) : undefined;
+  const extraCharge = short ? short.from : plan.extraHours * rules.extraHour;
+  const driving = short
+    ? short
+    : { from: plan.fullDays * rate.from + extraCharge, to: plan.fullDays * rate.to + extraCharge };
   const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay, rules.returnFullDayAfter);
   return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, extraCharge, returnCharge };
 }
@@ -525,6 +576,8 @@ export type Quote = {
   days: number;
   /** Customer price per hour of the way home: the driver's pay plus the profit, never below returnHour. */
   returnHourRate: number;
+  /** The extra driving hours: hours × extraHourRate, but a drive shorter than a day never below the short-drive price. */
+  extraCharge: number;
   /** The way home, to the customer, with the daily maximum. */
   returnCharge: number;
   extraHourRate: number;
@@ -575,7 +628,10 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
   const capHours = rules.returnMaxPerDay / rules.returnHour;
   const returnCharge = returnCost(back, returnHourRate, returnHourRate * capHours, rules.returnFullDayAfter);
 
-  const charges = days * dayRate + returnCharge + hours * extraHourRate;
+  // A drive shorter than a day never costs less than customers were shown (₹600 for 3 h, …).
+  const short = days === 0 && hours > 0 ? shortDriveCharge(rules, hours) : undefined;
+  const extraCharge = Math.max(hours * extraHourRate, short?.from ?? 0);
+  const charges = days * dayRate + returnCharge + extraCharge;
   const driverPay = Math.round(
     days * cost + returnCost(back, backPay, backPay * capHours, rules.returnFullDayAfter) + hours * hourCost,
   );
@@ -588,6 +644,7 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
     returnHourRate,
     returnCharge,
     extraHourRate,
+    extraCharge,
     charges,
     total: charges + whole(input.ticket),
     driverPay,
@@ -595,7 +652,10 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
     profit,
     profitPercent,
     ok: profitPercent + 1e-9 >= input.minProfitPercent,
-    aboveShownRange: dayRate > dayRateFor(rules, input.km).to || (back > 0 && returnHourRate > rules.returnHour),
+    aboveShownRange:
+      (days > 0 && dayRate > dayRateFor(rules, input.km).to) ||
+      (short !== undefined && extraCharge > short.to) ||
+      (back > 0 && returnHourRate > rules.returnHour),
   };
 }
 
@@ -709,7 +769,11 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
   const extraHourRate = whole(input.extraHourRate);
   const returnHourRate = whole(input.returnHourRate);
   const ticket = whole(input.ticket);
-  const extraCharge = Math.min(hours * extraHourRate, dayRate);
+  // One-way, shorter than a day: the short-drive steps (₹600 for 3 h, …) at the agreed hourly rate.
+  const extraCharge =
+    oneWay && days === 0 && hours > 0
+      ? Math.min(shortDriveCharge(rules, hours, extraHourRate).from, dayRate)
+      : Math.min(hours * extraHourRate, dayRate);
   const returnHours = oneWay ? chargeHours(returnMinutes, input.graceMinutes) : 0;
   const capHours = rules.returnMaxPerDay / rules.returnHour;
   const returnCharge = returnCost(returnHours, returnHourRate, returnHourRate * capHours, rules.returnFullDayAfter);

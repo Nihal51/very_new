@@ -9,7 +9,16 @@
  */
 
 import type { Booking, BookingBill, BookingClock } from './bookings.ts';
-import { dayRateFor, finalBill, returnCost, returnWords, type Bill, type TripKind, type TripRules } from './outstation.ts';
+import {
+  dayRateFor,
+  finalBill,
+  returnCost,
+  returnWords,
+  shortDriveWords,
+  type Bill,
+  type TripKind,
+  type TripRules,
+} from './outstation.ts';
 
 export type TripStep = 'start' | 'drop' | 'home';
 
@@ -220,7 +229,7 @@ export function billLines(
     | 'returnCharge'
     | 'ticket'
   >,
-  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
+  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'> & Partial<Pick<TripRules, 'shortDrive'>>,
 ): { label: string; amount: string }[] {
   const lines: { label: string; amount: string }[] = [];
   if (b.days > 0)
@@ -228,7 +237,13 @@ export function billLines(
       label: `${plural(b.days, 'day')} × ${rupees(b.dayRate)}`,
       amount: rupees(b.days * b.dayRate),
     });
-  if (b.extraHours > 0)
+  if (b.extraHours > 0 && b.days === 0 && rules.shortDrive)
+    // A one-way drive shorter than a day: ₹600 for 3 h, then by the hour, then a local day.
+    lines.push({
+      label: shortDriveWords({ extraHour: b.extraHourRate, shortDrive: rules.shortDrive }, b.extraHours, rupees),
+      amount: rupees(b.extraCharge),
+    });
+  else if (b.extraHours > 0)
     lines.push({
       label:
         `${plural(b.extraHours, 'driving hour')} more × ${rupees(b.extraHourRate)}` +
@@ -256,7 +271,11 @@ export function billBreakdown(
 ): string {
   return [
     b.days > 0 ? `${rupees(b.dayRate)} × ${plural(b.days, 'day')}` : null,
-    b.extraHours > 0 ? `${rupees(b.extraCharge)} for ${plural(b.extraHours, 'extra hour')}` : null,
+    b.extraHours > 0
+      ? b.days === 0
+        ? `${rupees(b.extraCharge)} for ${b.extraHours} h of driving`
+        : `${rupees(b.extraCharge)} for ${plural(b.extraHours, 'extra hour')}`
+      : null,
     b.returnHours > 0 ? `${rupees(b.returnCharge)} way home (${b.returnHours} h)` : null,
     b.ticket > 0 ? `${rupees(b.ticket)} ticket` : null,
   ]
