@@ -28,12 +28,8 @@ import { settings } from '../site-settings.ts';
 const rules = {
   dayRate: { ...settings.prices.outstation },
   nearRates: settings.prices.outstationNear,
-  shortDrive: {
-    firstHours: settings.outstation.shortDriveFirstHours,
-    firstPrice: settings.prices.threeHours,
-    localDayAfter: settings.outstation.shortDriveLocalDayAfterHours,
-    localDay: { ...settings.prices.fullDay },
-  },
+  shortDrive: { minimum: settings.outstation.shortDriveMinimum },
+
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
@@ -124,13 +120,13 @@ test('the bill so far, then the final bill — Raipur → Bengaluru day and nigh
   assert.match(msg, /Total: ₹6,200$/);
 });
 
-test('a short one-way drop: ₹600 for the first 3 h of driving, then his way home by the hour', () => {
+test('a short one-way drop: at least ₹600 for the driving, then his way home by the hour', () => {
   const rates = billRates(null, rules, 113); // Raipur → Bilaspur, no agreed price yet
   const l = { kind: 'one-way', nonstop: false, to: 'Bilaspur', startAt: ist('2026-11-02T07:00'), dropAt: ist('2026-11-02T09:40'), homeAt: ist('2026-11-02T12:40') };
   const { bill } = billNow(l, rates, rules, GRACE, Date.now());
   assert.deepEqual([bill.days, bill.extraHours, bill.extraCharge, bill.returnHours, bill.returnCharge, bill.amount], [0, 3, 600, 3, 360, 960]);
   assert.deepEqual(billLines(bill, rules), [
-    { label: '3 h of driving: up to 3 h = ₹600', amount: '₹600' },
+    { label: '3 h of driving: the minimum, ₹600', amount: '₹600' },
     { label: 'Driver’s way home: 3 h = 3 h × ₹120', amount: '₹360' },
   ]);
   assert.equal(billBreakdown(bill), '₹600 for 3 h of driving + ₹360 way home (3 h)');

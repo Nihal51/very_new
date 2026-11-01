@@ -23,20 +23,16 @@ full days × the day price              each hoursPerDay (12 h, ~600 km) of driv
                                        (more than 6 h left over: a day)
 ```
 
-**A drive shorter than a day** (decided 29 Oct 2026) is priced in steps,
-and his way home is added on top as above:
-
-| Hours of driving | Driving charge |
-| --- | --- |
-| up to 3 (`shortDriveFirstHours`) | ₹600 (`prices.threeHours`) |
-| 4–6 (`shortDriveLocalDayAfterHours`) | ₹600 + ₹120 (`extraHour`) for each hour after 3 |
-| 7 | a local full day, ₹1,000–1,200 (`prices.fullDay`) |
-| 8 or more | one outstation day (more than 7 h), as above |
+**A drive shorter than a day** (decided 1 Nov 2026) is `extraHour` (₹120)
+an hour, but never less than `shortDriveMinimum` (₹600, the 3-hour price);
+his way home is added on top as above. So a short hop (up to 5 h of driving)
+is ₹600, and a longer drive is plain hourly: 6 h ₹720, 7 h ₹840; 8 h or more
+is one outstation day (more than 7 h).
 
 From Raipur: Bhilai ₹840 (1 h + 2 h home), Bilaspur ₹960 (3 h + 3 h home),
-Korba ₹1,440 (5 h + 5 h home), Nagpur ₹1,680 (6 h + 6 h home). The quote in
-/admin never goes below these, and the final bill uses the same steps on the
-real hours.
+Korba ₹1,200 (5 h + 5 h home), Nagpur ₹1,440 (6 h + 6 h home). The quote in
+/admin never goes below the minimum, and the final bill uses the same rule on
+the real hours.
 
 1. **Driving:** the one-way km at `averageKmh` (50). Raipur → Mumbai, 1,118 km
    = 22.4 h = 1 day + 11 h.
@@ -250,9 +246,8 @@ All in `site-settings.ts`:
 | `prices.outstationNear` | ≤150 km 1300–1400, ≤300 km 1450–1550 | Cheaper days for places closer by (one-way road km); nearest first; `[]` = one price everywhere |
 | `outstation.returnHour` | 120 | Per hour of the way home, from the drop until he is home |
 | `outstation.returnMaxPerDay` | 1200 | The most the way home costs in any 24 hours |
-| `outstation.extraHour` | 120 | Per driving hour beyond the full days (and after the first 3 h of a short drive) |
-| `outstation.shortDriveFirstHours` | 3 | A drive shorter than a day: up to this many hours = `prices.threeHours` |
-| `outstation.shortDriveLocalDayAfterHours` | 6 | …more than this many hours = a local full day (`prices.fullDay`) |
+| `outstation.extraHour` | 120 | Per driving hour beyond the full days (and of a drive shorter than a day, at least `shortDriveMinimum`) |
+| `outstation.shortDriveMinimum` | 600 | A drive shorter than a day: `extraHour` an hour, at least this |
 | `outstation.hoursPerDay` | 12 | Driving hours in a day |
 | `outstation.mealAllowance` | 300 | Per day, if the customer does not feed the driver |
 | `outstation.kmPerDay` | 600 | Planning distance per driving day |

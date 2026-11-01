@@ -20,7 +20,7 @@ const trail = [{ name: 'Pricing', path: '/pricing/' }];
 export const metadata: Metadata = pageMeta({
   title: 'Driver Charges & Hourly Rates in Chhattisgarh',
   description:
-    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.outstationSpan} a day outstation, from ${priceText.nightFrom} at night. No surge, no hidden fees.`,
+    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.outstationSpan} a day outstation, from ${priceText.nightFrom} at night. No hidden fees.`,
   path: '/pricing/',
 });
 
@@ -53,7 +53,7 @@ export default function PricingPage() {
       <PageHero
         eyebrow="Pricing"
         title="Simple, honest pricing"
-        lede="Every rate below is the driver's charge, fixed at the time of booking. No surge pricing, no per-kilometre surprises and nothing added at the end of the trip."
+        lede="Every rate below is the driver's charge, agreed at the time of booking — no per-kilometre surprises and no hidden fees. If the trip runs longer, extra hours are charged by the hour."
         trail={trail}
       />
 

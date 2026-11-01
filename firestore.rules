@@ -151,7 +151,7 @@ service cloud.firestore {
         && q.extraHours is int && q.extraHours >= 0 && q.extraHours <= 200
         && q.extraHourRate is int && q.extraHourRate >= 0 && q.extraHourRate <= 10000
         // The extra hours' charge (newer quotes): hours × rate, or — a one-way
-        // drive shorter than a day — the short-drive price (₹600 for 3 h, …),
+        // drive shorter than a day — at least the short-drive minimum (₹600),
         // never more than a day. Older quotes leave it out: hours × rate.
         && (!('extraCharge' in q) || (q.extraCharge is int && q.extraCharge >= 0
               && (q.extraCharge <= q.extraHourRate * q.extraHours || (q.days == 0 && q.extraCharge <= q.dayRate))))
@@ -192,7 +192,7 @@ service cloud.firestore {
         && b.extraHours is int && b.extraHours >= 0 && b.extraHours <= 200
         && b.extraHourRate is int && b.extraHourRate >= 0 && b.extraHourRate <= 10000
         // Never more than hours × rate — except a one-way drive shorter than a
-        // day, priced in steps (₹600 for 3 h, …) — and never more than one day.
+        // day, which costs at least the minimum (₹600) — and never more than one day.
         && b.extraCharge is int && b.extraCharge >= 0
         && (b.extraCharge <= b.extraHourRate * b.extraHours || b.days == 0) && b.extraCharge <= b.dayRate
         && b.returnHours is int && b.returnHours >= 0 && b.returnHours <= 400

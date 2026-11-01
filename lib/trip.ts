@@ -330,7 +330,7 @@ export function estimateLines(view: TripView): { label: string; amount: string }
       amount: rupeeRange(p.fullDays * day.from, p.fullDays * day.to),
     });
   if (p.fullDays === 0 && p.extraHours > 0 && tripRules.shortDrive)
-    // A drive shorter than a day: ₹600 for 3 h, then by the hour, more than 6 h a local full day.
+    // A drive shorter than a day: by the hour, at least ₹600.
     lines.push({
       label: shortDriveWords(tripRules, p.extraHours, rupees),
       amount: rupeeRange(view.est.driving.from, view.est.driving.to),

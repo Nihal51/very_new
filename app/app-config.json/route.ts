@@ -62,10 +62,8 @@ export function GET() {
       returnMaxPerDay: outstation.returnMaxPerDay,
       returnFullDayAfterHours: outstation.returnFullDayAfterHours,
       extraFullDayAfterHours: outstation.extraFullDayAfterHours,
-      // A one-way drive shorter than a day: prices.threeHours for up to this many
-      // hours, then extraHour each; more than shortDriveLocalDayAfterHours = prices.fullDay.
-      shortDriveFirstHours: outstation.shortDriveFirstHours,
-      shortDriveLocalDayAfterHours: outstation.shortDriveLocalDayAfterHours,
+      // A one-way drive shorter than a day: extraHour an hour, at least this.
+      shortDriveMinimum: outstation.shortDriveMinimum,
       mealAllowance: outstation.mealAllowance,
       kmPerDay: outstation.kmPerDay,
       localWithinKm: outstation.localWithinKm,

@@ -131,7 +131,7 @@ export default function HomePage() {
         id="pricing"
         eyebrow="Pricing"
         title="Simple, honest rates"
-        lede="Fixed at the time of booking. No surge pricing, no hidden charges."
+        lede="Agreed when you book, with no hidden charges. Extra hours are charged by the hour."
       >
         <PricingCards compact />
         <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3">

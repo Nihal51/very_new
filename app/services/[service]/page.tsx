@@ -134,7 +134,7 @@ export default async function ServicePage({ params }: Props) {
           <p className="text-fg-muted mt-6 max-w-2xl text-[0.9375rem]">
             {quote.note ??
               'The driver’s charge only — you provide the vehicle and fuel, as with every DriveBuddy booking.'}{' '}
-            No surge and no hidden extras once the price is agreed.
+            No hidden extras: the price is agreed before the trip, and extra hours are charged by the hour.
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
             {quote.priceLink && <ButtonLink href={quote.priceLink.href}>{quote.priceLink.label}</ButtonLink>}
@@ -159,7 +159,7 @@ export default async function ServicePage({ params }: Props) {
           id="pricing"
           eyebrow="Pricing"
           title="What it costs"
-          lede="Fixed when you book — the driver's charge only, no surge and no hidden extras. You provide the vehicle and fuel."
+          lede="Agreed when you book — the driver's charge only, no hidden extras; extra hours by the hour. You provide the vehicle and fuel."
         >
           <PricingCards compact />
           <div className="mt-8">

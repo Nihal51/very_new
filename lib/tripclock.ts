@@ -238,7 +238,7 @@ export function billLines(
       amount: rupees(b.days * b.dayRate),
     });
   if (b.extraHours > 0 && b.days === 0 && rules.shortDrive)
-    // A one-way drive shorter than a day: ₹600 for 3 h, then by the hour, then a local day.
+    // A one-way drive shorter than a day: by the hour, at least ₹600.
     lines.push({
       label: shortDriveWords({ extraHour: b.extraHourRate, shortDrive: rules.shortDrive }, b.extraHours, rupees),
       amount: rupees(b.extraCharge),

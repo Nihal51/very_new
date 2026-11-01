@@ -810,7 +810,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Which payment methods do you accept?',
-    a: 'Cash, UPI (GPay, PhonePe, Paytm) and bank transfer. Rates are fixed at the time of booking, with no surge pricing and no hidden charges.',
+    a: 'Cash, UPI (GPay, PhonePe, Paytm) and bank transfer. Rates are agreed at the time of booking, with no hidden charges; if the trip runs longer, extra hours are charged by the hour.',
   },
   {
     q: 'Can I book for a hospital emergency?',

@@ -93,8 +93,8 @@ export function PricingCards({ compact = false }: { compact?: boolean }) {
       )}
 
       <p className="text-fg-subtle mt-5 text-sm">
-        Rates are for the driver only — you provide the vehicle and fuel. Prices are fixed at
-        booking: no surge pricing, no hidden charges. Cash, UPI and bank transfer accepted.
+        Rates are for the driver only — you provide the vehicle and fuel. Prices are agreed at
+        booking, with no hidden charges; extra hours are charged by the hour. Cash, UPI and bank transfer accepted.
       </p>
     </div>
   );
