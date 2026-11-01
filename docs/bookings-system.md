@@ -90,7 +90,9 @@ When you move a booking along in `/admin`, the customer hears about it:
 
 Each booking remembers what the customer was last told (`pushedKey`, `whatsappKey`), so nothing is sent twice; assigning a different driver tells them again.
 
-**After changing `apps-script/Code.js`** (as in this update), paste the new file into the Sheet's Apps Script editor (Extensions → Apps Script → select all in `Code.js` → paste → Save). The every-minute trigger keeps running; nothing else to redo.
+**After changing `apps-script/Code.js`** (as in this update), paste the new file into the Sheet's Apps Script editor (Extensions → Apps Script → select all in `Code.js` → paste → Save). The every-minute trigger keeps running.
+
+If the change is in the web address part (the doorbell or the train lookup, `doGet`), the address keeps serving the old version until you deploy a new one: **Deploy → Manage deployments → ✏ (edit) → Version: New version → Deploy**. The address stays the same, so nothing on the website changes. (The automatic deploy in docs/automatic-deploys.md pushes the code but does not do this step.)
 
 ## Everyday use
 

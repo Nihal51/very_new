@@ -99,6 +99,13 @@ export type RailResult =
       checkedAt: number;
       /** Live status was asked for and is in `trains[].live`. */
       live: boolean;
+      /**
+       * The whole timetable for the pair (asked without a date), used for
+       * `query.date`: only trains that run that day count (their running
+       * days are then required), and no special trains, which run only for
+       * a season the timetable does not show.
+       */
+      timetable?: boolean;
       fromName?: string;
       toName?: string;
       trains: RawTrain[];
@@ -160,6 +167,14 @@ export function legsFrom(result: RailResult): { legs: RailLeg[]; dropped: Droppe
     }
     if (typeof t.duration === 'number' && Number.isFinite(t.duration) && Math.abs((arrive - depart) / 60_000 - t.duration) > 10) {
       drop('duration does not match the times');
+      continue;
+    }
+    if (result.timetable && (!Array.isArray(t.runDays) || t.runDays.length === 0)) {
+      drop('running days unknown');
+      continue;
+    }
+    if (result.timetable && (/special/i.test(String(t.type ?? '')) || /\b(spl|special)\b/i.test(name))) {
+      drop('a special train: it may not run that day');
       continue;
     }
     if (Array.isArray(t.runDays) && t.runDays.length > 0) {

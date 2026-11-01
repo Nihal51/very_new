@@ -304,18 +304,23 @@ test('the client reads the robot’s answer, and treats anything odd as a failed
 });
 
 test('the client: one GET per batch, a time limit, and answers remembered for the session', async () => {
+  // A robot from before timetables: it turns "YPR-R" down, so the client asks by date from then on.
   const urls = [];
   const fetchImpl = async (url) => {
     urls.push(url);
+    if (!/q=YPR-R-/.test(url)) return { ok: true, json: async () => ({ ok: false, error: 'bad-request' }) };
     return { ok: true, json: async () => robotAnswer([{ q: 'YPR-R-2026-10-30', ok: true, checkedAt: '2026-10-30T04:30:00.000Z', live: false, trains: [robotTrain] }]) };
   };
   const fetcher = makeFetcher('https://script.google.com/macros/s/X/exec', { fetchImpl });
   const q = [{ from: 'YPR', to: 'R', date: '2026-10-30' }];
   const a = await fetcher(q, false);
   const b = await fetcher(q, false);
-  assert.equal(urls.length, 1, 'the second ask comes from memory');
-  assert.equal(urls[0], 'https://script.google.com/macros/s/X/exec?action=trains&q=YPR-R-2026-10-30&live=0');
-  assert.equal(a[0].ok && b[0].ok, true);
+  assert.deepEqual(urls, [
+    'https://script.google.com/macros/s/X/exec?action=trains&q=YPR-R&live=0',
+    'https://script.google.com/macros/s/X/exec?action=trains&q=YPR-R-2026-10-30&live=0',
+  ]);
+  assert.equal(a[0].ok && b[0].ok, true, 'the second ask comes from memory');
+  assert.equal(a[0].timetable, undefined);
 
   const slow = makeFetcher('https://x.example/exec', {
     timeoutMs: 20,
@@ -325,6 +330,45 @@ test('the client: one GET per batch, a time limit, and answers remembered for th
   const down = makeFetcher('https://x.example/exec', { fetchImpl: async () => ({ ok: false, json: async () => ({}) }) });
   assert.equal((await down(q, false))[0].error, 'unavailable');
   assert.equal((await makeFetcher('')(q, false))[0].error, 'not-configured');
+});
+
+test('the client with timetables: one call per station pair answers every date, for the run days only', async () => {
+  const urls = [];
+  const special = { ...robotTrain, number: '06001', name: 'Test Special', type: 'Special' };
+  const noDays = { ...robotTrain, number: '12999', name: 'Test 12999', runDays: [] };
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    const q = decodeURIComponent(url.split('q=')[1].split('&')[0]);
+    return {
+      ok: true,
+      json: async () =>
+        robotAnswer(
+          q.split(',').map((k) =>
+            k === 'SBC-R'
+              ? { q: k, ok: false, error: 'busy' }
+              : { q: k, ok: true, timetable: true, checkedAt: '2026-10-30T04:30:00.000Z', live: false, trains: [robotTrain, special, noDays] },
+          ),
+        ),
+    };
+  };
+  const fetcher = makeFetcher('https://script.google.com/macros/s/X/exec', { fetchImpl });
+  const days = ['2026-10-30', '2026-10-31', '2026-11-03'];
+  const out = await fetcher([...days.map((date) => ({ from: 'YPR', to: 'R', date })), { from: 'SBC', to: 'R', date: '2026-10-30' }], false);
+  assert.deepEqual(urls, ['https://script.google.com/macros/s/X/exec?action=trains&q=YPR-R%2CSBC-R&live=0'], 'one call, one search per pair');
+  assert.deepEqual(out.map((r) => (r.ok ? r.query.date : r.error)), [...days, 'busy']);
+  // 12251 runs on Tuesdays and Fridays (from YPR on day 1): Fri 30 Oct and Tue 3 Nov, not Sat 31 Oct.
+  assert.deepEqual(out.slice(0, 3).map((r) => legsFrom(r).legs.map((l) => l.train.number)), [['12251'], [], ['12251']]);
+  // From a timetable: no special trains (a season it does not show), and no train without its running days.
+  const reasons = legsFrom(out[0]).dropped.map((d) => `${d.number}: ${d.reason}`);
+  assert.deepEqual(reasons, ['06001: a special train: it may not run that day', '12999: running days unknown']);
+  // Another date later: from memory. A failed pair is asked again.
+  await fetcher([{ from: 'YPR', to: 'R', date: '2026-11-06' }], false);
+  assert.equal(urls.length, 1);
+  await fetcher([{ from: 'SBC', to: 'R', date: '2026-10-31' }], false);
+  assert.equal(urls[1], 'https://script.google.com/macros/s/X/exec?action=trains&q=SBC-R&live=0');
+  // Live status needs the day: asked by date.
+  await fetcher([{ from: 'YPR', to: 'R', date: '2026-10-30' }], true);
+  assert.equal(urls[2], 'https://script.google.com/macros/s/X/exec?action=trains&q=YPR-R-2026-10-30&live=1');
 });
 
 /* ----------------------------------------------- pricing from the train ---- */

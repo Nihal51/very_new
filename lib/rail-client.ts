@@ -42,15 +42,19 @@ function rawTrain(v: unknown): RawTrain | undefined {
   };
 }
 
-/** The robot's JSON → one RailResult per query, in the order asked; anything missing or odd is a failed search. */
-export function parseLookup(json: unknown, queries: RailQuery[]): RailResult[] {
+/**
+ * The robot's JSON → one RailResult per query, in the order asked; anything
+ * missing or odd is a failed search. `keyOf`: how the robot names each
+ * search (a whole timetable is "SBC-R", without the date).
+ */
+export function parseLookup(json: unknown, queries: RailQuery[], keyOf: (q: RailQuery) => string = queryKey): RailResult[] {
   if (!isObj(json)) return queries.map((query) => ({ ok: false, query, error: 'bad-response' }));
   if (json.ok !== true) return queries.map((query) => ({ ok: false, query, error: asError(json.error) }));
   const list = Array.isArray(json.results) ? json.results : [];
   const byKey = new Map<string, Obj>();
   for (const r of list) if (isObj(r) && typeof r.q === 'string') byKey.set(r.q, r);
   return queries.map((query): RailResult => {
-    const r = byKey.get(queryKey(query));
+    const r = byKey.get(keyOf(query));
     if (!r) return { ok: false, query, error: 'bad-response' };
     if (r.ok !== true) return { ok: false, query, error: asError(r.error) };
     const checkedAt = Date.parse(String(r.checkedAt ?? ''));
@@ -63,6 +67,7 @@ export function parseLookup(json: unknown, queries: RailQuery[]): RailResult[] {
       query,
       checkedAt,
       live: r.live === true,
+      ...(r.timetable === true && { timetable: true }),
       ...(fromName && { fromName }),
       ...(toName && { toName }),
       trains: r.trains.map(rawTrain).filter((t): t is RawTrain => Boolean(t)),
@@ -70,47 +75,93 @@ export function parseLookup(json: unknown, queries: RailQuery[]): RailResult[] {
   });
 }
 
+/** "SBC-R": the robot's name for a whole timetable (no date). */
+export const pairKey = (q: Pick<RailQuery, 'from' | 'to'>) => `${q.from}-${q.to}`;
+
+/** Failures worth asking again a little later: a cap, a slow or lost answer. */
+export const RETRYABLE: readonly RailError[] = ['busy', 'rate-limited', 'timeout', 'network', 'unavailable'];
+
 /**
- * A fetcher for findReturn: one GET to the robot per batch, with a time limit
- * (Apps Script can take a few seconds), and answers remembered for the
+ * A fetcher for findReturn: one GET to the robot per batch, with a time
+ * limit (Apps Script can take a few seconds), answers remembered for the
  * session so changing the time back and forth does not ask again.
+ *
+ * Without live status it asks for whole timetables ("SBC-R": every train
+ * with its running days), one per station pair whatever the date, and
+ * answers each dated search from them — legsFrom keeps only the trains that
+ * run that day. So a customer trying dates, and every other customer on the
+ * same route, costs no more calls (the robot caches each timetable for 6
+ * hours). A robot without timetables (before its update) answers
+ * 'bad-request'; then it asks by date, as before.
  */
 export function makeFetcher(
   endpoint: string,
   { fetchImpl = globalThis.fetch, timeoutMs = 20_000 }: { fetchImpl?: typeof fetch; timeoutMs?: number } = {},
 ): RailFetcher {
   const memo = new Map<string, RailResult>();
+  let timetables = true;
+
+  /** One GET for `keys` (the robot's names); every key gets an answer, ok or failed. */
+  const ask = async (todo: RailQuery[], keyOf: (q: RailQuery) => string, live: boolean): Promise<RailResult[]> => {
+    const url = `${endpoint}${endpoint.includes('?') ? '&' : '?'}action=trains&q=${encodeURIComponent(todo.map(keyOf).join(','))}&live=${live ? 1 : 0}`;
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
+    const timer = setTimeout(() => ctrl?.abort(), timeoutMs);
+    try {
+      const res = await fetchImpl(url, { method: 'GET', ...(ctrl && { signal: ctrl.signal }) });
+      if (!res.ok) return todo.map((query) => ({ ok: false, query, error: 'unavailable' }));
+      let json: unknown;
+      try {
+        json = await res.json();
+      } catch {
+        json = null;
+      }
+      return parseLookup(json, todo, keyOf);
+    } catch (err) {
+      const aborted = (err as { name?: string })?.name === 'AbortError';
+      return todo.map((query) => ({ ok: false, query, error: aborted ? 'timeout' : 'network' }));
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /** Dated searches, as before (and always for live status, which needs the day). */
+  const byDate = async (queries: RailQuery[], live: boolean): Promise<RailResult[]> => {
+    const memoKey = (q: RailQuery) => `${queryKey(q)}:${live}`;
+    const todo = queries.filter((q) => !memo.has(memoKey(q)));
+    const failed = new Map<string, RailResult>();
+    if (todo.length) {
+      const results = await ask(todo, queryKey, live);
+      // Remember only real answers; a failure is asked again next time.
+      for (const r of results) (r.ok ? memo.set(memoKey(r.query), r) : failed.set(queryKey(r.query), r));
+    }
+    return queries.map((q) => memo.get(memoKey(q)) ?? failed.get(queryKey(q))!);
+  };
+
+  /** Whole timetables, one per pair, used for each dated search; null when the robot cannot do them. */
+  const byTimetable = async (queries: RailQuery[]): Promise<RailResult[] | null> => {
+    const memoKey = (q: Pick<RailQuery, 'from' | 'to'>) => `tt:${pairKey(q)}`;
+    const pairs = [...new Map(queries.map((q) => [pairKey(q), { from: q.from, to: q.to, date: '' }])).values()];
+    const todo = pairs.filter((p) => !memo.has(memoKey(p)));
+    const failed = new Map<string, RailResult>();
+    if (todo.length) {
+      const results = await ask(todo, pairKey, false);
+      // A robot from before timetables turns the whole request down as a bad request.
+      if (results.length && results.every((r) => !r.ok && r.error === 'bad-request')) return null;
+      for (const r of results) (r.ok ? memo.set(memoKey(r.query), r) : failed.set(pairKey(r.query), r));
+    }
+    return queries.map((query): RailResult => {
+      const r = memo.get(memoKey(query)) ?? failed.get(pairKey(query))!;
+      return r.ok ? { ...r, query, timetable: true } : { ok: false, query, error: r.error };
+    });
+  };
+
   return async (queries, live) => {
     if (!endpoint) return queries.map((query) => ({ ok: false, query, error: 'not-configured' }));
-    const todo = queries.filter((q) => !memo.has(`${queryKey(q)}:${live}`));
-    if (todo.length) {
-      const url = `${endpoint}${endpoint.includes('?') ? '&' : '?'}action=trains&q=${encodeURIComponent(todo.map(queryKey).join(','))}&live=${live ? 1 : 0}`;
-      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
-      const timer = setTimeout(() => ctrl?.abort(), timeoutMs);
-      let results: RailResult[];
-      try {
-        const res = await fetchImpl(url, { method: 'GET', ...(ctrl && { signal: ctrl.signal }) });
-        if (!res.ok) results = todo.map((query) => ({ ok: false, query, error: 'unavailable' }));
-        else {
-          let json: unknown;
-          try {
-            json = await res.json();
-          } catch {
-            json = null;
-          }
-          results = parseLookup(json, todo);
-        }
-      } catch (err) {
-        const aborted = (err as { name?: string })?.name === 'AbortError';
-        results = todo.map((query) => ({ ok: false, query, error: aborted ? 'timeout' : 'network' }));
-      } finally {
-        clearTimeout(timer);
-      }
-      // Remember only real answers; a failure is asked again next time.
-      for (const r of results) if (r.ok) memo.set(`${queryKey(r.query)}:${live}`, r);
-      const failed = new Map(results.filter((r) => !r.ok).map((r) => [queryKey(r.query), r]));
-      return queries.map((q) => memo.get(`${queryKey(q)}:${live}`) ?? failed.get(queryKey(q))!);
+    if (!live && timetables) {
+      const answers = await byTimetable(queries);
+      if (answers) return answers;
+      timetables = false;
     }
-    return queries.map((q) => memo.get(`${queryKey(q)}:${live}`)!);
+    return byDate(queries, live);
   };
 }

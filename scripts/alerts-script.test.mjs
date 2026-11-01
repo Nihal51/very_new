@@ -733,6 +733,25 @@ describe('train lookup (RailRadar proxy)', () => {
     assert.equal(env.rail.calls.length, 0);
   });
 
+  test('a whole timetable (no date): one call answers every date, cached for 6 hours', () => {
+    env.rail.answer = () => ({
+      code: 200,
+      body: sample('SBC', 'R', [train('12251', '23:40', 1, '00:05', 3, 1465, { train: { number: '12251', name: 'Korba Exp', type: 'Express', runDays: ['wed', 'sat'] } })]),
+    });
+    const res = env.ctx.trainsLookup_({ q: 'SBC-R,SBC-NGP', live: '1' }, now);
+    assert.equal(env.rail.calls[0].url, 'https://api.railradar.in/v1/trains/between/SBC/R', 'no date, and never live');
+    assert.equal(env.rail.calls.length, 2);
+    const r = res.results[0];
+    assert.deepEqual([r.ok, r.q, r.timetable, r.live], [true, 'SBC-R', true, false]);
+    assert.deepEqual([...r.trains[0].runDays], ['wed', 'sat']);
+    // Another visitor, any date: no call.
+    env.ctx.trainsLookup_({ q: 'SBC-R' }, now + 3_600_000);
+    assert.equal(env.rail.calls.length, 2);
+    // A dated search is still a search of its own.
+    assert.equal(env.ctx.trainsLookup_({ q: 'SBC-R-2026-11-04' }, now).results[0].timetable, false);
+    assert.equal(env.ctx.parseTrainQueries('SBC-SBC', now), null);
+  });
+
   test('the doorbell still works on GET without action=trains', () => {
     const out = env.ctx.doGet({ parameter: {} });
     assert.equal(out.text, 'ok');

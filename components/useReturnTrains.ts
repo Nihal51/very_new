@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { findReturn, type ReturnLookup, type ReturnOption } from '@/lib/rail';
-import { makeFetcher } from '@/lib/rail-client';
+import { makeFetcher, RETRYABLE } from '@/lib/rail-client';
 import { railLookupUrl, railRules } from '@/lib/settings';
 import { railInput, withTrain, type TripView } from '@/lib/trip';
 
@@ -21,6 +21,8 @@ export type ReturnStatus = 'off' | 'need-date' | 'not-set-up' | 'loading' | 'ok'
 
 export type ReturnTrains = {
   status: ReturnStatus;
+  /** Still 'loading': the train service was busy or slow, and it is asking again. */
+  retrying: boolean;
   lookup?: ReturnLookup;
   options: ReturnOption[];
   selected?: ReturnOption;
@@ -36,20 +38,37 @@ export type ReturnTrains = {
  * The first route is recommended; the customer can pick another, and the
  * estimate follows.
  */
+/** Waits before asking again when the train service was busy or slow: past the robot's per-minute cap, then once more. */
+const RETRY_DELAYS = [20_000, 45_000];
+
 export function useReturnTrains(view: TripView | null, city: string): ReturnTrains {
   const fetcher = useMemo(() => makeFetcher(railLookupUrl), []);
   const input = view ? railInput(view, city) : undefined;
   const key = input ? `${input.stations.join('.')}>${input.home}@${input.drop}` : '';
   const [result, setResult] = useState<{ key: string; lookup: ReturnLookup } | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
   const [chosen, setChosen] = useState<{ key: string; id: string } | null>(null);
 
   useEffect(() => {
     if (!input || !railLookupUrl) return;
     let alive = true;
-    const timer = setTimeout(async () => {
+    let timer: ReturnType<typeof setTimeout>;
+    // A busy or slow answer is asked again — after the robot's minute has passed — before
+    // the customer is told the trains could not be checked. Answers already in stay remembered.
+    const attempt = async (n: number) => {
       const lookup = await findReturn({ fetcher, ...input, now: Date.now(), rules: railRules });
-      if (alive) setResult({ key, lookup });
-    }, 500);
+      if (!alive) return;
+      const errors = lookup.problems.flatMap((p) => (p.error ? [p.error] : []));
+      const retry = lookup.status === 'error' && errors.length > 0 && errors.every((e) => RETRYABLE.includes(e));
+      if (retry && n < RETRY_DELAYS.length) {
+        setRetrying(key);
+        timer = setTimeout(() => void attempt(n + 1), RETRY_DELAYS[n]);
+        return;
+      }
+      setRetrying(null);
+      setResult({ key, lookup });
+    };
+    timer = setTimeout(() => void attempt(0), 500);
     return () => {
       alive = false;
       clearTimeout(timer);
@@ -74,6 +93,7 @@ export function useReturnTrains(view: TripView | null, city: string): ReturnTrai
 
   return {
     status,
+    retrying: status === 'loading' && retrying === key,
     ...(lookup && { lookup }),
     options,
     ...(selected && { selected }),

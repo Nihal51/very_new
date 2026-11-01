@@ -826,7 +826,9 @@ function dayPlus(day, n) {
 /**
  * "SBC-R-2026-10-31,NGP-R-2026-11-01" → [{ from, to, date }], or null if any
  * part is not a station code pair and a date from yesterday to 120 days ahead
- * (India time), or there are more than RAIL_MAX_QUERIES.
+ * (India time), or there are more than RAIL_MAX_QUERIES. A pair without a
+ * date ("SBC-R") is the whole timetable — every train with its running days
+ * (date ''): one search answers every date, for every visitor.
  */
 function parseTrainQueries(q, now) {
   var parts = String(q == null ? '' : q).split(',').filter(String);
@@ -835,11 +837,18 @@ function parseTrainQueries(q, now) {
   var last = dayPlus(istDay(now), 120);
   var out = [];
   for (var i = 0; i < parts.length; i++) {
-    var m = /^([A-Z]{1,5})-([A-Z]{1,5})-(\d{4}-\d{2}-\d{2})$/.exec(parts[i]);
-    if (!m || m[1] === m[2] || m[3] < first || m[3] > last || dayPlus(m[3], 0) !== m[3]) return null;
-    out.push({ from: m[1], to: m[2], date: m[3] });
+    var m = /^([A-Z]{1,5})-([A-Z]{1,5})(?:-(\d{4}-\d{2}-\d{2}))?$/.exec(parts[i]);
+    if (!m || m[1] === m[2]) return null;
+    var date = m[3] || '';
+    if (date && (date < first || date > last || dayPlus(date, 0) !== date)) return null;
+    out.push({ from: m[1], to: m[2], date: date });
   }
   return out;
+}
+
+/** "SBC-R-2026-10-31", or "SBC-R" for a whole timetable. */
+function railKey_(q) {
+  return q.from + '-' + q.to + (q.date ? '-' + q.date : '');
 }
 
 /** RailRadar's train (documented fields) → what the website reads; live status only when it was asked for. */
@@ -866,7 +875,7 @@ function railTrain(t, live) {
 
 /** One RailRadar answer → a result for the website: ok with the trains, or the reason it failed. */
 function railResult(query, code, body, checkedAt, live) {
-  var base = { q: query.from + '-' + query.to + '-' + query.date };
+  var base = { q: railKey_(query) };
   var fail = function (error) { base.ok = false; base.error = error; return base; };
   if (code === 404) return fail('not-found');
   if (code === 429) return fail('rate-limited');
@@ -880,6 +889,7 @@ function railResult(query, code, body, checkedAt, live) {
     ok: true,
     checkedAt: new Date(checkedAt).toISOString(),
     live: Boolean(live),
+    timetable: !query.date,
     from: { code: query.from, name: String((d.from && d.from.name) || query.from) },
     to: { code: query.to, name: String((d.to && d.to.name) || query.to) },
     trains: d.trains.map(function (t) { return railTrain(t, live); }),
@@ -911,7 +921,8 @@ function railBudget_(n, now) {
 }
 
 /**
- * The lookup: ?action=trains&q=SBC-R-2026-10-31,…&live=1. Answers
+ * The lookup: ?action=trains&q=SBC-R-2026-10-31,…&live=1 (or q=SBC-R,… for
+ * whole timetables, which the website filters by running day). Answers
  * { ok, source, results: [one per search, in order] } — every search either
  * ok with its trains (cached ones keep the time they were fetched) or failed
  * with a reason ('busy' when a cap was reached).
@@ -928,8 +939,8 @@ function trainsLookup_(params, now) {
   var results = [];
   var misses = [];
   queries.forEach(function (q, i) {
-    var live = wantLive && (q.date === today || q.date === yesterday);
-    var ck = 'rail1:' + q.from + '-' + q.to + '-' + q.date + (live ? ':live' : '');
+    var live = wantLive && Boolean(q.date) && (q.date === today || q.date === yesterday);
+    var ck = 'rail1:' + railKey_(q) + (live ? ':live' : '');
     var hit = cache.get(ck);
     if (hit) {
       try { results[i] = JSON.parse(hit); return; } catch (err) { /* refetch */ }
@@ -939,12 +950,13 @@ function trainsLookup_(params, now) {
   var allowed = railBudget_(misses.length, now);
   var go = misses.slice(0, allowed);
   misses.slice(allowed).forEach(function (m) {
-    results[m.i] = { q: m.q.from + '-' + m.q.to + '-' + m.q.date, ok: false, error: 'busy' };
+    results[m.i] = { q: railKey_(m.q), ok: false, error: 'busy' };
   });
   if (go.length) {
     var responses = UrlFetchApp.fetchAll(go.map(function (m) {
       return {
-        url: RAIL_API + '/trains/between/' + m.q.from + '/' + m.q.to + '?date=' + m.q.date + (m.live ? '&live=true' : ''),
+        url: RAIL_API + '/trains/between/' + m.q.from + '/' + m.q.to +
+          (m.q.date ? '?date=' + m.q.date + (m.live ? '&live=true' : '') : ''),
         method: 'get',
         headers: { Authorization: 'Bearer ' + key },
         muteHttpExceptions: true,

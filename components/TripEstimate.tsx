@@ -251,7 +251,10 @@ function TrainsHome({ rail, view, city }: { rail: ReturnTrains; view: TripView; 
   } else if (rail.status === 'loading') {
     body = (
       <p className="text-fg-muted flex items-center gap-2">
-        <Spinner className="size-4" /> Checking the trains home for that day…
+        <Spinner className="size-4" />{' '}
+        {rail.retrying
+          ? 'The train service is busy — trying again in a few seconds…'
+          : 'Checking the trains home for that day…'}
       </p>
     );
   } else if (rail.status === 'error' || rail.status === 'none') {
@@ -261,7 +264,7 @@ function TrainsHome({ rail, view, city }: { rail: ReturnTrains; view: TripView; 
           {rail.status === 'none'
             ? `No train home found for that day, direct${view.dest?.rail?.hubs?.length ? ' or with one change' : ''}. `
             : (lookup?.problems ?? []).some((p) => p.error === 'busy' || p.error === 'rate-limited')
-              ? 'The train check has reached its limit for today, so the trains were not checked. '
+              ? 'The train check is too busy right now, so the trains were not checked. Try another time in a minute. '
               : 'We could not check the trains just now. '}
           The price uses the typical time home, which may be different — please check before you travel, and we
           confirm on the call.
