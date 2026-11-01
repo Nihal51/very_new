@@ -131,7 +131,21 @@ export function TripEstimate({
       {body}
       <div className="bg-bg-subtle text-fg-muted mt-3 rounded-lg p-3 text-[0.8125rem] leading-relaxed">
         <p className="text-fg font-semibold">How the time is counted, in simple words</p>
-        {oneWay ? (
+        {oneWay && view.est?.route ? (
+          <ul className="mt-1 list-disc pl-5">
+            <li>
+              A drop that keeps him away {priceText.routeAfter} or more — from when he leaves to when he is home —
+              is <strong>one price for the route</strong>: {priceText.routeRule}. His way home and the waiting for
+              his train are included.
+            </li>
+            <li>
+              The price stays the same if the trip runs a little late. If he gets home more than{' '}
+              {settings.outstation.lateAfterHours} hours later than planned, each hour after that is{' '}
+              {rupees(tripRules.extraHour)}.
+            </li>
+            <li>His ticket home and his meals are paid separately, as listed above.</li>
+          </ul>
+        ) : oneWay ? (
           <ul className="mt-1 list-disc pl-5">
             <li>
               Driving: every {priceText.outstationHours} of driving is one day ({dayText}). Hours left
@@ -146,13 +160,6 @@ export function TripEstimate({
               count as a full day ({priceText.outstationReturnMax}). So 56 hours = 2 days + 8 hours = 3 days. For example: he drops the car on 2 Oct at 12 PM and his train leaves at 3 PM — that is 3 hours of
               waiting, then the hours on the train until he reaches home. If he changes trains (Bengaluru →
               Nagpur → Raipur), the wait at Nagpur for the second train counts too.
-            </li>
-            <li>
-              <strong>Never more than {rupees(settings.outstation.awayDayMax)} for each day he is away</strong>, from
-              when he leaves to when he is home: driving and his way home together. After the first 24 hours, the hours
-              left over are {rupees(tripRules.extraHour)} each, up to one more day.
-              {settings.outstation.longTripFee > 0 &&
-                ` A trip that keeps him away ${settings.outstation.longTripAfterHours} hours or more is ${rupees(settings.outstation.longTripFee)} more.`}
             </li>
             <li>The final bill uses the real times; a late train adds hours, an early one saves them.</li>
           </ul>

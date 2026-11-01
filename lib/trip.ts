@@ -5,7 +5,7 @@
 
 import { TRIP_PACKAGES, type BookingQuote, type BookingTrip, type TripPackage } from './bookings';
 import {
-  awayLines,
+  routeWords,
   DEFAULT_START_HOUR,
   destinations,
   estimate,
@@ -325,6 +325,18 @@ export function estimateLines(view: TripView): { label: string; amount: string }
     return [{ label: `${plural(p.fullDays, 'day')} × ${rate}`, amount: rupeeRange(view.est.driving.from, view.est.driving.to) }];
   }
   const lines: { label: string; amount: string }[] = [];
+  // A longer drop: one price for the route; his way home and the waiting are in it.
+  const route = view.est.route;
+  if (route) {
+    const away = view.ret ? ` (${returnParts(view.ret).join(' + ')})` : ' (typical time)';
+    return [
+      { label: `Route price — ${routeWords(tripRules, route, rupees)}`, amount: rupees(route.price) },
+      {
+        label: `Driver’s way home and waiting: ${plural(p.returnHours, 'hour')}${away}, about ${route.awayHours} h away in all`,
+        amount: 'Included',
+      },
+    ];
+  }
   if (p.fullDays > 0)
     lines.push({
       label: `${plural(p.fullDays, 'driving day')} (${tripRules.hoursPerDay} h each) × ${rate}`,
@@ -356,8 +368,6 @@ export function estimateLines(view: TripView): { label: string; amount: string }
         }
       : { label: 'Driver’s way home', amount: 'No charge' },
   );
-  // The most for the hours he is away, and the long-trip charge.
-  lines.push(...awayLines(tripRules, view.est.awayHours, view.est.limitOff, view.est.longFee, rupees));
   return lines;
 }
 
@@ -373,6 +383,14 @@ export function notIncluded(view: TripView): string[] {
 
 /** "₹1,550 × 2 days + ₹120 × 1 extra hour + ₹2,400 way home (35 h) + ₹650 ticket" — the agreed price, itemised. */
 export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
+  // A route price: one price, his way home included.
+  if (q.awayHours)
+    return [
+      `${rupees(q.dayRate)} route price (${q.km ? `${q.km} km, ` : ''}about ${q.awayHours} h away, way home included)`,
+      q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
   return [
     q.days > 0 ? `${rupees(q.dayRate)} × ${plural(q.days, 'day')}` : null,
     q.extraHours > 0
@@ -381,11 +399,8 @@ export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
         : `${rupees(q.extraHourRate)} × ${plural(q.extraHours, 'extra hour')}`
       : null,
     q.returnHours > 0 ? `${rupees(q.returnCharge)} way home (${q.returnHours} h)` : null,
-    q.limitOff ? `− ${rupees(q.limitOff)} (the most for the time away)` : null,
-    q.longFee ? `${rupees(q.longFee)} long trip` : null,
     q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
   ]
     .filter(Boolean)
-    .join(' + ')
-    .replace(' + − ', ' − ');
+    .join(' + ');
 }

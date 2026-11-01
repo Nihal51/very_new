@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { awayLimit, estimate, planTrip, returnCost, withReturn } from '../lib/outstation.ts';
+import { estimate, planTrip, returnCost, withReturn } from '../lib/outstation.ts';
 import {
   addDays,
   directQueries,
@@ -333,10 +333,13 @@ const rules = {
   dayRate: { ...settings.prices.outstation },
   nearRates: settings.prices.outstationNear,
   shortDrive: { minimum: settings.outstation.shortDriveMinimum },
-  away: {
-    dayMax: settings.outstation.awayDayMax,
-    longFee: settings.outstation.longTripFee,
-    longAfterHours: settings.outstation.longTripAfterHours,
+  route: {
+    afterHours: settings.outstation.routeAfterHours,
+    base: settings.outstation.routeBase,
+    perKm: settings.outstation.routePerKm,
+    minBase: settings.outstation.routeMinBase,
+    minPerDay: settings.outstation.routeMinPerDay,
+    lateAfterHours: settings.outstation.lateAfterHours,
   },
 
   returnHour: settings.outstation.returnHour,
@@ -366,8 +369,8 @@ test('the way home from a train: whole hours from the drop, once, with the daily
   // The driving is untouched by the train.
   assert.deepEqual([train.fullDays, train.extraHours], [plan.fullDays, plan.extraHours]);
   assert.equal(est.driving.from + est.returnCharge, plan.fullDays * rules.dayRate.from + plan.extraHours * rules.extraHour + 2400);
-  // The whole trip never costs more than the most for the time he is away, plus the long-trip charge.
-  assert.equal(est.from, Math.min(est.driving.from + est.returnCharge, awayLimit(rules, train.homeAt)) + 250);
+  // Bengaluru is a route price (1 Nov 2026): ₹350 + ₹4.5 × 1,370 km = ₹6,515 → ₹6,500, the train's wait included.
+  assert.deepEqual([est.from, est.to, est.route.km], [6500, 6500, 1370]);
 });
 
 test('a short wait and train: by the hour, under the cap', () => {

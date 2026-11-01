@@ -10,9 +10,9 @@
 
 import type { Booking, BookingBill, BookingClock } from './bookings.ts';
 import {
-  awayLines,
   dayRateFor,
   finalBill,
+  routePrice,
   returnCost,
   returnWords,
   shortDriveWords,
@@ -149,16 +149,27 @@ export type BillRates = {
   extraHourRate: number;
   returnHourRate: number;
   ticket: number;
+  /** A route price and the hours away it was planned for (finalBill). */
+  route?: { price: number; awayHours: number; km: number };
 };
 
-/** The rates for the bill: the agreed price's, or the lowest rates customers were shown for the distance (`km`, one way). */
-export function billRates(quote: Booking['quote'], rules: TripRules, km?: number): BillRates {
-  return {
-    dayRate: quote?.dayRate ?? dayRateFor(rules, km).from,
+/**
+ * The rates for the bill: the agreed price's, or the lowest rates customers
+ * were shown for the distance (`km`, one way). A route price: the agreed one
+ * (a quote with awayHours), or — no quote — the route price for the plan's
+ * hours away (`plannedAway`, from the real start time), as the estimate.
+ */
+export function billRates(quote: Booking['quote'], rules: TripRules, km?: number, plannedAway?: number): BillRates {
+  const base = {
     extraHourRate: quote?.extraHourRate ?? rules.extraHour,
     returnHourRate: quote?.returnHourRate ?? rules.returnHour,
     ticket: quote?.ticket ?? 0,
   };
+  if (quote?.awayHours)
+    return { ...base, dayRate: quote.dayRate, route: { price: quote.dayRate, awayHours: quote.awayHours, km: quote.km ?? km ?? 0 } };
+  const route = !quote && km && plannedAway !== undefined ? routePrice(rules, km, plannedAway) : undefined;
+  if (route) return { ...base, dayRate: route.price, route: { price: route.price, awayHours: route.awayHours, km: route.km } };
+  return { ...base, dayRate: quote?.dayRate ?? dayRateFor(rules, km).from };
 }
 
 export type BillNow = {
@@ -207,8 +218,7 @@ export function bookingBill(b: Bill, nonstop: boolean): Omit<BookingBill, 'at'> 
     returnHours: b.returnHours,
     returnHourRate: b.returnHourRate,
     returnCharge: b.returnCharge,
-    ...(b.limitOff > 0 && { limitOff: b.limitOff }),
-    ...(b.longFee > 0 && { longFee: b.longFee }),
+    ...(b.route && { awayHours: b.route.awayHours, km: b.route.km }),
     ticket: b.ticket,
     nonstop,
   };
@@ -232,11 +242,25 @@ export function billLines(
     | 'returnCharge'
     | 'ticket'
   > &
-    Partial<Pick<Bill, 'awayHours' | 'limitOff' | 'longFee'>>,
+    Partial<Pick<Bill, 'route'>>,
   rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'> &
-    Partial<Pick<TripRules, 'shortDrive' | 'away'>>,
+    Partial<Pick<TripRules, 'shortDrive' | 'route'>>,
 ): { label: string; amount: string }[] {
   const lines: { label: string; amount: string }[] = [];
+  // A route price: the price, then any hours he was home later than planned.
+  if (b.route) {
+    lines.push({
+      label: `Route price (${b.route.km ? `${inr.format(b.route.km)} km, ` : ''}planned about ${b.route.awayHours} h away, his way home included)`,
+      amount: rupees(b.dayRate),
+    });
+    if (b.extraHours > 0)
+      lines.push({
+        label: `Home ${b.route.realAwayHours - b.route.awayHours} h later than planned: ${plural(b.extraHours, 'hour')} × ${rupees(b.extraHourRate)} (the first ${rules.route?.lateAfterHours ?? 0} h free)`,
+        amount: rupees(b.extraCharge),
+      });
+    if (b.ticket > 0) lines.push({ label: 'Ticket home (we bought it)', amount: rupees(b.ticket) });
+    return lines;
+  }
   if (b.days > 0)
     lines.push({
       label: `${plural(b.days, 'day')} × ${rupees(b.dayRate)}`,
@@ -262,9 +286,6 @@ export function billLines(
       amount: rupees(b.returnCharge),
     });
   }
-  // The most for the time away, and the long-trip charge.
-  if ((b.limitOff ?? 0) > 0 || (b.longFee ?? 0) > 0)
-    lines.push(...awayLines(rules, b.awayHours ?? 0, b.limitOff ?? 0, b.longFee ?? 0, rupees));
   if (b.ticket > 0)
     lines.push({
       label: 'Ticket home (we bought it)',
@@ -276,8 +297,18 @@ export function billLines(
 /** "₹1,600 × 2 days + ₹600 for 5 extra hours + ₹2,400 way home (38 h)" — for the customer's booking. */
 export function billBreakdown(
   b: Pick<Bill, 'days' | 'dayRate' | 'extraHours' | 'extraCharge' | 'returnHours' | 'returnCharge' | 'ticket'> &
-    Partial<Pick<Bill, 'limitOff' | 'longFee'>>,
+    Partial<Pick<Bill, 'route'>> & { awayHours?: number },
 ): string {
+  // A route price (a bill from finalBill, or one saved on a booking).
+  const away = b.route?.awayHours ?? b.awayHours;
+  if (away)
+    return [
+      `${rupees(b.dayRate)} route price (about ${away} h away, way home included)`,
+      b.extraHours > 0 ? `${rupees(b.extraCharge)} for ${plural(b.extraHours, 'hour')} late` : null,
+      b.ticket > 0 ? `${rupees(b.ticket)} ticket` : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
   return [
     b.days > 0 ? `${rupees(b.dayRate)} × ${plural(b.days, 'day')}` : null,
     b.extraHours > 0
@@ -286,20 +317,19 @@ export function billBreakdown(
         : `${rupees(b.extraCharge)} for ${plural(b.extraHours, 'extra hour')}`
       : null,
     b.returnHours > 0 ? `${rupees(b.returnCharge)} way home (${b.returnHours} h)` : null,
-    b.limitOff ? `− ${rupees(b.limitOff)} (the most for the time away)` : null,
-    b.longFee ? `${rupees(b.longFee)} long trip` : null,
     b.ticket > 0 ? `${rupees(b.ticket)} ticket` : null,
   ]
     .filter(Boolean)
-    .join(' + ')
-    .replace(' + − ', ' − ');
+    .join(' + ');
 }
 
-/** "2 days + 5 h" — the driving as charged. */
-export const daysText = (b: Pick<Bill, 'days' | 'extraHours'>) =>
-  [b.days > 0 ? plural(b.days, 'day') : null, b.extraHours > 0 || b.days === 0 ? `${b.extraHours} h` : null]
-    .filter(Boolean)
-    .join(' + ');
+/** "2 days + 5 h" — the driving as charged; a route price: "route price, 62 h away". */
+export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bill, 'route'>>) =>
+  b.route
+    ? `route price, ${b.route.realAwayHours} h away`
+    : [b.days > 0 ? plural(b.days, 'day') : null, b.extraHours > 0 || b.days === 0 ? `${b.extraHours} h` : null]
+        .filter(Boolean)
+        .join(' + ');
 
 /**
  * What the driver is paid for the trip, from his day cost and his hourly pay
@@ -308,11 +338,13 @@ export const daysText = (b: Pick<Bill, 'days' | 'extraHours'>) =>
  * daily maximum in hours as the customer's. Admin-only: never saved on the booking.
  */
 export function driverPay(
-  b: Pick<Bill, 'days' | 'extraHours' | 'returnHours'>,
+  b: Pick<Bill, 'days' | 'extraHours' | 'returnHours'> & Partial<Pick<Bill, 'route'>>,
   dayCost: number,
   returnHourPay: number,
   rules: Pick<TripRules, 'hoursPerDay' | 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): number {
+  // A route price: his day cost for each day (24 h, started ones count) he was away.
+  if (b.route) return Math.max(1, Math.ceil(b.route.realAwayHours / 24)) * dayCost;
   const capHours = rules.returnMaxPerDay / rules.returnHour;
   return Math.round(
     b.days * dayCost +
@@ -345,7 +377,8 @@ export function billMessage(
   b: Pick<Booking, 'name' | 'ref' | 'city'>,
   l: Pick<TripLink, 'to' | 'kind' | 'startAt' | 'dropAt' | 'homeAt'>,
   bill: Bill,
-  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
+  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'> &
+    Partial<Pick<TripRules, 'shortDrive' | 'route'>>,
 ): string {
   const rows = [
     `Hi ${firstName(b.name)}, thank you for travelling with DriveBuddy.`,

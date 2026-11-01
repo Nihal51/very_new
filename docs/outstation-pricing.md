@@ -60,17 +60,22 @@ the real hours.
    meals (`mealAllowance` a day if not given), fuel, tolls, parking, and a
    hotel only if a night stop is agreed. The **final bill** uses the real
    times. Booking extra days (stops on the way) charges each as a full day.
-7. **The most for the time away** (decided 1 Nov 2026): the driver is paid
-   by the 24 hours he is away, so steps 1–5 together never cost more than
-   `awayDayMax` (₹1,600) for each 24 hours from when he leaves to when he is
-   home. After the first 24 hours, the hours left over are `extraHour`
-   (₹120) each, up to one more `awayDayMax`. Raipur → Ambikapur: ₹840
-   driving + ₹1,200 way home = ₹2,040, but 16 h away → ₹1,600.
-8. **Long trip:** away `longTripAfterHours` (12) or more → `longTripFee`
-   (₹250) more, once, for the margin. Ambikapur: ₹1,600 + ₹250 = ₹1,850.
-   Short drops (Bilaspur, Korba) are unchanged. The /admin quote (the
-   "Hours he is away" field) and the final bill (real start → home) use the
-   same rule; both show it as lines (`limitOff`, `longFee`).
+7. **Longer drops: one price for the route** (decided 1 Nov 2026). When he
+   is away (he leaves → he is home) `routeAfterHours` (12) or more, steps
+   1–5 give way to: `routeBase` + `routePerKm` × one-way km (₹350 + ₹4.5 a
+   km), but at least `routeMinBase` + `routeMinPerDay` for each day (24 h,
+   started ones count) he is away (₹400 + ₹1,300), to the nearest ₹50. His
+   way home and the waiting are in it; his ticket and meals are not. Why:
+   customers pay by distance (Nagpur ₹1,600–1,700, Delhi ₹6,000, Bengaluru
+   ₹6,500 all sit on that line); the driver is paid by the days he is away,
+   so the waiting only matters when it adds a day. From Raipur: Nagpur
+   ₹1,700, Ambikapur ₹1,850, Jabalpur ₹2,050, Puri ₹3,000, Hyderabad ₹3,850,
+   Mumbai ₹5,400, Delhi ₹5,800, Bengaluru ₹6,500.
+8. **The final bill of a route price** is that price, unless he is home
+   more than `lateAfterHours` (3) after the plan: then `extraHour` an hour
+   after that. Saved as one day at the price, with `awayHours` and `km`
+   (firestore.rules isRoute). /admin quotes it the same way ("Hours he is
+   away", "Route price").
 
 ### Round trips
 

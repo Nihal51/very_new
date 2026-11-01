@@ -97,8 +97,9 @@ export default function PricingPage() {
               {priceText.outstationHours} of driving, and {priceText.outstationExtraHour} for each
               hour beyond (more than {settings.outstation.extraFullDayAfterHours} hours beyond = a full day); a shorter drive: {priceText.shortDrive}. After a one-way drop, the
               driver&apos;s way home — from the drop until he is home, waiting for his train
-              included — is {priceText.outstationReturnRule}. {priceText.awayRule}, from when he leaves
-              to when he is home. Round trips are charged by the days of the
+              included — is {priceText.outstationReturnRule}. A longer drop that keeps him away{' '}
+              {priceText.routeAfter} or more is one price for the route: {priceText.routeRule}, his way home
+              included. Round trips are charged by the days of the
               trip, at the day price for the distance.
               Pick your destination on the booking form for an estimate — or see{' '}
               <Link href="/one-way-drop/" className="text-accent-text font-semibold underline underline-offset-4">

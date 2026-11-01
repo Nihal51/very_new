@@ -57,12 +57,9 @@ export const priceText = {
   outstationExtraHour: rupees(settings.outstation.extraHour),
   /** "₹120 an hour of driving, at least ₹600" */
   shortDrive: `${rupees(settings.outstation.extraHour)} an hour of driving, at least ${rupees(settings.outstation.shortDriveMinimum)}`,
-  /** One-way: the most for the time away and the long-trip charge, in one sentence. */
-  awayRule:
-    `Driving and his way home together: at most ${rupees(settings.outstation.awayDayMax)} for each day he is away` +
-    (settings.outstation.longTripFee > 0
-      ? `; ${rupees(settings.outstation.longTripFee)} more when he is away ${settings.outstation.longTripAfterHours} h or more`
-      : ''),
+  /** Longer one-way drops: the route price, in one sentence. */
+  routeRule: `${rupees(settings.outstation.routeBase)} + ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(settings.outstation.routePerKm)} a km, at least ${rupees(settings.outstation.routeMinBase)} + ${rupees(settings.outstation.routeMinPerDay)} for each day he is away`,
+  routeAfter: `${settings.outstation.routeAfterHours} hours`,
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
   mealAllowance: rupees(settings.outstation.mealAllowance),
   nightFrom: rupees(p.nightFrom),
@@ -117,10 +114,13 @@ export const tripRules: TripRules = {
   extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
   shortDrive: { minimum: settings.outstation.shortDriveMinimum },
-  away: {
-    dayMax: settings.outstation.awayDayMax,
-    longFee: settings.outstation.longTripFee,
-    longAfterHours: settings.outstation.longTripAfterHours,
+  route: {
+    afterHours: settings.outstation.routeAfterHours,
+    base: settings.outstation.routeBase,
+    perKm: settings.outstation.routePerKm,
+    minBase: settings.outstation.routeMinBase,
+    minPerDay: settings.outstation.routeMinPerDay,
+    lateAfterHours: settings.outstation.lateAfterHours,
   },
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,

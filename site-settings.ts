@@ -126,10 +126,18 @@ export const settings = {
     returnHour: 120, //        each hour of his way home after a one-way drop (from the drop, waiting included)
     returnMaxPerDay: 1200, //  a full day of the way home (each 24 hours)
     returnFullDayAfterHours: 6, // the hours left over after the full days: up to this many by the hour; more = a full day
-    awayDayMax: 1600, //       one-way: driving + way home never cost more than this for each 24 h he is away (leaves → home);
-    //                         after the first 24 h, hours left over at extraHour, up to one more awayDayMax
-    longTripFee: 250, //       one-way: added once when he is away longTripAfterHours or more (0 = none)
-    longTripAfterHours: 12,
+    /* Longer one-way drops (decided 1 Nov 2026): when he is away (leaves → home)
+       routeAfterHours or more, one price for the route instead of the hours above:
+       routeBase + routePerKm × one-way km, but at least routeMinBase + routeMinPerDay
+       for each day (24 h) he is away — his way home and waiting included — rounded
+       to ₹50. Nagpur ₹1,700, Ambikapur ₹1,850, Delhi ₹5,800, Bengaluru ₹6,500.
+       His ticket and meals are paid separately. */
+    routeAfterHours: 12,
+    routeBase: 350,
+    routePerKm: 4.5,
+    routeMinBase: 400,
+    routeMinPerDay: 1300,
+    lateAfterHours: 3, //      final bill of a route price: home more than this many hours after the plan → extraHour an hour
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 600, //          how far one driver drives in a day (about 12 h at averageKmh)
     averageKmh: 50, //         highway average with stops

@@ -313,24 +313,24 @@ describe('bookings — admin workflow', () => {
     await assertFails(save(agreed({ extraHours: 2, extraCharge: 600, amount: 3 * 1550 + 1200 + 600 + 650 })));
   });
 
-  test('one-way: the most for the time away and the long-trip charge (1 Nov 2026)', async () => {
+  test('a route price: one day at the price, his way home included (1 Nov 2026)', async () => {
     await seedBooking('b1', { package: 'one-way-drop' });
     const db = admin();
     const save = (q) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: q }));
-    // Raipur → Ambikapur: 7 h of driving (₹840) + 9 h home (₹1,200) = ₹2,040; 16 h away:
-    // at most ₹1,600, plus ₹250 for a long trip = ₹1,850.
-    const capped = agreed({
-      days: 0, extraHours: 7, extraCharge: 840, returnHours: 9, returnCharge: 1200,
-      limitOff: 440, longFee: 250, ticket: 0, amount: 840 + 1200 - 440 + 250,
+    // Raipur → Delhi: ₹5,800 for 1,214 km, about 60 h away; the ticket on top.
+    const route = agreed({
+      days: 1, dayRate: 5800, returnHours: 0, returnCharge: 0, extraHours: 0, awayHours: 60, km: 1214,
+      ticket: 0, amount: 5800,
     });
-    await assertSucceeds(save(capped));
-    // It must add up…
-    await assertFails(save({ ...capped, amount: 840 + 1200 }));
-    // …the limit never takes off everything, or a negative amount…
-    await assertFails(save({ ...capped, limitOff: 2040, amount: 250 }));
-    await assertFails(save({ ...capped, limitOff: -100, amount: 840 + 1200 + 100 + 250 }));
-    // …and the long-trip charge is a sensible number.
-    await assertFails(save({ ...capped, longFee: 9000, amount: 840 + 1200 - 440 + 9000 }));
+    await assertSucceeds(save(route));
+    await assertSucceeds(save({ ...route, ticket: 1200, amount: 5800 + 1200 }));
+    // Nothing else may be charged on top, and it must add up.
+    await assertFails(save({ ...route, returnHours: 24, returnCharge: 1200, amount: 7000 }));
+    await assertFails(save({ ...route, days: 3, amount: 3 * 5800 }));
+    await assertFails(save({ ...route, extraHours: 2, amount: 5800 + 240 }));
+    await assertFails(save({ ...route, amount: 6000 }));
+    await assertFails(save({ ...route, awayHours: 0 }));
+    await assertFails(save({ ...route, km: -5 }));
   });
 
   test('customers and guests cannot change a booking', async () => {
@@ -468,10 +468,13 @@ describe('trip links and the final bill', () => {
     await assertFails(save(finalBill({ days: 0, dayRate: 1300, extraHours: 3, extraCharge: 1400, returnHours: 3, returnCharge: 360, amount: 1400 + 360 })));
     await assertFails(save(finalBill({ extraHours: 20, extraCharge: 2400, amount: 3200 + 2400 + 2400 })));
     await assertFails(save(finalBill({ returnCharge: 5000, amount: 3200 + 600 + 5000 })));
-    // One-way: the most for the time away and the long-trip charge, if they add up.
-    await assertSucceeds(save(finalBill({ limitOff: 2400, longFee: 250, amount: 3200 + 600 + 2400 - 2400 + 250 })));
-    await assertFails(save(finalBill({ limitOff: 2400, longFee: 250, amount: 3200 + 600 + 2400 })));
-    await assertFails(save(finalBill({ limitOff: 6200, amount: 0 })));
+    // A route price: the price, and the hours he was home late at the hourly rate.
+    const route = { days: 1, dayRate: 5800, returnHours: 0, returnCharge: 0, awayHours: 60, km: 1214 };
+    await assertSucceeds(save(finalBill({ ...route, extraHours: 0, extraCharge: 0, amount: 5800 })));
+    await assertSucceeds(save(finalBill({ ...route, extraHours: 4, extraCharge: 480, amount: 5800 + 480 })));
+    await assertFails(save(finalBill({ ...route, extraHours: 4, extraCharge: 480, amount: 5800 })));
+    await assertFails(save(finalBill({ ...route, days: 2, extraHours: 0, extraCharge: 0, amount: 11600 })));
+    await assertFails(save(finalBill({ ...route, returnHours: 24, returnCharge: 1200, extraHours: 0, extraCharge: 0, amount: 7000 })));
     await assertFails(save(finalBill({ driverPay: 4000 })));
     await assertFails(save(finalBill({ at: new Date(2020, 0, 1) })));
     await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ clock: { startAt: new Date(2026, 9, 30), homeAt: new Date(2026, 9, 29) } })));

@@ -320,7 +320,12 @@ function Steps({ b, link, user }: { b: Booking; link: TripLink; user: User }) {
 /* ------------------------------------------------------------------ bill */
 
 function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: User; now: number }) {
-  // A saved bill keeps its rates; otherwise the agreed price's (or the lowest shown).
+  // The plan for the real start time: to spot a time that looks wrong, and the hours away a route price is for.
+  const plan =
+    b.trip?.destId && link.startAt
+      ? tripFor(b.package as TripPackage, b.city, b.trip.destId, b.trip.days, toLocalInput(link.startAt), link.nonstop).plan
+      : undefined;
+  // A saved bill keeps its rates; otherwise the agreed price's (or the estimate's: a route price, or the lowest shown).
   const saved = b.bill;
   const rates = saved
     ? {
@@ -328,8 +333,11 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
         extraHourRate: saved.extraHourRate,
         returnHourRate: saved.returnHourRate,
         ticket: saved.ticket,
+        ...(saved.awayHours && {
+          route: { price: saved.dayRate, awayHours: saved.awayHours, km: saved.km ?? b.trip?.km ?? 0 },
+        }),
       }
-    : billRates(b.quote, tripRules, b.trip?.km);
+    : billRates(b.quote, tripRules, b.trip?.km, link.kind === 'one-way' ? plan?.homeAt : undefined);
   const [dayRate, setDayRate] = useState(String(rates.dayRate));
   const [cost, setCost] = useState('');
   const [returnPay, setReturnPay] = useState(String(DEFAULT_RETURN_PAY));
@@ -337,7 +345,14 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  const res = billNow(link, { ...rates, dayRate: int(dayRate) || rates.dayRate }, tripRules, GRACE, now);
+  const price = int(dayRate) || rates.dayRate;
+  const res = billNow(
+    link,
+    { ...rates, dayRate: price, ...(rates.route && { route: { ...rates.route, price } }) },
+    tripRules,
+    GRACE,
+    now,
+  );
   if (!res) return <p className="text-fg-subtle text-sm">Waiting for the driver to tap Start.</p>;
   const { bill, final } = res;
 
@@ -356,11 +371,6 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
     );
   }
 
-  // The plan for the real start time, to spot a time that looks wrong.
-  const plan =
-    b.trip?.destId && link.startAt
-      ? tripFor(b.package as TripPackage, b.city, b.trip.destId, b.trip.days, toLocalInput(link.startAt), link.nonstop).plan
-      : undefined;
   const warnings: string[] = [];
   if (plan?.dropAt !== undefined && link.kind === 'one-way' && bill.driveMinutes / 60 > plan.dropAt + LATE_DRIVE_HOURS)
     warnings.push(
@@ -488,7 +498,7 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
 
           <div className="mt-3 grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1">
-              <span className="font-medium">Day rate</span>
+              <span className="font-medium">{rates.route ? 'Route price' : 'Day rate'}</span>
               <Input
                 type="number"
                 inputMode="numeric"

@@ -91,7 +91,7 @@ const included = [
   'A police-verified, sober, highway-experienced driver',
   `${priceText.outstation} for each ${priceText.outstationHours} of driving, ${priceText.outstationExtraHour} an hour beyond`,
   `A drive shorter than a day: ${priceText.shortDrive}`,
-  `${priceText.awayRule}, from when he leaves to when he is home`,
+  `Longer drops (he is away ${priceText.routeAfter} or more): one price for the route — ${priceText.routeRule}, his way home included`,
   'The estimate times his train home from your start date and time',
   'Ride along or send the car alone — the same price',
 ];

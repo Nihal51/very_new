@@ -136,7 +136,7 @@ service cloud.firestore {
     // admin-only timeline, never here.
     function isQuote(q) {
       return q is map
-        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'extraCharge', 'limitOff', 'longFee', 'ticket', 'at'])
+        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'extraCharge', 'awayHours', 'km', 'ticket', 'at'])
         && q.keys().hasAll(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'ticket', 'at'])
         && q.amount is int && q.amount > 0 && q.amount <= 1000000
         && q.dayRate is int && q.dayRate > 0 && q.dayRate <= 100000
@@ -156,19 +156,19 @@ service cloud.firestore {
         && (!('extraCharge' in q) || (q.extraCharge is int && q.extraCharge >= 0
               && (q.extraCharge <= q.extraHourRate * q.extraHours || (q.days == 0 && q.extraCharge <= q.dayRate))))
         && q.ticket is int && q.ticket >= 0 && q.ticket <= 100000
-        // One-way (quotes from 1 Nov 2026): what the most for the time away takes
-        // off (never more than the charges) and the long-trip charge. Missing: 0.
-        && isAway(q, q.dayRate * q.days + q.returnCharge + q.get('extraCharge', q.extraHourRate * q.extraHours))
-        && q.amount == q.dayRate * q.days + q.returnCharge + q.get('extraCharge', q.extraHourRate * q.extraHours)
-             - q.get('limitOff', 0) + q.get('longFee', 0) + q.ticket
+        // A route price (quotes from 1 Nov 2026): one day at the route price, nothing else but the ticket.
+        && isRoute(q, 0)
+        && q.amount == q.dayRate * q.days + q.returnCharge + q.get('extraCharge', q.extraHourRate * q.extraHours) + q.ticket
         && q.at == request.time;
     }
 
-    // The most for the time away and the long-trip charge on a quote or bill:
-    // optional whole rupees; the limit never takes off more than the charges.
-    function isAway(m, charges) {
-      return (!('limitOff' in m) || (m.limitOff is int && m.limitOff >= 0 && m.limitOff < charges))
-        && (!('longFee' in m) || (m.longFee is int && m.longFee >= 0 && m.longFee <= 5000));
+    // A route price on a quote or bill (from 1 Nov 2026): the hours away it is
+    // for and the km; then days == 1 at dayRate = the route price, no way-home
+    // charge, and extra hours only as the bill's hours late (`late`: 0 on a quote).
+    function isRoute(m, late) {
+      return (!('km' in m) || (m.km is int && m.km > 0 && m.km <= 10000))
+        && (!('awayHours' in m) || (m.awayHours is int && m.awayHours >= 1 && m.awayHours <= 1000
+              && m.days == 1 && m.returnCharge == 0 && m.extraHours <= late));
     }
 
     // A time on a trip, if it is there at all (never null).
@@ -195,7 +195,7 @@ service cloud.firestore {
     // driver's pay and the profit go in the admin-only timeline.
     function isBill(b) {
       return b is map
-        && b.keys().hasOnly(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'limitOff', 'longFee', 'ticket', 'nonstop', 'at'])
+        && b.keys().hasOnly(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'awayHours', 'km', 'ticket', 'nonstop', 'at'])
         && b.keys().hasAll(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'ticket', 'nonstop', 'at'])
         && b.amount is int && b.amount > 0 && b.amount <= 1000000
         && b.dayRate is int && b.dayRate > 0 && b.dayRate <= 100000
@@ -212,8 +212,9 @@ service cloud.firestore {
         && b.returnCharge <= b.returnHourRate * 10 * (b.returnHours / 24 + 1)
         && b.ticket is int && b.ticket >= 0 && b.ticket <= 100000
         && b.nonstop is bool
-        && isAway(b, b.dayRate * b.days + b.extraCharge + b.returnCharge)
-        && b.amount == b.dayRate * b.days + b.extraCharge + b.returnCharge - b.get('limitOff', 0) + b.get('longFee', 0) + b.ticket
+        // A route price: one day at the price, the hours late at the hourly rate (checked above).
+        && isRoute(b, 200)
+        && b.amount == b.dayRate * b.days + b.extraCharge + b.returnCharge + b.ticket
         && b.at == request.time;
     }
 
