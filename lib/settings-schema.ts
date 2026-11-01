@@ -52,6 +52,11 @@ export type SiteSettings = {
     extraFullDayAfterHours: number;
     /** A one-way drive shorter than a day: extraHour an hour, but at least this much for the driving. */
     shortDriveMinimum: number;
+    /** One-way: the driving and the way home together never cost more than this for each 24 h he is away. */
+    awayDayMax: number;
+    /** One-way: added once when he is away longTripAfterHours or more (0 = none). */
+    longTripFee: number;
+    longTripAfterHours: number;
     /** Per hour the driver is still travelling home after the paid days. */
     returnHour: number;
     /** The most return hours cost in any 24 hours. */
@@ -206,6 +211,12 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   count('outstation.graceMinutes', o.graceMinutes, 59);
   count('outstation.extraFullDayAfterHours', o.extraFullDayAfterHours, 23);
   price('outstation.shortDriveMinimum', o.shortDriveMinimum);
+  price('outstation.awayDayMax', o.awayDayMax);
+  if (o.awayDayMax < s.prices.outstation.from)
+    problems.push('outstation.awayDayMax should be at least an outstation day (prices.outstation.from)');
+  if (!Number.isInteger(o.longTripFee) || o.longTripFee < 0 || o.longTripFee > 5000)
+    problems.push('outstation.longTripFee must be a whole number of rupees, 0–5,000');
+  count('outstation.longTripAfterHours', o.longTripAfterHours, 72);
   if (o.shortDriveMinimum > s.prices.outstation.from)
     problems.push('outstation.shortDriveMinimum should not cost more than an outstation day');
   if (o.extraFullDayAfterHours >= o.hoursPerDay)

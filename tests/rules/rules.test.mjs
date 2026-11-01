@@ -313,6 +313,26 @@ describe('bookings — admin workflow', () => {
     await assertFails(save(agreed({ extraHours: 2, extraCharge: 600, amount: 3 * 1550 + 1200 + 600 + 650 })));
   });
 
+  test('one-way: the most for the time away and the long-trip charge (1 Nov 2026)', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    const db = admin();
+    const save = (q) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: q }));
+    // Raipur → Ambikapur: 7 h of driving (₹840) + 9 h home (₹1,200) = ₹2,040; 16 h away:
+    // at most ₹1,600, plus ₹250 for a long trip = ₹1,850.
+    const capped = agreed({
+      days: 0, extraHours: 7, extraCharge: 840, returnHours: 9, returnCharge: 1200,
+      limitOff: 440, longFee: 250, ticket: 0, amount: 840 + 1200 - 440 + 250,
+    });
+    await assertSucceeds(save(capped));
+    // It must add up…
+    await assertFails(save({ ...capped, amount: 840 + 1200 }));
+    // …the limit never takes off everything, or a negative amount…
+    await assertFails(save({ ...capped, limitOff: 2040, amount: 250 }));
+    await assertFails(save({ ...capped, limitOff: -100, amount: 840 + 1200 + 100 + 250 }));
+    // …and the long-trip charge is a sensible number.
+    await assertFails(save({ ...capped, longFee: 9000, amount: 840 + 1200 - 440 + 9000 }));
+  });
+
   test('customers and guests cannot change a booking', async () => {
     await seedBooking('b1', { customerUid: 'cust1' });
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { status: 'cancelled' }));
@@ -448,6 +468,10 @@ describe('trip links and the final bill', () => {
     await assertFails(save(finalBill({ days: 0, dayRate: 1300, extraHours: 3, extraCharge: 1400, returnHours: 3, returnCharge: 360, amount: 1400 + 360 })));
     await assertFails(save(finalBill({ extraHours: 20, extraCharge: 2400, amount: 3200 + 2400 + 2400 })));
     await assertFails(save(finalBill({ returnCharge: 5000, amount: 3200 + 600 + 5000 })));
+    // One-way: the most for the time away and the long-trip charge, if they add up.
+    await assertSucceeds(save(finalBill({ limitOff: 2400, longFee: 250, amount: 3200 + 600 + 2400 - 2400 + 250 })));
+    await assertFails(save(finalBill({ limitOff: 2400, longFee: 250, amount: 3200 + 600 + 2400 })));
+    await assertFails(save(finalBill({ limitOff: 6200, amount: 0 })));
     await assertFails(save(finalBill({ driverPay: 4000 })));
     await assertFails(save(finalBill({ at: new Date(2020, 0, 1) })));
     await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ clock: { startAt: new Date(2026, 9, 30), homeAt: new Date(2026, 9, 29) } })));

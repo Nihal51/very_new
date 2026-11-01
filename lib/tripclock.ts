@@ -10,6 +10,7 @@
 
 import type { Booking, BookingBill, BookingClock } from './bookings.ts';
 import {
+  awayLines,
   dayRateFor,
   finalBill,
   returnCost,
@@ -206,6 +207,8 @@ export function bookingBill(b: Bill, nonstop: boolean): Omit<BookingBill, 'at'> 
     returnHours: b.returnHours,
     returnHourRate: b.returnHourRate,
     returnCharge: b.returnCharge,
+    ...(b.limitOff > 0 && { limitOff: b.limitOff }),
+    ...(b.longFee > 0 && { longFee: b.longFee }),
     ticket: b.ticket,
     nonstop,
   };
@@ -228,8 +231,10 @@ export function billLines(
     | 'returnHourRate'
     | 'returnCharge'
     | 'ticket'
-  >,
-  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'> & Partial<Pick<TripRules, 'shortDrive'>>,
+  > &
+    Partial<Pick<Bill, 'awayHours' | 'limitOff' | 'longFee'>>,
+  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'> &
+    Partial<Pick<TripRules, 'shortDrive' | 'away'>>,
 ): { label: string; amount: string }[] {
   const lines: { label: string; amount: string }[] = [];
   if (b.days > 0)
@@ -257,6 +262,9 @@ export function billLines(
       amount: rupees(b.returnCharge),
     });
   }
+  // The most for the time away, and the long-trip charge.
+  if ((b.limitOff ?? 0) > 0 || (b.longFee ?? 0) > 0)
+    lines.push(...awayLines(rules, b.awayHours ?? 0, b.limitOff ?? 0, b.longFee ?? 0, rupees));
   if (b.ticket > 0)
     lines.push({
       label: 'Ticket home (we bought it)',
@@ -267,7 +275,8 @@ export function billLines(
 
 /** "₹1,600 × 2 days + ₹600 for 5 extra hours + ₹2,400 way home (38 h)" — for the customer's booking. */
 export function billBreakdown(
-  b: Pick<Bill, 'days' | 'dayRate' | 'extraHours' | 'extraCharge' | 'returnHours' | 'returnCharge' | 'ticket'>,
+  b: Pick<Bill, 'days' | 'dayRate' | 'extraHours' | 'extraCharge' | 'returnHours' | 'returnCharge' | 'ticket'> &
+    Partial<Pick<Bill, 'limitOff' | 'longFee'>>,
 ): string {
   return [
     b.days > 0 ? `${rupees(b.dayRate)} × ${plural(b.days, 'day')}` : null,
@@ -277,10 +286,13 @@ export function billBreakdown(
         : `${rupees(b.extraCharge)} for ${plural(b.extraHours, 'extra hour')}`
       : null,
     b.returnHours > 0 ? `${rupees(b.returnCharge)} way home (${b.returnHours} h)` : null,
+    b.limitOff ? `− ${rupees(b.limitOff)} (the most for the time away)` : null,
+    b.longFee ? `${rupees(b.longFee)} long trip` : null,
     b.ticket > 0 ? `${rupees(b.ticket)} ticket` : null,
   ]
     .filter(Boolean)
-    .join(' + ');
+    .join(' + ')
+    .replace(' + − ', ' − ');
 }
 
 /** "2 days + 5 h" — the driving as charged. */

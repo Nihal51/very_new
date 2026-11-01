@@ -147,6 +147,13 @@ export function TripEstimate({
               waiting, then the hours on the train until he reaches home. If he changes trains (Bengaluru →
               Nagpur → Raipur), the wait at Nagpur for the second train counts too.
             </li>
+            <li>
+              <strong>Never more than {rupees(settings.outstation.awayDayMax)} for each day he is away</strong>, from
+              when he leaves to when he is home: driving and his way home together. After the first 24 hours, the hours
+              left over are {rupees(tripRules.extraHour)} each, up to one more day.
+              {settings.outstation.longTripFee > 0 &&
+                ` A trip that keeps him away ${settings.outstation.longTripAfterHours} hours or more is ${rupees(settings.outstation.longTripFee)} more.`}
+            </li>
             <li>The final bill uses the real times; a late train adds hours, an early one saves them.</li>
           </ul>
         ) : (

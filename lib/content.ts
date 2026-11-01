@@ -5,7 +5,7 @@
  */
 
 import type { IconName } from '@/components/icons';
-import { priceText, settings } from './settings';
+import { priceText, rupees, settings } from './settings';
 
 /* Prices, phone numbers and monthly-plan terms are NOT typed in this file: they come
    from site-settings.ts through `priceText` / `settings`, so changing a price there
@@ -498,7 +498,7 @@ export const extraRates = [
   },
   {
     label: 'Driver’s way home after a one-way drop',
-    detail: `From the drop until he is home, waiting included; more than ${settings.outstation.returnFullDayAfterHours} h in a day = a full day (${priceText.outstationReturnMax}). You book his ticket`,
+    detail: `From the drop until he is home, waiting included; more than ${settings.outstation.returnFullDayAfterHours} h in a day = a full day (${priceText.outstationReturnMax}). Driving and way home together: at most ${rupees(settings.outstation.awayDayMax)} for each day he is away. You book his ticket`,
     price: `${priceText.outstationReturnHour}/hour`,
   },
   {

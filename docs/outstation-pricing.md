@@ -60,6 +60,17 @@ the real hours.
    meals (`mealAllowance` a day if not given), fuel, tolls, parking, and a
    hotel only if a night stop is agreed. The **final bill** uses the real
    times. Booking extra days (stops on the way) charges each as a full day.
+7. **The most for the time away** (decided 1 Nov 2026): the driver is paid
+   by the 24 hours he is away, so steps 1–5 together never cost more than
+   `awayDayMax` (₹1,600) for each 24 hours from when he leaves to when he is
+   home. After the first 24 hours, the hours left over are `extraHour`
+   (₹120) each, up to one more `awayDayMax`. Raipur → Ambikapur: ₹840
+   driving + ₹1,200 way home = ₹2,040, but 16 h away → ₹1,600.
+8. **Long trip:** away `longTripAfterHours` (12) or more → `longTripFee`
+   (₹250) more, once, for the margin. Ambikapur: ₹1,600 + ₹250 = ₹1,850.
+   Short drops (Bilaspur, Korba) are unchanged. The /admin quote (the
+   "Hours he is away" field) and the final bill (real start → home) use the
+   same rule; both show it as lines (`limitOff`, `longFee`).
 
 ### Round trips
 

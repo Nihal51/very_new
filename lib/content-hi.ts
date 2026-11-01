@@ -13,7 +13,7 @@
  */
 
 import { cities, plans, services, type Faq } from './content';
-import { priceText, settings } from './settings';
+import { priceText, rupees, settings } from './settings';
 
 /* Like lib/content.ts, no price or phone number is typed here — they come from
    site-settings.ts, so the Hindi pages can never fall out of step with English. */
@@ -221,7 +221,7 @@ export const pricesHi: { name: string; price: string; unit: string }[] = [
   {
     name: 'वन-वे ड्रॉप के बाद ड्राइवर की घर वापसी — कार पहुँचाने से घर पहुँचने तक, ट्रेन का इंतज़ार भी',
     price: `${priceText.outstationReturnHour}/घंटा`,
-    unit: `हर 24 घंटे ${priceText.outstationReturnMax}; बचे घंटे ${settings.outstation.returnFullDayAfterHours} से ज़्यादा तो पूरा दिन; टिकट आप बुक करें`,
+    unit: `हर 24 घंटे ${priceText.outstationReturnMax}; बचे घंटे ${settings.outstation.returnFullDayAfterHours} से ज़्यादा तो पूरा दिन; ड्राइविंग और घर वापसी मिलाकर हर दिन ज़्यादा से ज़्यादा ${rupees(settings.outstation.awayDayMax)}; टिकट आप बुक करें`,
   },
   { name: 'शादी / इवेंट', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
 ];

@@ -64,6 +64,11 @@ export function GET() {
       extraFullDayAfterHours: outstation.extraFullDayAfterHours,
       // A one-way drive shorter than a day: extraHour an hour, at least this.
       shortDriveMinimum: outstation.shortDriveMinimum,
+      // One-way: driving + way home at most this per 24 h away (leaves → home); after
+      // the first 24 h, the hours left over at extraHour, up to one more. And the long-trip charge.
+      awayDayMax: outstation.awayDayMax,
+      longTripFee: outstation.longTripFee,
+      longTripAfterHours: outstation.longTripAfterHours,
       mealAllowance: outstation.mealAllowance,
       kmPerDay: outstation.kmPerDay,
       localWithinKm: outstation.localWithinKm,

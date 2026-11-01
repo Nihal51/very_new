@@ -78,6 +78,9 @@ export type BookingQuote = {
   extraHourRate: number;
   /** The extra hours' charge (quotes from 29 Oct 2026): a drive shorter than a day at the short-drive price. Missing: extraHours × extraHourRate. */
   extraCharge?: number;
+  /** One-way (quotes from 1 Nov 2026): what the most for the time away took off, and the long-trip charge. Missing: 0. */
+  limitOff?: number;
+  longFee?: number;
   ticket: number;
   at?: Date;
 };
@@ -98,6 +101,9 @@ export type BookingBill = {
   returnHourRate: number;
   /** The way home with the daily maximum applied. */
   returnCharge: number;
+  /** One-way (bills from 1 Nov 2026): what the most for the time away took off, and the long-trip charge. Missing: 0. */
+  limitOff?: number;
+  longFee?: number;
   ticket: number;
   /** Driven day and night (every 12 h a day). */
   nonstop: boolean;
@@ -286,6 +292,9 @@ export function toBill(v: unknown): BookingBill | null {
   if (keys.some((k) => Number.isNaN(n(k)))) return null;
   return {
     ...(Object.fromEntries(keys.map((k) => [k, n(k)])) as Record<(typeof keys)[number], number>),
+    // Bills from 1 Nov 2026: the most for the time away, and the long-trip charge.
+    ...(n('limitOff') > 0 && { limitOff: n('limitOff') }),
+    ...(n('longFee') > 0 && { longFee: n('longFee') }),
     nonstop: b.nonstop === true,
     at: toDate(b.at),
   };

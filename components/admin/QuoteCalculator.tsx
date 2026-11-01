@@ -43,6 +43,10 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
   const [back, setBack] = useState(String(b.quote?.returnHours ?? (oneWay ? (b.trip?.returnHours ?? 0) : 0)));
   const [returnPay, setReturnPay] = useState(String(DEFAULT_RETURN_PAY));
   const [extraHours, setExtraHours] = useState(String(b.quote?.extraHours ?? drive?.extraHours ?? 0));
+  // One-way: the hours he is away (leaves → home), for the most customers pay and the long-trip charge.
+  const [away, setAway] = useState(
+    String(drive?.dropAt !== undefined ? Math.ceil(drive.dropAt + (b.trip?.returnHours ?? 0) - 1e-9) : 0),
+  );
   const [ticket, setTicket] = useState(String(b.quote?.ticket ?? 0));
   const [partner, setPartner] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -63,6 +67,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
           partnerPercent: partner ? PARTNER : 0,
           minProfitPercent: MIN_PROFIT,
           ...(b.trip?.km ? { km: b.trip.km } : {}),
+          ...(oneWay ? { awayHours: int(away) } : {}),
         })
       : null;
 
@@ -76,6 +81,8 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
     extraHours: int(extraHours),
     extraHourRate: q.extraHourRate,
     extraCharge: q.extraCharge,
+    ...(q.limitOff > 0 && { limitOff: q.limitOff }),
+    ...(q.longFee > 0 && { longFee: q.longFee }),
     ticket: int(ticket),
   };
 
@@ -172,6 +179,13 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
                 ? `Beyond the full days, ${priceText.outstationExtraHour} each. A drive shorter than a day (0 full days): ${priceText.shortDrive}`
                 : `Beyond ${priceText.outstationHours} a day`,
             )}
+            {oneWay &&
+              num(
+                'Hours he is away',
+                away,
+                setAway,
+                `He leaves → he is home. ${priceText.awayRule}`,
+              )}
             {oneWay && num('Ticket, if we bought it', ticket, setTicket, 'Usually 0 — the customer books it. Passed on at cost')}
           </div>
           <label className="flex items-center gap-2 text-sm">

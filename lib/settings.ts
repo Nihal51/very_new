@@ -57,6 +57,12 @@ export const priceText = {
   outstationExtraHour: rupees(settings.outstation.extraHour),
   /** "₹120 an hour of driving, at least ₹600" */
   shortDrive: `${rupees(settings.outstation.extraHour)} an hour of driving, at least ${rupees(settings.outstation.shortDriveMinimum)}`,
+  /** One-way: the most for the time away and the long-trip charge, in one sentence. */
+  awayRule:
+    `Driving and his way home together: at most ${rupees(settings.outstation.awayDayMax)} for each day he is away` +
+    (settings.outstation.longTripFee > 0
+      ? `; ${rupees(settings.outstation.longTripFee)} more when he is away ${settings.outstation.longTripAfterHours} h or more`
+      : ''),
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
   mealAllowance: rupees(settings.outstation.mealAllowance),
   nightFrom: rupees(p.nightFrom),
@@ -111,6 +117,11 @@ export const tripRules: TripRules = {
   extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
   shortDrive: { minimum: settings.outstation.shortDriveMinimum },
+  away: {
+    dayMax: settings.outstation.awayDayMax,
+    longFee: settings.outstation.longTripFee,
+    longAfterHours: settings.outstation.longTripAfterHours,
+  },
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,
   kmPerDay: settings.outstation.kmPerDay,

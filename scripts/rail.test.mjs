@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { estimate, planTrip, returnCost, withReturn } from '../lib/outstation.ts';
+import { awayLimit, estimate, planTrip, returnCost, withReturn } from '../lib/outstation.ts';
 import {
   addDays,
   directQueries,
@@ -333,6 +333,11 @@ const rules = {
   dayRate: { ...settings.prices.outstation },
   nearRates: settings.prices.outstationNear,
   shortDrive: { minimum: settings.outstation.shortDriveMinimum },
+  away: {
+    dayMax: settings.outstation.awayDayMax,
+    longFee: settings.outstation.longTripFee,
+    longAfterHours: settings.outstation.longTripAfterHours,
+  },
 
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
@@ -360,7 +365,9 @@ test('the way home from a train: whole hours from the drop, once, with the daily
   assert.equal(est.returnCharge, 1200 + 1200, '24 h capped at ₹1,200, 13 h more capped at ₹1,200');
   // The driving is untouched by the train.
   assert.deepEqual([train.fullDays, train.extraHours], [plan.fullDays, plan.extraHours]);
-  assert.equal(est.from, plan.fullDays * rules.dayRate.from + plan.extraHours * rules.extraHour + 2400);
+  assert.equal(est.driving.from + est.returnCharge, plan.fullDays * rules.dayRate.from + plan.extraHours * rules.extraHour + 2400);
+  // The whole trip never costs more than the most for the time he is away, plus the long-trip charge.
+  assert.equal(est.from, Math.min(est.driving.from + est.returnCharge, awayLimit(rules, train.homeAt)) + 250);
 });
 
 test('a short wait and train: by the hour, under the cap', () => {

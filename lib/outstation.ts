@@ -82,6 +82,15 @@ export type TripRules = {
    * Left out: the whole drive at extraHour. His way home is charged on top.
    */
   shortDrive?: { minimum: number };
+  /**
+   * One-way (decided 1 Nov 2026), on top of everything above: the driving
+   * and his way home together never cost more than `dayMax` for each 24
+   * hours he is away (he leaves → he is home); after the first 24, the
+   * hours left over are extraHour each, up to one more dayMax (awayLimit).
+   * A trip that keeps him away `longAfterHours` or more costs `longFee` more,
+   * once (longTripFee). Left out: neither.
+   */
+  away?: AwayRules;
   /** Driving hours in one outstation day. */
   hoursPerDay: number;
   /** A round trip with up to this many hours of driving in all is back within the 24 hours: one day. */
@@ -319,6 +328,86 @@ export function shortDriveWords(
   return `${h} driving ${h === 1 ? 'hour' : 'hours'} × ${money(hourRate)}`;
 }
 
+export type AwayRules = { dayMax: number; longFee: number; longAfterHours: number };
+
+const wholeHours = (h: number) => Math.max(0, Math.ceil((Number.isFinite(h) ? h : 0) - 1e-9));
+
+/**
+ * One-way: the most the driving and his way home together cost when he is
+ * away `hours` (whole hours, he leaves → he is home): up to 24 h, dayMax;
+ * then dayMax for each further 24 h, and the hours left over at `hourRate`,
+ * never more than one more dayMax. Undefined without rules.away.
+ *   15 h → ₹1,600;  26 h → ₹1,600 + 2 × ₹120 = ₹1,840;  53 h → ₹3,200 + 5 × ₹120 = ₹3,800.
+ */
+export function awayLimit(
+  rules: Pick<TripRules, 'away' | 'extraHour'>,
+  hours: number,
+  hourRate: number = rules.extraHour,
+): number | undefined {
+  const a = rules.away;
+  if (!a) return undefined;
+  const h = wholeHours(hours);
+  if (h <= 24) return a.dayMax;
+  const more = h - 24;
+  const days = Math.floor(more / 24);
+  return a.dayMax * (1 + days) + Math.min((more - days * 24) * hourRate, a.dayMax);
+}
+
+/** One-way: the long-trip charge — longFee when he is away longAfterHours or more, else 0. */
+export function longTripFee(rules: Pick<TripRules, 'away'>, hours: number): number {
+  const a = rules.away;
+  return a && a.longFee > 0 && wholeHours(hours) >= a.longAfterHours ? a.longFee : 0;
+}
+
+/**
+ * The limit and the long-trip charge for `charges` (driving + way home, no
+ * ticket) when he is away `hours`: `limitOff`, what the limit takes off
+ * (0 when the charges are under it), and `longFee`. The customer pays
+ * charges − limitOff + longFee.
+ */
+export function awayAdjust(
+  rules: Pick<TripRules, 'away' | 'extraHour'>,
+  charges: number,
+  hours: number,
+  hourRate: number = rules.extraHour,
+): { limitOff: number; longFee: number; limit?: number } {
+  const limit = awayLimit(rules, hours, hourRate);
+  return {
+    limitOff: limit === undefined ? 0 : Math.max(0, Math.round(charges) - limit),
+    longFee: longTripFee(rules, hours),
+    ...(limit !== undefined && { limit }),
+  };
+}
+
+/**
+ * The limit and the long-trip charge as lines: [what, amount]. `off` is what
+ * the limit takes off (a range on an estimate), `money` formats rupees.
+ *   "Most for 16 h away: ₹1,600 a day he is away" −₹440
+ *   "Long trip: 16 h away (12 h or more)" ₹250
+ */
+export function awayLines(
+  rules: Pick<TripRules, 'away'>,
+  hours: number,
+  off: number | { from: number; to: number },
+  longFee: number,
+  money: (n: number) => string,
+): { label: string; amount: string }[] {
+  const a = rules.away;
+  const h = wholeHours(hours);
+  const o = typeof off === 'number' ? { from: off, to: off } : off;
+  const lo = Math.min(o.from, o.to);
+  const hi = Math.max(o.from, o.to);
+  const lines: { label: string; amount: string }[] = [];
+  if (a && hi > 0)
+    lines.push({
+      label: `Most for ${h} h away (he leaves → he is home): ${money(a.dayMax)} a day${h > 24 ? ', extra hours by the hour' : ''}`,
+      amount: `−${lo === hi ? money(hi) : `${money(lo)}–${money(hi).replace(/^₹/, '')}`}`,
+    });
+  if (a && longFee > 0)
+    lines.push({ label: `Long trip: ${h} h away (${a.longAfterHours} h or more)`, amount: money(longFee) });
+  return lines;
+}
+
 /** Hours of driving for a distance, at averageKmh. */
 export const driveHours = (rules: Pick<TripRules, 'averageKmh'>, km: number) => km / rules.averageKmh;
 
@@ -523,12 +612,20 @@ export type Estimate = {
   extraCharge: number;
   /** The way home (one-way). */
   returnCharge: number;
+  /** One-way: whole hours he is away (he leaves → he is home); 0 when unknown or a round trip. */
+  awayHours: number;
+  /** What the limit takes off (awayLimit), at each end of the range. */
+  limitOff: Money;
+  /** The long-trip charge (longTripFee). */
+  longFee: number;
+  /** The limit for awayHours, when there is one. */
+  limit?: number;
 };
 
 /** What the customer sees: a range, from the per-day price range for the distance, plus the extra hours and the way home. */
 export function estimate(
   rules: TripRules,
-  plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'> & Partial<Pick<TripPlan, 'km'>>,
+  plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'> & Partial<Pick<TripPlan, 'km' | 'kind' | 'homeAt'>>,
 ): Estimate {
   const rate = dayRateFor(rules, plan.km);
   // A one-way drive shorter than a day: by the hour, at least the minimum (₹600).
@@ -538,7 +635,21 @@ export function estimate(
     ? short
     : { from: plan.fullDays * rate.from + extraCharge, to: plan.fullDays * rate.to + extraCharge };
   const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay, rules.returnFullDayAfter);
-  return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, extraCharge, returnCharge };
+  // One-way: never more than the limit for the hours he is away, and the long-trip charge.
+  const awayHours = plan.kind !== 'round' && plan.homeAt !== undefined ? wholeHours(plan.homeAt) : 0;
+  const low = awayHours ? awayAdjust(rules, driving.from + returnCharge, awayHours) : { limitOff: 0, longFee: 0 };
+  const high = awayHours ? awayAdjust(rules, driving.to + returnCharge, awayHours) : { limitOff: 0, longFee: 0 };
+  return {
+    from: driving.from + returnCharge - low.limitOff + low.longFee,
+    to: driving.to + returnCharge - high.limitOff + high.longFee,
+    driving,
+    extraCharge,
+    returnCharge,
+    awayHours,
+    limitOff: { from: low.limitOff, to: high.limitOff },
+    longFee: low.longFee,
+    ...('limit' in low && low.limit !== undefined && { limit: low.limit }),
+  };
 }
 
 /* -------------------------------------------------------------- quote ---- */
@@ -562,6 +673,8 @@ export type QuoteInput = {
   minProfitPercent: number;
   /** One-way road km to the place, for the day price customers were shown (dayRateFor). */
   km?: number;
+  /** One-way: hours he is away (he leaves → he is home), for the limit and the long-trip charge. 0/missing: neither. */
+  awayHours?: number;
 };
 
 export type Quote = {
@@ -575,6 +688,12 @@ export type Quote = {
   /** The way home, to the customer, with the daily maximum. */
   returnCharge: number;
   extraHourRate: number;
+  /** One-way: what the limit for the hours away takes off (awayLimit), 0 if under it. */
+  limitOff: number;
+  /** One-way: the long-trip charge (longTripFee). */
+  longFee: number;
+  /** Hours away the limit and the long-trip charge were worked out for (0: none). */
+  awayHours: number;
   /** Driver charges the customer pays, before the ticket. */
   charges: number;
   /** charges + ticket — the number to tell the customer. */
@@ -625,7 +744,12 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
   // A drive shorter than a day never costs less than the minimum customers were shown (₹600).
   const short = days === 0 && hours > 0 ? shortDriveCharge(rules, hours) : undefined;
   const extraCharge = Math.max(hours * extraHourRate, short?.from ?? 0);
-  const charges = days * dayRate + returnCharge + extraCharge;
+  // The same limit and long-trip charge customers were shown, at the hourly rate quoted.
+  const awayHours = whole(input.awayHours ?? 0);
+  const adjust = awayHours
+    ? awayAdjust(rules, days * dayRate + returnCharge + extraCharge, awayHours, extraHourRate)
+    : { limitOff: 0, longFee: 0 };
+  const charges = days * dayRate + returnCharge + extraCharge - adjust.limitOff + adjust.longFee;
   const driverPay = Math.round(
     days * cost + returnCost(back, backPay, backPay * capHours, rules.returnFullDayAfter) + hours * hourCost,
   );
@@ -639,6 +763,9 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
     returnCharge,
     extraHourRate,
     extraCharge,
+    limitOff: adjust.limitOff,
+    longFee: adjust.longFee,
+    awayHours,
     charges,
     total: charges + whole(input.ticket),
     driverPay,
@@ -729,6 +856,12 @@ export type Bill = {
   returnHours: number;
   /** The way home with the daily maximum. */
   returnCharge: number;
+  /** One-way: whole hours he was away (start → home, with the grace minutes); 0 on a round trip. */
+  awayHours: number;
+  /** One-way: what the limit for awayHours takes off (awayLimit), 0 if under it. */
+  limitOff: number;
+  /** One-way: the long-trip charge (longTripFee). */
+  longFee: number;
   dayRate: number;
   extraHourRate: number;
   returnHourRate: number;
@@ -747,6 +880,8 @@ const minutesBetween = (a: number | undefined, b: number | undefined) =>
  *   - The extra hours never cost more than one more day.
  *   - The way home (one-way: drop → home), by the hour with the daily maximum
  *     (returnMaxPerDay ÷ returnHour hours, as in the quote).
+ *   - One-way: all that never more than the limit for the hours he was away
+ *     (start → home), plus the long-trip charge (awayAdjust).
  */
 export function finalBill(rules: TripRules, input: BillInput): Bill {
   const oneWay = input.kind === 'one-way';
@@ -771,6 +906,11 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
   const returnHours = oneWay ? chargeHours(returnMinutes, input.graceMinutes) : 0;
   const capHours = rules.returnMaxPerDay / rules.returnHour;
   const returnCharge = returnCost(returnHours, returnHourRate, returnHourRate * capHours, rules.returnFullDayAfter);
+  // One-way: never more than the limit for the real hours away, and the long-trip charge.
+  const awayHours = oneWay ? chargeHours(minutesBetween(input.startAt, input.homeAt), input.graceMinutes) : 0;
+  const { limitOff, longFee } = oneWay
+    ? awayAdjust(rules, days * dayRate + extraCharge + returnCharge, awayHours, extraHourRate)
+    : { limitOff: 0, longFee: 0 };
   return {
     driveMinutes,
     days,
@@ -779,11 +919,14 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
     returnMinutes,
     returnHours,
     returnCharge,
+    awayHours,
+    limitOff,
+    longFee,
     dayRate,
     extraHourRate,
     returnHourRate,
     ticket,
-    amount: days * dayRate + extraCharge + returnCharge + ticket,
+    amount: days * dayRate + extraCharge + returnCharge - limitOff + longFee + ticket,
   };
 }
 

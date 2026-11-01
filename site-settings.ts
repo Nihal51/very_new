@@ -126,6 +126,10 @@ export const settings = {
     returnHour: 120, //        each hour of his way home after a one-way drop (from the drop, waiting included)
     returnMaxPerDay: 1200, //  a full day of the way home (each 24 hours)
     returnFullDayAfterHours: 6, // the hours left over after the full days: up to this many by the hour; more = a full day
+    awayDayMax: 1600, //       one-way: driving + way home never cost more than this for each 24 h he is away (leaves → home);
+    //                         after the first 24 h, hours left over at extraHour, up to one more awayDayMax
+    longTripFee: 250, //       one-way: added once when he is away longTripAfterHours or more (0 = none)
+    longTripAfterHours: 12,
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 600, //          how far one driver drives in a day (about 12 h at averageKmh)
     averageKmh: 50, //         highway average with stops

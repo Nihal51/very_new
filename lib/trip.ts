@@ -5,6 +5,7 @@
 
 import { TRIP_PACKAGES, type BookingQuote, type BookingTrip, type TripPackage } from './bookings';
 import {
+  awayLines,
   DEFAULT_START_HOUR,
   destinations,
   estimate,
@@ -355,6 +356,8 @@ export function estimateLines(view: TripView): { label: string; amount: string }
         }
       : { label: 'Driver’s way home', amount: 'No charge' },
   );
+  // The most for the hours he is away, and the long-trip charge.
+  lines.push(...awayLines(tripRules, view.est.awayHours, view.est.limitOff, view.est.longFee, rupees));
   return lines;
 }
 
@@ -378,8 +381,11 @@ export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
         : `${rupees(q.extraHourRate)} × ${plural(q.extraHours, 'extra hour')}`
       : null,
     q.returnHours > 0 ? `${rupees(q.returnCharge)} way home (${q.returnHours} h)` : null,
+    q.limitOff ? `− ${rupees(q.limitOff)} (the most for the time away)` : null,
+    q.longFee ? `${rupees(q.longFee)} long trip` : null,
     q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
   ]
     .filter(Boolean)
-    .join(' + ');
+    .join(' + ')
+    .replace(' + − ', ' − ');
 }
