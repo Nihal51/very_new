@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { JsonLd } from '@/components/JsonLd';
 import { ClosingCTA } from '@/components/sections/ClosingCTA';
@@ -54,6 +55,13 @@ export default function ServicesPage() {
         lede="Longer or one-off jobs that the hourly rates do not fit. Tell us the plan and we quote one fixed price before anything starts."
       >
         <ServicesGrid detailed group="extra" />
+        <p className="text-fg-muted mt-6 text-[0.9375rem]">
+          Bought a new car but can’t drive yet?{' '}
+          <Link href="/new-car-driver/" className="text-accent-text font-semibold underline underline-offset-2">
+            We bring it home from the showroom and drive it for you
+          </Link>
+          .
+        </p>
       </Section>
 
       <Section

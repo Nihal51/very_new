@@ -10,6 +10,7 @@ const company = [
   { href: '/services/', label: 'All services' },
   { href: '/pricing/', label: 'Pricing' },
   { href: '/book/', label: 'Book a driver' },
+  { href: '/new-car-driver/', label: 'New car? Get a driver' },
   { href: '/driver-in/', label: 'All areas we cover' },
   { href: '/drivers/', label: 'Driver jobs' },
   { href: '/partners/', label: 'Become a partner' },

@@ -23,6 +23,7 @@ const CORE: ReadonlyArray<Pick<Entry, 'url' | 'changeFrequency' | 'priority'>> =
   { url: '/services/', changeFrequency: 'monthly', priority: 0.9 },
   { url: '/pricing/', changeFrequency: 'monthly', priority: 0.9 },
   { url: '/one-way-drop/', changeFrequency: 'monthly', priority: 0.8 },
+  { url: '/new-car-driver/', changeFrequency: 'monthly', priority: 0.8 },
   { url: '/book/', changeFrequency: 'monthly', priority: 0.9 },
   { url: '/cities/', changeFrequency: 'monthly', priority: 0.8 },
   { url: '/driver-in/', changeFrequency: 'monthly', priority: 0.8 },

@@ -490,6 +490,29 @@ export function cityServiceSchema(citySlug: string, serviceSlug: string, path: s
   };
 }
 
+/** The /new-car-driver/ page: the new car brought home from the showroom, and a driver until the owner drives. */
+export function newCarSchema({ from }: { from: number }) {
+  return {
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    '@id': `${abs('/new-car-driver/')}#service`,
+    name: 'New car delivery from the showroom, with a driver',
+    serviceType: 'Driver for a new car owner',
+    description:
+      'A verified driver drives your new car home from the showroom in Raipur, Bhilai, Durg or Bilaspur, then drives it for you by the hour, the day or the month until you are ready to drive.',
+    url: abs('/new-car-driver/'),
+    provider: { '@id': ORG_ID },
+    areaServed: SERVICE_AREA,
+    audience: { '@type': 'Audience', audienceType: 'New car owners who do not drive yet' },
+    offers: {
+      '@type': 'Offer',
+      priceCurrency: 'INR',
+      priceSpecification: { '@type': 'UnitPriceSpecification', minPrice: from, priceCurrency: 'INR' },
+      availability: 'https://schema.org/InStock',
+    },
+  };
+}
+
 /** The /one-way-drop/ page: the service, from its lowest price (short drops by the hour, longer ones by distance). */
 export function oneWayDropSchema({ from }: { from: number }) {
   return {

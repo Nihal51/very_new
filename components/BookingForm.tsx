@@ -205,7 +205,7 @@ export function BookingForm({
   }, []);
 
   /* Links can pre-fill the form: /book/?pkg=one-way-drop&city=Raipur&to=nagpur&days=2&nonstop=1&when=2026-10-31T07:00
-     (the One-Way Drop page's "Book this drop"). Unknown values are ignored. */
+     (the One-Way Drop page's "Book this drop"), and &note=… for the notes box (the New Car page). Unknown values are ignored. */
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const pkg = q.get('pkg') ?? '';
@@ -214,7 +214,10 @@ export function BookingForm({
     const days = q.get('days') ?? '';
     const nonstop = q.get('nonstop') === '1' ? '1' : '';
     const when = q.get('when') ?? '';
+    // A short note from the linking page (e.g. the New Car page: "pick up from the showroom").
+    const note = (q.get('note') ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 200);
     const patch: Partial<Values> = {
+      ...(note && { notes: note }),
       ...(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(when) && { when }),
       ...(bookingPackages.some((p) => p.value === pkg) && { pkg }),
       ...(cities.some((c) => c.name === city) && { city }),
