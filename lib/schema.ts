@@ -490,8 +490,8 @@ export function cityServiceSchema(citySlug: string, serviceSlug: string, path: s
   };
 }
 
-/** The /one-way-drop/ page: the service, priced per day, with the price range. */
-export function oneWayDropSchema({ from, to }: { from: number; to: number }) {
+/** The /one-way-drop/ page: the service, from its lowest price (short drops by the hour, longer ones by distance). */
+export function oneWayDropSchema({ from }: { from: number }) {
   return {
     '@context': 'https://schema.org',
     '@type': 'Service',
@@ -509,9 +509,7 @@ export function oneWayDropSchema({ from, to }: { from: number; to: number }) {
       priceSpecification: {
         '@type': 'UnitPriceSpecification',
         minPrice: from,
-        maxPrice: to,
         priceCurrency: 'INR',
-        unitText: 'DAY',
       },
       availability: 'https://schema.org/InStock',
     },

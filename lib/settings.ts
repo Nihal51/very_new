@@ -60,6 +60,13 @@ export const priceText = {
   /** Longer one-way drops: the route price, in one sentence. */
   routeRule: `${rupees(settings.outstation.routeBase)} + ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(settings.outstation.routePerKm)} a km, at least ${rupees(settings.outstation.routeMinBase)} + ${rupees(settings.outstation.routeMinPerDay)} for each day he is away`,
   routeAfter: `${settings.outstation.routeAfterHours} hours`,
+  /** The whole one-way drop price in two sentences: short drops by the hour, longer ones by distance. */
+  get oneWayRule() {
+    return (
+      `A short drop (he is away less than ${settings.outstation.routeAfterHours} hours): ${this.shortDrive}, plus his way home — from the drop until he is home, waiting included — ${this.outstationReturnRule}. ` +
+      `A longer drop: one price for the route — ${this.routeRule}, his way home and waiting included.`
+    );
+  },
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
   mealAllowance: rupees(settings.outstation.mealAllowance),
   nightFrom: rupees(p.nightFrom),

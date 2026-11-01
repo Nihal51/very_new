@@ -17,7 +17,6 @@ import { homeText, kmText, tripFor } from '@/lib/trip';
 import { DEFAULT_START_HOUR } from '@/lib/outstation';
 
 const trail = [{ name: 'One-Way Drop', path: '/one-way-drop/' }];
-const perDriveDay = `${priceText.outstation} for each ${priceText.outstationHours} of driving`;
 const late = priceText.outstationReturnRule;
 
 export const metadata: Metadata = pageMeta({
@@ -89,9 +88,8 @@ const steps = [
 
 const included = [
   'A police-verified, sober, highway-experienced driver',
-  `${priceText.outstation} for each ${priceText.outstationHours} of driving, ${priceText.outstationExtraHour} an hour beyond`,
-  `A drive shorter than a day: ${priceText.shortDrive}`,
   `Longer drops (he is away ${priceText.routeAfter} or more): one price for the route — ${priceText.routeRule}, his way home included`,
+  `Short drops: ${priceText.shortDrive}, plus his way home by the hour`,
   'The estimate times his train home from your start date and time',
   'Ride along or send the car alone — the same price',
 ];
@@ -107,7 +105,7 @@ const notIncluded = [
 const faqs = [
   {
     q: 'Can I travel with the driver and my car?',
-    a: `Yes. Many one-way drops are families travelling in their own car. The driver drives you to the address you give, then comes home on his own by bus or train. The price is the same whether you ride along or send the car alone: ${perDriveDay}.`,
+    a: `Yes. Many one-way drops are families travelling in their own car. The driver drives you to the address you give, then comes home on his own by bus or train. The price is the same whether you ride along or send the car alone: by distance — ${priceText.routeRule} for a longer drop.`,
   },
   {
     q: 'Can a driver take my car to another city without me?',
@@ -115,7 +113,7 @@ const faqs = [
   },
   {
     q: 'Is the driver’s way home included?',
-    a: `It is charged by the hour, from the drop until he is home — waiting for his train included: ${late}. From your start date and time the estimate works out when he drops the car, the first train home he can catch that day and when he is home (Raipur → Nagpur: about 6 hours; Raipur → Mumbai: about 23). The final bill uses the real times. You book his train or bus ticket.`,
+    a: `On a longer drop (he is away ${priceText.routeAfter} or more) it is included in the route price. On a short drop it is charged by the hour, from the drop until he is home — waiting for his train included: ${late}. From your start date and time the estimate works out when he drops the car, the first train home he can catch that day and when he is home (Raipur → Nagpur: about 6 hours; Raipur → Mumbai: about 23). The final bill uses the real times. You book his train or bus ticket.`,
   },
   {
     q: 'How many days will my drop take?',
@@ -137,7 +135,7 @@ export default function OneWayDropPage() {
       <PageHero
         eyebrow="One-way drop"
         title="One-way drop to another city — you and your car, or just the car"
-        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. ${priceText.outstation} for each ${priceText.outstationHours} of driving; his way home ${late}.`}
+        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. Priced by distance — ${priceText.routeRule}, his way home included; short drops by the hour.`}
         trail={trail}
         actions={
           <>
@@ -286,7 +284,7 @@ export default function OneWayDropPage() {
         lede="Check the price above, book in a minute, or call — we confirm everything with you before the driver leaves."
       />
 
-      <JsonLd data={oneWayDropSchema(settings.prices.outstation)} />
+      <JsonLd data={oneWayDropSchema({ from: settings.outstation.shortDriveMinimum })} />
       <JsonLd data={faqSchema(faqs)} />
       <JsonLd data={breadcrumbSchema(trail)} />
     </>

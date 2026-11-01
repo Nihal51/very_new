@@ -361,11 +361,11 @@ export const services: Service[] = [
       'The driver arranges their own way back',
     ],
     quote: {
-      title: 'Charged by the day',
-      body: `${priceText.outstation} for each ${priceText.outstationHours} of driving (about 600 km), and ${priceText.outstationExtraHour} for each hour beyond (more than ${settings.outstation.extraFullDayAfterHours} hours beyond = a full day). A shorter drive: ${priceText.shortDrive}. After the drop, his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. Pick the destination and the start date and time on the booking form: the estimate shows when he drops the car, the train he takes home and when he is home; we confirm the exact figure on the call, before the driver sets off.`,
+      title: 'Priced by distance',
+      body: `${priceText.oneWayRule} Pick the destination and the start date and time on the booking form: the estimate shows when he drops the car, the train he takes home and when he is home; we confirm the exact figure on the call, before the driver sets off.`,
       factors: [
-        'Hours of driving for the distance',
-        'His way home, from the drop until he is home',
+        'The distance (one-way km)',
+        'How long he is away, his way home included',
         'His bus or train ticket home — you book it',
       ],
       whatsapp:
@@ -379,7 +379,7 @@ export const services: Service[] = [
       },
       {
         q: 'Is the driver’s return journey included in the price?',
-        a: `It is charged by the hour: his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule} (Raipur → Nagpur, home that evening: about 6 hours). You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
+        a: `Yes. On a longer drop (he is away ${priceText.routeAfter} or more) it is in the route price — ${priceText.routeRule}. On a short drop it is by the hour: from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
       },
     ],
   },
@@ -458,7 +458,7 @@ export const plans: Plan[] = [
     id: 'outstation',
     eyebrow: 'Outstation',
     name: 'Outstation Trip',
-    blurb: 'Long-distance journeys and one-way drops, by the day.',
+    blurb: 'Long-distance round trips, by the day. One-way drops are priced by distance.',
     price: priceText.outstationSpan,
     min: Math.min(settings.prices.outstation.from, ...settings.prices.outstationNear.map((t) => t.from)),
     max: settings.prices.outstation.to,
@@ -524,7 +524,7 @@ export const bookingPackages = [
   { value: 'monthly-basic', label: `Monthly Driver, Basic plan — ${priceText.basic} a month` },
   { value: 'monthly-premium', label: `Monthly Driver, Premium plan — ${priceText.premium} a month` },
   { value: 'wedding-event', label: 'Wedding / Event — drivers or cars with drivers, quoted on call' },
-  { value: 'one-way-drop', label: `One-Way Car Drop — ${priceText.outstation} a day` },
+  { value: 'one-way-drop', label: 'One-Way Car Drop — priced by distance, his way home included' },
 ] as const;
 
 /* ------------------------------------------------------------------ trust  */
@@ -786,7 +786,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'How much does it cost to hire a driver?',
-    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstationSpan} a day for outstation trips, by distance (${priceText.outstationByDistance}), with one-way car drops by the hour or the day; the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
+    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstationSpan} a day for outstation trips, by distance (${priceText.outstationByDistance}), with one-way car drops priced by distance (${priceText.routeRule}; short ones by the hour); the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
   },
   {
     q: 'How quickly will a driver arrive?',
@@ -830,7 +830,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'Can a driver take my car to another city one way?',
-    a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back by bus or train. You pay ${priceText.outstation} for each ${priceText.outstationHours} of driving and ${priceText.outstationExtraHour} for each hour beyond (more than ${settings.outstation.extraFullDayAfterHours} hours beyond = a full day) — a shorter drive: ${priceText.shortDrive} — plus his way home — from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. You book his ticket home. The booking form shows the estimate.`,
+    a: `Yes. With a one-way car drop, a verified driver delivers your car to the address you give and makes their own way back by bus or train. ${priceText.oneWayRule} You book his ticket home. The booking form shows the estimate.`,
   },
   {
     q: 'Do you serve places outside Raipur, Bhilai, Durg and Bilaspur?',

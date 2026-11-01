@@ -197,7 +197,7 @@ const planNamesHi: Record<string, { name: string; unit: string }> = {
   '1-hour': { name: '1 घंटा', unit: 'प्रति बुकिंग' },
   '3-hours': { name: '3 घंटे', unit: 'प्रति बुकिंग' },
   'full-day': { name: 'शहर में पूरा दिन (8 घंटे)', unit: 'प्रति दिन' },
-  outstation: { name: 'आउटस्टेशन / वन-वे ड्रॉप', unit: 'प्रति दिन' },
+  outstation: { name: 'आउटस्टेशन ट्रिप (वन-वे ड्रॉप: दूरी के हिसाब से)', unit: 'प्रति दिन' },
 };
 
 /** Price rows for the Hindi pages. Figures come from `plans`, so they cannot drift. */
