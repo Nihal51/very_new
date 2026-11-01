@@ -103,6 +103,20 @@ describe('bookings — creating', () => {
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ customerUid: 'cust1' })));
   });
 
+  test('the exact pickup spot is optional, and must be a real place in India', async () => {
+    const add = (extra) => addDoc(collection(guest(), 'bookings'), booking(extra));
+    await assertSucceeds(add({ pickupGeo: { lat: 21.251384, lng: 81.629641, acc: 15 } }));
+    // A pin placed by hand has no accuracy.
+    await assertSucceeds(add({ pickupGeo: { lat: 21.25, lng: 81.63 } }));
+    // London.
+    await assertFails(add({ pickupGeo: { lat: 51.5, lng: -0.12 } }));
+    await assertFails(add({ pickupGeo: { lat: '21.25', lng: 81.63 } }));
+    await assertFails(add({ pickupGeo: { lat: 21.25 } }));
+    await assertFails(add({ pickupGeo: { lat: 21.25, lng: 81.63, acc: -1 } }));
+    await assertFails(add({ pickupGeo: { lat: 21.25, lng: 81.63, name: 'home' } }));
+    await assertFails(add({ pickupGeo: 'Shankar Nagar' }));
+  });
+
   test('a booking cannot arrive already handled, numbered or with extra fields', async () => {
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ status: 'confirmed' })));
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ ref: 'DB-9999' })));

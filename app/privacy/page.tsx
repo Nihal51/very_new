@@ -36,7 +36,7 @@ export default function PrivacyPage() {
           </Alert>
 
           <div className="prose-legal mt-10">
-            <p className="text-fg-subtle text-sm">Last updated: 19 October 2026</p>
+            <p className="text-fg-subtle text-sm">Last updated: 1 November 2026</p>
 
             <h2 id="what-we-collect">What we collect</h2>
             <p>
@@ -51,6 +51,11 @@ export default function PrivacyPage() {
               <li>Your name</li>
               <li>Your mobile number</li>
               <li>Your city and pickup address</li>
+              <li>
+                If you choose to add it, the exact pickup spot on a map — from your phone&apos;s location
+                when you tap &ldquo;Use my current location&rdquo;, or a pin you place yourself — so the
+                driver can find you
+              </li>
               <li>The service you selected and, if given, a preferred date and time</li>
               <li>Any notes you choose to add</li>
             </ul>
@@ -91,8 +96,15 @@ export default function PrivacyPage() {
               </li>
             </ul>
             <p>
-              The app does not access your location, contacts, photos or files, does not use the
-              advertising ID, and shows no advertising.
+              Your location is read only when you tap &ldquo;Use my current location&rdquo; to pin your
+              pickup spot, once, and only that spot is saved with the booking; the website and the app
+              never track where you are. The app does not access your contacts, photos or files, does not
+              use the advertising ID, and shows no advertising.
+            </p>
+            <p>
+              The pickup map is drawn with images from OpenStreetMap: when you open it, your browser or
+              phone loads them from OpenStreetMap&apos;s servers, which see your IP address and the area
+              shown on the map (not your booking).
             </p>
 
             <h2 id="how-we-use-it">How we use it</h2>
@@ -106,7 +118,7 @@ export default function PrivacyPage() {
             <p>
               Submissions are stored in Google Firebase (Firestore), and are readable only by
               {' '}{site.legalName} staff who handle dispatch and recruitment. Your pickup address
-              and phone number are shared with the driver assigned to your booking, because they
+              (and the pinned spot, if you added one) and phone number are shared with the driver assigned to your booking, because they
               cannot reach you otherwise. We do not sell, rent or trade your information.
             </p>
             <p>

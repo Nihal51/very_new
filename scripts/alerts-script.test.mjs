@@ -797,6 +797,27 @@ describe('formatting', () => {
     assert.equal(ctx.tripLine(elsewhere), 'Raipur → Jaipur (not in our list) · one-way drop · 1 day · quote on the call');
     assert.equal(ctx.tripLine({ ...booking, trip: undefined }), '');
   });
+  test('the pinned pickup spot: a Google Maps link in the alert, the email and the Sheet', () => {
+    const booking = { name: 'Ravi', phone: '9111473929', city: 'Raipur', package: '3-hours-600', pickup: 'Shankar Nagar', preferredTime: '', notes: '', pickupGeo: { lat: 21.251384, lng: 81.629641, acc: 15 } };
+    const c = { booking, id: 'i', ref: 'DB-1001', previousBookings: 0, siteUrl: 'https://thedrivebuddy.in' };
+    const link = 'https://www.google.com/maps?q=21.251384,81.629641';
+    const msg = ctx.bookingTelegram(c);
+    assert.ok(msg.text.includes('<b>Pickup:</b> Shankar Nagar\n📍 <b>Pickup on the map:</b> <a href="' + link + '">Open in Google Maps</a> (±15 m)'));
+    assert.deepEqual({ ...msg.reply_markup.inline_keyboard[0][0] }, { text: '📍 Pickup on Google Maps', url: link });
+    assert.equal(msg.reply_markup.inline_keyboard.length, 3);
+    assert.ok(ctx.bookingEmail(c).body.includes('Pickup: Shankar Nagar\nPickup on the map: ' + link + ' (±15 m)\nWhen:'));
+    assert.equal(ctx.bookingRecord('i', booking)['Pickup map'], link);
+    // A pin placed by hand has no accuracy.
+    const hand = { ...booking, pickupGeo: { lat: 21.25, lng: 81.63 } };
+    assert.ok(ctx.bookingTelegram({ ...c, booking: hand }).text.includes('(pinned on the map)'));
+    // None, or nonsense: no map line, no map button.
+    for (const b of [{ ...booking, pickupGeo: undefined }, { ...booking, pickupGeo: { lat: 51.5, lng: -0.1 } }, { ...booking, pickupGeo: { lat: '21', lng: '81' } }]) {
+      const m = ctx.bookingTelegram({ ...c, booking: b });
+      assert.ok(!m.text.includes('Pickup on the map'));
+      assert.equal(m.reply_markup.inline_keyboard[0][0].text, 'Open in admin panel');
+      assert.equal(ctx.bookingRecord('i', b)['Pickup map'], '');
+    }
+  });
   test('column letters', () => {
     assert.equal(ctx.columnLetter(1), 'A');
     assert.equal(ctx.columnLetter(15), 'O');

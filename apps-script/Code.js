@@ -202,11 +202,28 @@ function waLink(phone, text) {
 /* ------------------------------------------------------------ sheet rows */
 
 /** The robot's columns, by heading. Order here is only the order for a brand-new sheet. */
-var BOOKING_COLUMNS = ['Ref', 'Status', 'Booked at', 'Customer', 'Phone', 'City', 'Package', 'Pickup', 'Trip time',
+var BOOKING_COLUMNS = ['Ref', 'Status', 'Booked at', 'Customer', 'Phone', 'City', 'Package', 'Pickup', 'Pickup map', 'Trip time',
   'Driver', 'Driver phone', 'Customer notes', 'Customer type', 'Last update', 'ID'];
 
 var DRIVER_COLUMNS = ['Name', 'Status', 'Phone', 'City', 'Experience (years)', 'Licence', 'Applied at', 'About',
   'Admin note', 'Last update', 'ID'];
+
+/**
+ * The customer's pinned pickup spot (website lib/geo.ts, firestore.rules
+ * isGeo) as a Google Maps link, or '' when there is none or it is odd.
+ */
+function pickupMapLink(b) {
+  var g = b && b.pickupGeo;
+  if (!g || typeof g.lat !== 'number' || typeof g.lng !== 'number') return '';
+  if (g.lat < 6 || g.lat > 37 || g.lng < 68 || g.lng > 98) return '';
+  return 'https://www.google.com/maps?q=' + g.lat + ',' + g.lng;
+}
+
+/** "±15 m" for a GPS fix, "pinned on the map" for a pin placed by hand. */
+function pickupMapNote(b) {
+  var acc = b && b.pickupGeo && b.pickupGeo.acc;
+  return typeof acc === 'number' ? '±' + Math.round(acc) + ' m' : 'pinned on the map';
+}
 
 /** A booking document → { heading: cell value }. Dates stay Dates so the Sheet can sort and filter by them. */
 function bookingRecord(id, b) {
@@ -224,6 +241,7 @@ function bookingRecord(id, b) {
     City: sheetText(b.city),
     Package: packageName(b.package),
     Pickup: sheetText(b.pickup),
+    'Pickup map': pickupMapLink(b),
     'Trip time': formatWhen(b.preferredTime),
     Driver: driver ? sheetText(driver.name) : '',
     'Driver phone': driver ? sheetPhone(driver.phone) : '',
@@ -274,8 +292,10 @@ function bookingTelegram(c) {
     '<b>City:</b> ' + escapeHtml(b.city),
     '<b>Package:</b> ' + escapeHtml(packageName(b.package)),
     '<b>Pickup:</b> ' + escapeHtml(b.pickup),
-    '<b>When:</b> ' + escapeHtml(formatWhen(b.preferredTime)),
   ];
+  var map = pickupMapLink(b);
+  if (map) lines.push('📍 <b>Pickup on the map:</b> <a href="' + escapeHtml(map) + '">Open in Google Maps</a> (' + escapeHtml(pickupMapNote(b)) + ')');
+  lines.push('<b>When:</b> ' + escapeHtml(formatWhen(b.preferredTime)));
   var trip = tripLine(b);
   if (trip) lines.push('<b>Trip:</b> ' + escapeHtml(trip));
   if (b.notes) lines.push('<b>Notes:</b> ' + escapeHtml(b.notes));
@@ -288,10 +308,10 @@ function bookingTelegram(c) {
   return {
     text: lines.join('\n'),
     reply_markup: {
-      inline_keyboard: [
+      inline_keyboard: (map ? [[{ text: '📍 Pickup on Google Maps', url: map }]] : []).concat([
         [{ text: 'Open in admin panel', url: c.siteUrl + '/admin/?b=' + encodeURIComponent(c.id) }],
         [{ text: 'WhatsApp customer', url: waLink(b.phone, greeting) }],
-      ],
+      ]),
     },
   };
 }
@@ -306,8 +326,9 @@ function bookingEmail(c) {
     ['City', b.city],
     ['Package', packageName(b.package)],
     ['Pickup', b.pickup],
-    ['When', formatWhen(b.preferredTime)],
   ];
+  if (pickupMapLink(b)) rows.push(['Pickup on the map', pickupMapLink(b) + ' (' + pickupMapNote(b) + ')']);
+  rows.push(['When', formatWhen(b.preferredTime)]);
   var trip = tripLine(b);
   if (trip) rows.push(['Trip', trip]);
   rows.push(

@@ -53,6 +53,7 @@ import {
   type Driver,
 } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
+import { accuracyText, mapsLink, type PickupGeo } from '@/lib/geo';
 import { downloadCsv, exportName, sheetPhone } from '@/lib/export';
 import { getFirebaseApp } from '@/lib/firebase';
 
@@ -147,7 +148,7 @@ export function BookingsTab({
 
   function exportRows() {
     downloadCsv(exportName('bookings'), [
-      ['Ref', 'Status', 'Booked at', 'Customer', 'Phone', 'City', 'Package', 'Pickup', 'Trip time', 'Driver', 'Driver phone', 'Customer notes', 'Customer type', 'Cancel reason'],
+      ['Ref', 'Status', 'Booked at', 'Customer', 'Phone', 'City', 'Package', 'Pickup', 'Pickup map', 'Trip time', 'Driver', 'Driver phone', 'Customer notes', 'Customer type', 'Cancel reason'],
       ...visible.map((b) => [
         b.ref ?? '',
         BOOKING_STATUS[b.status]?.label ?? b.status,
@@ -157,6 +158,7 @@ export function BookingsTab({
         b.city,
         packageName(b.package),
         b.pickup,
+        b.pickupGeo ? mapsLink(b.pickupGeo) : '',
         formatPreferred(b.preferredTime),
         b.assignedDriver?.name ?? '',
         b.assignedDriver ? sheetPhone(b.assignedDriver.phone) : '',
@@ -390,6 +392,7 @@ function Row({
         <div className="line-clamp-2" title={b.pickup}>
           {b.pickup}
         </div>
+        {b.pickupGeo && <PickupMapLink geo={b.pickupGeo} />}
       </td>
       <td className="px-3 py-2.5 whitespace-nowrap">{formatPreferred(b.preferredTime)}</td>
       <td className="px-3 py-2.5 whitespace-nowrap">{b.assignedDriver?.name ?? <span className="text-fg-subtle">—</span>}</td>
@@ -612,6 +615,11 @@ function BookingDetail({
           <Detail label="City">{b.city}</Detail>
           <Detail label="Pickup" wide>
             {b.pickup}
+            {b.pickupGeo && (
+              <span className="mt-1 block">
+                <PickupMapLink geo={b.pickupGeo} long />
+              </span>
+            )}
           </Detail>
           <Detail label="Trip time">{formatPreferred(b.preferredTime)}</Detail>
           {b.trip && (
@@ -832,3 +840,16 @@ function History({ bookingId, user }: { bookingId: string; user: User }) {
   );
 }
 
+/** The customer's pinned pickup spot, opening Google Maps (for the team and the driver). */
+function PickupMapLink({ geo, long = false }: { geo: PickupGeo; long?: boolean }) {
+  return (
+    <a
+      href={mapsLink(geo)}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent-text text-xs font-semibold underline underline-offset-2"
+    >
+      {long ? `Open the pinned spot in Google Maps (${accuracyText(geo)})` : 'Map'}
+    </a>
+  );
+}

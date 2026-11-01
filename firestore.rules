@@ -171,6 +171,16 @@ service cloud.firestore {
               && m.days == 1 && m.returnCharge == 0 && m.extraHours <= late));
     }
 
+    // A spot in India (lib/geo.ts): latitude, longitude and, from GPS, its accuracy in metres.
+    function isGeo(g) {
+      return g is map
+        && g.keys().hasOnly(['lat', 'lng', 'acc'])
+        && g.keys().hasAll(['lat', 'lng'])
+        && g.lat is number && g.lat >= 6 && g.lat <= 37
+        && g.lng is number && g.lng >= 68 && g.lng <= 98
+        && (!('acc' in g) || (g.acc is number && g.acc >= 0 && g.acc <= 100000));
+    }
+
     // A time on a trip, if it is there at all (never null).
     function isOptTime(m, k) {
       return !(k in m) || m[k] is timestamp;
@@ -227,7 +237,7 @@ service cloud.firestore {
         request.resource.data.keys().hasOnly([
           'name', 'phone', 'city', 'package', 'pickup',
           'preferredTime', 'notes', 'createdAt', 'status', 'source',
-          'customerUid', 'trip'
+          'customerUid', 'trip', 'pickupGeo'
         ])
         && request.resource.data.keys().hasAll([
           'name', 'phone', 'city', 'package', 'pickup',
@@ -249,6 +259,8 @@ service cloud.firestore {
           'one-way-drop'
         ]
         && isText(request.resource.data.pickup, 6, 300)
+        // The exact pickup spot, optional (GPS or a pin on the map; older forms leave it out).
+        && (!('pickupGeo' in request.resource.data) || isGeo(request.resource.data.pickupGeo))
         && isOptionalText(request.resource.data.preferredTime, 40)
         && isOptionalText(request.resource.data.notes, 500)
         // Guests leave customerUid out; a logged-in customer can only tag their own uid.

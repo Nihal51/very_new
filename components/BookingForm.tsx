@@ -6,6 +6,7 @@ import { Button, ButtonAnchor } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { CheckCircleIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
+import { PickupLocation } from '@/components/PickupLocation';
 import { TripEstimate } from '@/components/TripEstimate';
 import { useReturnTrains } from '@/components/useReturnTrains';
 import { currentUser, loadProfile, mightBeSignedIn } from '@/lib/auth';
@@ -14,6 +15,7 @@ import { findDestination } from '@/lib/outstation';
 import { bookingPackages, cities } from '@/lib/content';
 import { submitDoc } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
+import { mapsLink, type PickupGeo } from '@/lib/geo';
 import { formatPhone, site, telHref, waHref } from '@/lib/site';
 import { ELSEWHERE, destinationGroups, tripFor, tripRecord, tripSummary, whenText, type TripView } from '@/lib/trip';
 import {
@@ -130,7 +132,7 @@ function tripRecordOf(v: Values, view: TripView | null): BookingTrip | null {
 }
 
 /** Everything the customer typed, as a WhatsApp message — the outage fallback. */
-function whatsappMessage(v: Values, trip: BookingTrip | null, train?: string): string {
+function whatsappMessage(v: Values, trip: BookingTrip | null, train?: string, geo?: PickupGeo | null): string {
   return [
     `Hi ${site.name}, I would like to book a driver.`,
     '',
@@ -140,6 +142,7 @@ function whatsappMessage(v: Values, trip: BookingTrip | null, train?: string): s
     `Service: ${packageLabel(v.pkg)}`,
     trip ? `Trip: ${tripSummary(trip, v.city)}` : null,
     `Pickup: ${v.pickup}`,
+    geo ? `Pickup on the map: ${mapsLink(geo)}` : null,
     v.when ? `Preferred time: ${v.when.replace('T', ' ')}` : null,
     notesOf(v, train) ? `Notes: ${notesOf(v, train)}` : null,
   ]
@@ -168,6 +171,9 @@ export function BookingForm({
   const [status, setStatus] = useState<Status>('idle');
   const [failureMessage, setFailureMessage] = useState('');
   const [submitted, setSubmitted] = useState<Values>(EMPTY);
+  // The exact pickup spot (optional): GPS or the pin on the map.
+  const [pickupGeo, setPickupGeo] = useState<PickupGeo | null>(null);
+  const [submittedGeo, setSubmittedGeo] = useState<PickupGeo | null>(null);
   const [submittedTrip, setSubmittedTrip] = useState<{ trip: BookingTrip | null; train?: string }>({ trip: null });
 
   const formRef = useRef<HTMLFormElement>(null);
@@ -273,6 +279,7 @@ export function BookingForm({
       city: values.city,
       package: values.pkg,
       pickup: values.pickup.trim(),
+      ...(pickupGeo && { pickupGeo }),
       preferredTime: values.when || '',
       notes: notesOf(values, sentTrain),
       ...(sentTrip && { trip: sentTrip }),
@@ -281,6 +288,8 @@ export function BookingForm({
 
     if (result.ok) {
       setSubmitted(values);
+      setSubmittedGeo(pickupGeo);
+      setPickupGeo(null);
       setSubmittedTrip({ trip: sentTrip, ...(sentTrain && { train: sentTrain }) });
       setStatus('success');
       setValues(account ? { ...EMPTY, name: values.name, phone: values.phone } : EMPTY);
@@ -329,7 +338,19 @@ export function BookingForm({
             )}
             <div className="sm:col-span-2">
               <dt className="text-fg-subtle">Pickup</dt>
-              <dd className="mt-0.5 font-semibold">{submitted.pickup}</dd>
+              <dd className="mt-0.5 font-semibold">
+                {submitted.pickup}
+                {submittedGeo && (
+                  <a
+                    href={mapsLink(submittedGeo)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent-text ml-2 text-sm font-normal underline underline-offset-2"
+                  >
+                    location pinned
+                  </a>
+                )}
+              </dd>
             </div>
             {submitted.when && (
               <div className="sm:col-span-2">
@@ -360,7 +381,7 @@ export function BookingForm({
               Call {formatPhone(site.phone)}
             </ButtonAnchor>
             <ButtonAnchor
-              href={waHref(whatsappMessage(submitted, submittedTrip.trip, submittedTrip.train))}
+              href={waHref(whatsappMessage(submitted, submittedTrip.trip, submittedTrip.train, submittedGeo))}
               target="_blank"
               rel="noopener noreferrer"
               variant="outline"
@@ -631,6 +652,7 @@ export function BookingForm({
                 />
               )}
             </Field>
+            <PickupLocation city={values.city} value={pickupGeo} onChange={setPickupGeo} className="sm:col-span-2 -mt-2" />
 
             {/* Trips ask for the start in the trip box above: it changes the estimate. */}
             {!trip && (
@@ -676,7 +698,7 @@ export function BookingForm({
               <p>{failureMessage}</p>
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <ButtonAnchor
-                  href={waHref(whatsappMessage(values, tripRec, train))}
+                  href={waHref(whatsappMessage(values, tripRec, train, pickupGeo))}
                   target="_blank"
                   rel="noopener noreferrer"
                   size="sm"

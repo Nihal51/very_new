@@ -7,6 +7,8 @@
  * for alerts. scripts/packages.test.mjs fails `npm test` if the three disagree.
  */
 
+import type { PickupGeo } from './geo.ts';
+
 /** Short names without prices — a booking from last month must not show this month's rate. */
 export const PACKAGE_NAMES: Record<string, string> = {
   '1-hour-300': '1 hour',
@@ -122,6 +124,8 @@ export type Booking = {
   city: string;
   package: string;
   pickup: string;
+  /** The exact pickup spot, if the customer pinned it (lib/geo.ts). */
+  pickupGeo?: PickupGeo | null;
   preferredTime: string;
   notes: string;
   status: BookingStatus;
