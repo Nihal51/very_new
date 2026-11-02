@@ -217,7 +217,7 @@ export type RailRules = {
 };
 
 export type ReturnOption = {
-  /** "12345", or "12345+67890" with a change of train. */
+  /** "12345@<departure ms>", or "12345+67890@…" with a change of train: the same train on another day is another route. */
   id: string;
   legs: RailLeg[];
   /** First train's departure and last train's scheduled arrival. */
@@ -337,7 +337,7 @@ function option(legs: RailLeg[], drop: number, rules?: RailRules): ReturnOption 
     warnings.push(`Two tickets: book both trains; the change at ${a.to.name} is not protected if the first train is late.`);
   }
   return {
-    id: legs.map((l) => l.train.number).join('+'),
+    id: `${legs.map((l) => l.train.number).join('+')}@${first.depart}`,
     legs,
     depart: first.depart,
     arrive: last.arrive,

@@ -153,8 +153,21 @@ function load() {
         setProperty: (k, v) => props.set(k, v),
       }),
     },
-    ScriptApp: { getOAuthToken: () => 'token', getProjectTriggers: () => [], newTrigger: () => ({ timeBased: () => ({ everyMinutes: () => ({ create() {} }) }) }) },
-    LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
+    ScriptApp: (() => {
+      const made = [];
+      const timeBased = (fn) => ({
+        everyMinutes: () => ({ create: () => made.push({ fn, every: 'minute' }) }),
+        everyDays: () => ({ atHour: (h) => ({ create: () => made.push({ fn, every: 'day', hour: h }) }) }),
+      });
+      return {
+        made,
+        getOAuthToken: () => 'token',
+        getProjectTriggers: () => [],
+        deleteTrigger() {},
+        newTrigger: (fn) => ({ timeBased: () => timeBased(fn) }),
+      };
+    })(),
+    LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }), getDocumentLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     CacheService: (() => {
       const c = new Map();
       return { getScriptCache: () => ({ get: (k) => c.get(k) ?? null, put: (k, v) => c.set(k, v), clear: () => c.clear() }) };
@@ -163,7 +176,7 @@ function load() {
       createTextOutput: (t) => ({ text: t, setMimeType() { return this; } }),
       MimeType: { JSON: 'application/json' },
     },
-    Utilities: { getUuid: () => Math.random().toString(16).slice(2) },
+    Utilities: { getUuid: () => Math.random().toString(16).slice(2), sleep() {} },
     Session: { getEffectiveUser: () => ({ getEmail: () => 'owner@example.com' }) },
     MailApp: { sendEmail: (m) => mail.push(m) },
     SpreadsheetApp: {
@@ -750,6 +763,80 @@ describe('train lookup (RailRadar proxy)', () => {
     // A dated search is still a search of its own.
     assert.equal(env.ctx.trainsLookup_({ q: 'SBC-R-2026-11-04' }, now).results[0].timetable, false);
     assert.equal(env.ctx.parseTrainQueries('SBC-SBC', now), null);
+  });
+
+  describe('saved timetables (the Sheet)', () => {
+    const tt = (from, n = 1) =>
+      sample(from, 'R', Array.from({ length: n }, (_, i) => train(String(12000 + i), '23:40', 1, '00:05', 3, 1465)));
+    const coldCache = () => env.ctx.CacheService.getScriptCache().clear();
+    const day = 86_400_000;
+
+    test('a fetched timetable is saved, and read back from the Sheet with no call', () => {
+      env.rail.answer = () => ({ code: 200, body: tt('JBP', 3) });
+      env.ctx.trainsLookup_({ q: 'JBP-R' }, now);
+      assert.equal(env.rail.calls.length, 1);
+      const rows = env.table('Train timetables');
+      assert.deepEqual([rows.length, rows[0].Pair, rows[0].Trains], [1, 'JBP-R', 3]);
+      coldCache(); // six hours later: the cache is empty
+      const res = env.ctx.trainsLookup_({ q: 'JBP-R' }, now + 6 * 3_600_000);
+      assert.equal(env.rail.calls.length, 1, 'answered from the Sheet');
+      assert.deepEqual([res.results[0].ok, res.results[0].trains.length, res.results[0].saved], [true, 3, undefined]);
+      assert.equal(res.results[0].checkedAt, new Date(now).toISOString(), 'keeps the day it was checked');
+    });
+
+    test('a week-old timetable is asked again; if RailRadar fails or is busy, the saved one is used', () => {
+      env.rail.answer = () => ({ code: 200, body: tt('JBP', 2) });
+      env.ctx.trainsLookup_({ q: 'JBP-R,NGP-R' }, now);
+      coldCache();
+      env.rail.answer = () => ({ code: 503, body: {} });
+      let res = env.ctx.trainsLookup_({ q: 'JBP-R' }, now + 8 * day);
+      assert.equal(env.rail.calls.length, 3, 'asked again after a week');
+      assert.deepEqual([res.results[0].ok, res.results[0].saved, res.results[0].trains.length], [true, true, 2]);
+      coldCache();
+      env.props.set('RAIL_DAILY_LIMIT', '1'); // used up by the call above, the same day
+      res = env.ctx.trainsLookup_({ q: 'NGP-R,SBC-R' }, now + 8 * day);
+      assert.equal(env.rail.calls.length, 3, 'no budget: no call');
+      assert.deepEqual([res.results[0].ok, res.results[0].saved], [true, true]);
+      assert.deepEqual([res.results[1].ok, res.results[1].error], [false, 'busy'], 'nothing saved: still busy');
+      assert.equal(env.telegram.filter((m) => /limit of 1 RailRadar calls is used up/.test(m.text)).length, 1, 'warned once that the day is used up');
+    });
+
+    test('a saved timetable older than 60 days is not used', () => {
+      env.rail.answer = () => ({ code: 200, body: tt('JBP') });
+      env.ctx.trainsLookup_({ q: 'JBP-R' }, now);
+      coldCache();
+      env.rail.answer = () => ({ code: 503, body: {} });
+      const res = env.ctx.trainsLookup_({ q: 'JBP-R' }, now + 61 * day);
+      assert.deepEqual([res.results[0].ok, res.results[0].error], [false, 'unavailable']);
+    });
+
+    test('a refused key warns on Telegram once a day', () => {
+      env.rail.answer = () => ({ code: 401, body: { success: false } });
+      env.ctx.trainsLookup_({ q: 'JBP-R' }, now);
+      env.ctx.trainsLookup_({ q: 'NGP-R' }, now);
+      const warn = env.telegram.filter((m) => /RailRadar refused the key/.test(m.text));
+      assert.equal(warn.length, 1);
+    });
+
+    test('a big timetable is split over cells and reads back whole', () => {
+      const r = env.ctx.railResult({ from: 'NDLS', to: 'R', date: '' }, 200, tt('NDLS', 400), now, false);
+      const row = env.ctx.railRow(r);
+      assert.ok(row[4].length > 0, 'more than one cell');
+      assert.deepEqual(JSON.parse(JSON.stringify(env.ctx.railFromRow(row))), JSON.parse(JSON.stringify(r)));
+      assert.equal(env.ctx.railFromRow(['NDLS-R', '', 0, '{bad']), null);
+    });
+
+    test('the nightly run refreshes only timetables older than 3 days, and tick sets it up once', () => {
+      env.rail.answer = (url) => ({ code: 200, body: tt(url.split('/between/')[1].split('/')[0]) });
+      env.ctx.trainsLookup_({ q: 'JBP-R' }, Date.now() - 4 * day);
+      env.ctx.trainsLookup_({ q: 'NGP-R' }, Date.now() - day);
+      env.rail.calls.length = 0;
+      assert.equal(env.ctx.refreshTrainTimetables(), 1);
+      assert.deepEqual(env.rail.calls.map((c) => c.url), ['https://api.railradar.in/v1/trains/between/JBP/R']);
+      env.ctx.ensureRailTrigger_();
+      env.ctx.ensureRailTrigger_();
+      assert.deepEqual(env.ctx.ScriptApp.made.filter((t) => t.fn === 'refreshTrainTimetables').map((t) => [t.every, t.hour]), [['day', 3]]);
+    });
   });
 
   test('the doorbell still works on GET without action=trains', () => {

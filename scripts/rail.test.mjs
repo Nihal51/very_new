@@ -123,9 +123,9 @@ test('the train he cannot catch is never offered; the earliest home comes first;
       leg('10003', 'SBC', 'R', '2026-10-31T20:00', '2026-11-01T16:00'),
     ],
   });
-  assert.deepEqual(opts.map((o) => o.id), ['10003', '10002']);
+  assert.deepEqual(opts.map((o) => o.id.split('@')[0]), ['10003', '10002']);
   // The user's example: drops at 12 PM, train at 3 PM → 3 h waiting, then the train.
-  const at3 = opts.find((o) => o.id === '10002');
+  const at3 = opts.find((o) => o.id.startsWith('10002@'));
   assert.equal(at3.waitMinutes, 180);
   assert.equal(at3.totalMinutes, 30 * 60);
   assert.equal(at3.scheduled, true);
@@ -143,7 +143,7 @@ test('no direct train soon enough: a connection whose BOTH trains were confirmed
     leg('20001', 'NGP', 'R', '2026-11-01T08:20', '2026-11-01T12:40'), // the same train: not a change
   ];
   const opts = planReturn({ drop, ready, stations: ['SBC'], rules: RULES, direct: [], toHub, fromHub });
-  assert.deepEqual(opts.map((o) => o.id), ['20001+30002']);
+  assert.deepEqual(opts.map((o) => o.id.split('@')[0]), ['20001+30002']);
   const o = opts[0];
   assert.equal(o.transfer.station.code, 'NGP');
   assert.equal(o.transfer.minutes, 120);
@@ -225,7 +225,7 @@ test('direct trains first: with a good direct train the change station is never 
     stations: ['SBC'], hubs: ['NGP'], home: 'R', drop, ready, now: ist('2026-10-29T09:00'), rules: RULES,
   });
   assert.equal(res.status, 'ok');
-  assert.deepEqual(res.options.map((o) => o.id), ['10003']);
+  assert.deepEqual(res.options.map((o) => o.id.split('@')[0]), ['10003']);
   assert.equal(calls.length, 1, 'no connection searches');
   assert.equal(calls[0].live, false, 'two days ahead: no live status');
   assert.equal(res.checkedAt, ist('2026-10-30T10:00'));
@@ -243,7 +243,7 @@ test('no direct train: connections through Nagpur, both legs from the lookup', a
     stations: ['SBC'], hubs: ['NGP'], home: 'R', drop, ready, now: ist('2026-10-29T09:00'), rules: RULES,
   });
   assert.equal(calls.length, 2);
-  assert.deepEqual(res.options.map((o) => o.id), ['20001+30002']);
+  assert.deepEqual(res.options.map((o) => o.id.split('@')[0]), ['20001+30002']);
   assert.equal(iso(res.options[0].arrive), '2026-11-01 14:30');
 });
 
@@ -371,6 +371,37 @@ test('the client with timetables: one call per station pair answers every date, 
   assert.equal(urls[2], 'https://script.google.com/macros/s/X/exec?action=trains&q=YPR-R-2026-10-30&live=1');
 });
 
+test('live status that cannot be had (busy) falls back to the timetable, so the trains still show', async () => {
+  const urls = [];
+  const fetchImpl = async (url) => {
+    urls.push(url);
+    const q = decodeURIComponent(url.split('q=')[1].split('&')[0]);
+    return {
+      ok: true,
+      json: async () =>
+        robotAnswer(
+          q.split(',').map((k) =>
+            /-\d{4}-/.test(k)
+              ? k.startsWith('NGP')
+                ? { q: k, ok: true, checkedAt: '2026-10-30T04:30:00.000Z', live: true, trains: [robotTrain] }
+                : { q: k, ok: false, error: 'busy' }
+              : { q: k, ok: true, timetable: true, saved: true, checkedAt: '2026-10-28T04:30:00.000Z', live: false, trains: [robotTrain] },
+          ),
+        ),
+    };
+  };
+  const fetcher = makeFetcher('https://script.google.com/macros/s/X/exec', { fetchImpl });
+  const out = await fetcher([{ from: 'YPR', to: 'R', date: '2026-10-30' }, { from: 'NGP', to: 'R', date: '2026-10-30' }], true);
+  assert.deepEqual(urls, [
+    'https://script.google.com/macros/s/X/exec?action=trains&q=YPR-R-2026-10-30%2CNGP-R-2026-10-30&live=1',
+    'https://script.google.com/macros/s/X/exec?action=trains&q=YPR-R&live=0',
+  ], 'only the failed search is asked from the timetable');
+  assert.deepEqual(out.map((r) => [r.ok, r.query.from, r.ok && (r.timetable ?? false), r.ok && r.live]), [
+    [true, 'YPR', true, false],
+    [true, 'NGP', false, true],
+  ]);
+});
+
 /* ----------------------------------------------- pricing from the train ---- */
 
 const rules = {
@@ -454,5 +485,5 @@ test('routes ending on the same last train are offered once — the safest chang
     ],
   });
   assert.deepEqual(opts.map((o) => o.legs.at(-1).train.number), ['12833', '12859']);
-  assert.equal(opts[0].id, '22691+12833', '3 h 9 m to change beats 1 h 50 m');
+  assert.equal(opts[0].id.split('@')[0], '22691+12833', '3 h 9 m to change beats 1 h 50 m');
 });

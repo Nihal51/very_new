@@ -778,6 +778,7 @@ function driversTable_() {
 function tick() {
   var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_];
   if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_);
+  steps.push(ensureRailTrigger_);
   runSteps_(steps, 5000);
 }
 
@@ -826,7 +827,8 @@ function jsonOut_(obj) {
    the website). This is the only code that talks to RailRadar: its key stays
    in the Script Properties (RAILRADAR_API_KEY), never on the website or in
    GitHub, and never in an answer. Each search is cached for 6 hours (5
-   minutes with live running status), and calls to RailRadar are capped per
+   minutes with live running status), whole timetables are also saved in the
+   Sheet (below), and calls to RailRadar are capped per
    minute and per day so a busy day or a prank cannot use up the plan. Only
    RailRadar's documented fields are passed on, unchanged; nothing is
    invented: a search that fails says why. */
@@ -934,6 +936,9 @@ function railBudget_(n, now) {
   var dayRec = String(props.getProperty('railDay') || '').split(':');
   var usedDay = dayRec[0] === day ? Number(dayRec[1] || 0) : 0;
   var allowed = Math.max(0, Math.min(n, perMinute - usedMinute, perDay - usedDay));
+  if (allowed < n && usedDay + allowed >= perDay) {
+    railAlert_('daily', '⚠️ <b>Train lookup:</b> today\'s limit of ' + perDay + ' RailRadar calls is used up. Customers see the saved timetables until midnight. If this happens often, raise RAIL_DAILY_LIMIT in the script properties (the Developer plan allows about 1,000 a day).');
+  }
   if (allowed > 0) {
     cache.put(minuteKey, String(usedMinute + allowed), 120);
     props.setProperty('railDay', day + ':' + (usedDay + allowed));
@@ -941,12 +946,143 @@ function railBudget_(n, now) {
   return allowed;
 }
 
+/* ------------------------------------------- saved timetables (the Sheet)
+   A whole timetable ("SBC-R": every train with its running days) hardly
+   changes, so each one is kept in the "Train timetables" tab of this Sheet:
+   customers are answered from there, RailRadar is asked only when a saved
+   one is a week old (and every night for those older than 3 days), and when
+   RailRadar is down, busy or refuses the key, the last saved timetable is
+   used — marked "saved" with the day it was checked. The cache in front
+   (6 hours) keeps most visits from reading the Sheet at all. */
+
+var RAIL_SHEET = 'Train timetables';
+var RAIL_COLUMNS = ['Pair', 'Checked at', 'Trains', 'Data', 'Data 2', 'Data 3', 'Data 4'];
+var RAIL_CELL = 45000; //        characters per cell (Sheets allows 50,000)
+var RAIL_FRESH_DAYS = 7; //      younger than this, a saved timetable is used without asking RailRadar
+var RAIL_REFRESH_DAYS = 3; //    the nightly run refreshes saved timetables older than this
+var RAIL_KEEP_DAYS = 60; //      older than this, a saved timetable is not used even when RailRadar fails
+
+/** A timetable answer → its Sheet row, or null if it is too big to save. */
+function railRow(r) {
+  var text = JSON.stringify(r);
+  var parts = [];
+  for (var i = 0; i < text.length; i += RAIL_CELL) parts.push(text.slice(i, i + RAIL_CELL));
+  if (parts.length > RAIL_COLUMNS.length - 3) return null;
+  while (parts.length < RAIL_COLUMNS.length - 3) parts.push('');
+  return [r.q, r.checkedAt, r.trains.length].concat(parts);
+}
+
+/** A Sheet row → the saved timetable answer, or null if it does not read back whole. */
+function railFromRow(row) {
+  try {
+    var r = JSON.parse(row.slice(3).map(String).join(''));
+    return r && r.ok === true && r.timetable === true && r.q === String(row[0]) && Array.isArray(r.trains) ? r : null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/** Days since a saved answer was checked. */
+function railAgeDays(r, now) {
+  var t = Date.parse(r.checkedAt);
+  return isNaN(t) ? Infinity : (now - t) / 86400000;
+}
+
+/** A saved answer handed out instead of a fresh one: the same trains, marked saved. */
+function railStale(r) {
+  var out = JSON.parse(JSON.stringify(r));
+  out.saved = true;
+  return out;
+}
+
+function railSheet_() {
+  return table_(RAIL_SHEET, RAIL_COLUMNS).sh;
+}
+
+/** The saved timetables for these pairs: { pair: { row, result } } (only those that read back). */
+function railLoad_(pairs) {
+  var out = {};
+  if (!pairs.length) return out;
+  var sh = railSheet_();
+  var n = sh.getLastRow() - 1;
+  if (n <= 0) return out;
+  var keys = sh.getRange(2, 1, n, 1).getValues();
+  keys.forEach(function (k, i) {
+    var pair = String(k[0]);
+    if (pairs.indexOf(pair) < 0 || out[pair]) return;
+    var row = sh.getRange(i + 2, 1, 1, RAIL_COLUMNS.length).getValues()[0];
+    var r = railFromRow(row);
+    if (r) out[pair] = { row: i + 2, result: r };
+  });
+  return out;
+}
+
+/** Saves timetable answers, replacing the old row of each pair. Skipped (not lost) if another save is running. */
+function railSave_(results) {
+  if (!results.length) return;
+  var lock = (LockService.getDocumentLock && LockService.getDocumentLock()) || LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return;
+  try {
+    var sh = railSheet_();
+    var n = Math.max(sh.getLastRow() - 1, 0);
+    var keys = n ? sh.getRange(2, 1, n, 1).getValues().map(function (k) { return String(k[0]); }) : [];
+    results.forEach(function (r) {
+      var row = railRow(r);
+      if (!row) return;
+      var at = keys.indexOf(r.q);
+      if (at < 0) {
+        keys.push(r.q);
+        at = keys.length - 1;
+        if (at + 2 > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), 10);
+      }
+      sh.getRange(at + 2, 1, 1, RAIL_COLUMNS.length).setValues([row]);
+    });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Asks RailRadar for these searches (budget already counted): one result each, in order. */
+function railFetch_(queries, key, now) {
+  if (!queries.length) return [];
+  var responses = UrlFetchApp.fetchAll(queries.map(function (m) {
+    return {
+      url: RAIL_API + '/trains/between/' + m.q.from + '/' + m.q.to +
+        (m.q.date ? '?date=' + m.q.date + (m.live ? '&live=true' : '') : ''),
+      method: 'get',
+      headers: { Authorization: 'Bearer ' + key },
+      muteHttpExceptions: true,
+    };
+  }));
+  return queries.map(function (m, j) {
+    var res = responses[j];
+    var code = res ? res.getResponseCode() : 0;
+    var body = null;
+    try { body = JSON.parse(res.getContentText()); } catch (err) { body = null; }
+    var r = railResult(m.q, code, body, now, m.live);
+    if (!r.ok && r.error !== 'rate-limited' && r.error !== 'unavailable') console.warn('RailRadar ' + code + ' for ' + r.q);
+    if (!r.ok && r.error === 'not-configured') railAlert_('key', '⚠️ <b>Train lookup:</b> RailRadar refused the key — the Developer plan may have run out (auto-renew) or the key changed. Customers still see the saved timetables, but they stop updating. Renew the plan at railradar.in; nothing else to change.');
+    return r;
+  });
+}
+
+/** One Telegram warning a day per kind, so a problem is heard about once, not every minute. */
+function railAlert_(kind, html) {
+  var props = PropertiesService.getScriptProperties();
+  var day = istDay(Date.now());
+  var keyName = 'railAlert:' + kind;
+  if (props.getProperty(keyName) === day) return;
+  props.setProperty(keyName, day);
+  try { sendTelegram_({ text: html, parse_mode: 'HTML' }); } catch (err) { console.warn('railAlert ' + kind + ': ' + err); }
+}
+
 /**
  * The lookup: ?action=trains&q=SBC-R-2026-10-31,…&live=1 (or q=SBC-R,… for
- * whole timetables, which the website filters by running day). Answers
- * { ok, source, results: [one per search, in order] } — every search either
- * ok with its trains (cached ones keep the time they were fetched) or failed
- * with a reason ('busy' when a cap was reached).
+ * whole timetables, which the website and the app filter by running day).
+ * Answers { ok, source, results: [one per search, in order] } — every search
+ * either ok with its trains (cached and saved ones keep the time they were
+ * checked; a saved one handed out because RailRadar could not be asked is
+ * marked saved) or failed with a reason ('busy' when a cap was reached).
  */
 function trainsLookup_(params, now) {
   var queries = parseTrainQueries(params.q, now);
@@ -968,37 +1104,99 @@ function trainsLookup_(params, now) {
     }
     misses.push({ i: i, q: q, live: live, ck: ck });
   });
+
+  // Whole timetables not in the cache: the Sheet first.
+  var pairs = misses.filter(function (m) { return !m.q.date; }).map(function (m) { return railKey_(m.q); });
+  var saved = {};
+  try { saved = railLoad_(pairs); } catch (err) { console.warn('railLoad_: ' + err); }
+  misses = misses.filter(function (m) {
+    var s = !m.q.date && saved[railKey_(m.q)];
+    if (s && railAgeDays(s.result, now) < RAIL_FRESH_DAYS) {
+      results[m.i] = s.result;
+      cache.put(m.ck, JSON.stringify(s.result), 21600);
+      return false;
+    }
+    return true;
+  });
+  /** A saved timetable still good enough when RailRadar cannot be asked. */
+  var fallback = function (m) {
+    var s = !m.q.date && saved[railKey_(m.q)];
+    return s && railAgeDays(s.result, now) < RAIL_KEEP_DAYS ? railStale(s.result) : null;
+  };
+
   var allowed = railBudget_(misses.length, now);
   var go = misses.slice(0, allowed);
   misses.slice(allowed).forEach(function (m) {
-    results[m.i] = { q: railKey_(m.q), ok: false, error: 'busy' };
+    results[m.i] = fallback(m) || { q: railKey_(m.q), ok: false, error: 'busy' };
   });
-  if (go.length) {
-    var responses = UrlFetchApp.fetchAll(go.map(function (m) {
-      return {
-        url: RAIL_API + '/trains/between/' + m.q.from + '/' + m.q.to +
-          (m.q.date ? '?date=' + m.q.date + (m.live ? '&live=true' : '') : ''),
-        method: 'get',
-        headers: { Authorization: 'Bearer ' + key },
-        muteHttpExceptions: true,
-      };
-    }));
-    go.forEach(function (m, j) {
-      var res = responses[j];
-      var code = res ? res.getResponseCode() : 0;
-      var body = null;
-      try { body = JSON.parse(res.getContentText()); } catch (err) { body = null; }
-      var r = railResult(m.q, code, body, now, m.live);
+  var toSave = [];
+  railFetch_(go, key, now).forEach(function (r, j) {
+    var m = go[j];
+    if (r.ok) {
+      var text = JSON.stringify(r);
+      if (text.length < 90000) cache.put(m.ck, text, m.live ? 300 : 21600);
+      if (r.timetable) toSave.push(r);
       results[m.i] = r;
-      if (r.ok) {
-        var text = JSON.stringify(r);
-        if (text.length < 90000) cache.put(m.ck, text, m.live ? 300 : 21600);
-      } else if (r.error !== 'rate-limited' && r.error !== 'unavailable') {
-        console.warn('RailRadar ' + code + ' for ' + r.q);
-      }
-    });
-  }
+    } else {
+      results[m.i] = fallback(m) || r;
+    }
+  });
+  try { railSave_(toSave); } catch (err) { console.warn('railSave_: ' + err); }
   return { ok: true, source: 'RailRadar', results: results };
+}
+
+/**
+ * Nightly (set up by tick): refreshes saved timetables older than
+ * RAIL_REFRESH_DAYS, oldest first, within the per-minute cap, for up to about
+ * four and a half minutes. Also in the DriveBuddy menu.
+ */
+function refreshTrainTimetables() {
+  var key = prop_('RAILRADAR_API_KEY');
+  if (!key) return 0;
+  var started = Date.now();
+  var sh = railSheet_();
+  var n = sh.getLastRow() - 1;
+  if (n <= 0) return 0;
+  var rows = sh.getRange(2, 1, n, 2).getValues();
+  var todo = rows
+    .map(function (r) { return { pair: String(r[0]), at: Date.parse(r[1] instanceof Date ? r[1].toISOString() : String(r[1])) || 0 }; })
+    .filter(function (r) { return /^[A-Z]{1,5}-[A-Z]{1,5}$/.test(r.pair) && (started - r.at) / 86400000 >= RAIL_REFRESH_DAYS; })
+    .sort(function (a, b) { return a.at - b.at; });
+  var done = 0;
+  while (todo.length && Date.now() - started < 270000) {
+    var allowed = railBudget_(Math.min(todo.length, 20), Date.now());
+    if (!allowed) {
+      if (Date.now() - started > 200000) break;
+      Utilities.sleep(61000);
+      continue;
+    }
+    var batch = todo.splice(0, allowed).map(function (r) {
+      var p = r.pair.split('-');
+      return { q: { from: p[0], to: p[1], date: '' }, live: false };
+    });
+    var now = Date.now();
+    var fresh = railFetch_(batch, key, now).filter(function (r) { return r.ok; });
+    var cache = CacheService.getScriptCache();
+    fresh.forEach(function (r) {
+      var text = JSON.stringify(r);
+      if (text.length < 90000) cache.put('rail1:' + r.q, text, 21600);
+    });
+    railSave_(fresh);
+    done += fresh.length;
+  }
+  console.log('Train timetables refreshed: ' + done);
+  return done;
+}
+
+/** Makes sure the nightly refresh runs (once; called from tick, so nobody has to re-run setup). */
+function ensureRailTrigger_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('railRefreshTrigger') === 'v1' || !prop_('RAILRADAR_API_KEY')) return;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getHandlerFunction() === 'refreshTrainTimetables') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('refreshTrainTimetables').timeBased().everyDays(1).atHour(3).create();
+  props.setProperty('railRefreshTrigger', 'v1');
 }
 
 function ping_() {
@@ -1490,6 +1688,7 @@ function onOpen() {
     .addItem('Connect Telegram and start', 'connectTelegram')
     .addItem('Refresh the whole sheet', 'fillSheet')
     .addItem('Send a test alert', 'testAlert')
+    .addItem('Refresh train timetables now', 'refreshTrainTimetables')
     .addToUi();
 }
 

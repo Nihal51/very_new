@@ -91,8 +91,10 @@ export const RETRYABLE: readonly RailError[] = ['busy', 'rate-limited', 'timeout
  * answers each dated search from them — legsFrom keeps only the trains that
  * run that day. So a customer trying dates, and every other customer on the
  * same route, costs no more calls (the robot caches each timetable for 6
- * hours). A robot without timetables (before its update) answers
- * 'bad-request'; then it asks by date, as before.
+ * hours, and keeps it in its Sheet). A robot without timetables (before
+ * its update) answers 'bad-request'; then it asks by date, as before. With
+ * live status (a train today) it asks by date, and any search that fails
+ * there is answered from the timetable instead.
  */
 export function makeFetcher(
   endpoint: string,
@@ -132,7 +134,10 @@ export function makeFetcher(
     if (todo.length) {
       const results = await ask(todo, queryKey, live);
       // Remember only real answers; a failure is asked again next time.
-      for (const r of results) (r.ok ? memo.set(memoKey(r.query), r) : failed.set(queryKey(r.query), r));
+      for (const r of results) {
+        if (r.ok) memo.set(memoKey(r.query), r);
+        else failed.set(queryKey(r.query), r);
+      }
     }
     return queries.map((q) => memo.get(memoKey(q)) ?? failed.get(queryKey(q))!);
   };
@@ -147,7 +152,10 @@ export function makeFetcher(
       const results = await ask(todo, pairKey, false);
       // A robot from before timetables turns the whole request down as a bad request.
       if (results.length && results.every((r) => !r.ok && r.error === 'bad-request')) return null;
-      for (const r of results) (r.ok ? memo.set(memoKey(r.query), r) : failed.set(pairKey(r.query), r));
+      for (const r of results) {
+        if (r.ok) memo.set(memoKey(r.query), r);
+        else failed.set(pairKey(r.query), r);
+      }
     }
     return queries.map((query): RailResult => {
       const r = memo.get(memoKey(query)) ?? failed.get(pairKey(query))!;
@@ -155,13 +163,24 @@ export function makeFetcher(
     });
   };
 
+  /** Timetable answers, or null when the robot cannot give them. */
+  const fromTimetables = async (queries: RailQuery[]): Promise<RailResult[] | null> => {
+    if (!timetables) return null;
+    const answers = await byTimetable(queries);
+    if (!answers) timetables = false;
+    return answers;
+  };
+
   return async (queries, live) => {
     if (!endpoint) return queries.map((query) => ({ ok: false, query, error: 'not-configured' }));
-    if (!live && timetables) {
-      const answers = await byTimetable(queries);
-      if (answers) return answers;
-      timetables = false;
-    }
-    return byDate(queries, live);
+    if (!live) return (await fromTimetables(queries)) ?? byDate(queries, false);
+    // Live running status is extra: a search it cannot answer (busy, slow) falls back to the
+    // timetable, so a busy moment never hides the trains.
+    const dated = await byDate(queries, true);
+    if (dated.every((r) => r.ok)) return dated;
+    const plain = await fromTimetables(queries.filter((_, i) => !dated[i]!.ok));
+    if (!plain) return dated;
+    let k = 0;
+    return dated.map((r) => (r.ok ? r : plain[k++]!.ok ? plain[k - 1]! : r));
   };
 }
