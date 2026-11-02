@@ -814,7 +814,15 @@ function doPost() {
 /** GET: the doorbell, or (action=trains) the train lookup for the booking estimate. */
 function doGet(e) {
   var p = (e && e.parameter) || {};
-  if (p.action === 'trains') return jsonOut_(trainsLookup_(p, Date.now()));
+  if (p.action === 'trains') {
+    try {
+      return jsonOut_(trainsLookup_(p, Date.now()));
+    } catch (err) {
+      // Never an error page: the website and the app read a failed search and try again.
+      console.warn('trainsLookup_: ' + (err && err.stack || err));
+      return jsonOut_({ ok: false, error: 'unavailable' });
+    }
+  }
   return ping_();
 }
 
@@ -1130,7 +1138,15 @@ function trainsLookup_(params, now) {
     results[m.i] = fallback(m) || { q: railKey_(m.q), ok: false, error: 'busy' };
   });
   var toSave = [];
-  railFetch_(go, key, now).forEach(function (r, j) {
+  var fetched;
+  try {
+    fetched = railFetch_(go, key, now);
+  } catch (err) {
+    // UrlFetchApp itself failed (timeout, Google's side): the saved timetables, else 'unavailable'.
+    console.warn('railFetch_: ' + err);
+    fetched = go.map(function (m) { return { q: railKey_(m.q), ok: false, error: 'unavailable' }; });
+  }
+  fetched.forEach(function (r, j) {
     var m = go[j];
     if (r.ok) {
       var text = JSON.stringify(r);

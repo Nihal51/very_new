@@ -810,6 +810,19 @@ describe('train lookup (RailRadar proxy)', () => {
       assert.deepEqual([res.results[0].ok, res.results[0].error], [false, 'unavailable']);
     });
 
+    test('if fetching itself throws, the saved timetable is used — and the answer is never an error page', () => {
+      env.rail.answer = () => ({ code: 200, body: tt('JBP', 2) });
+      env.ctx.trainsLookup_({ q: 'JBP-R' }, now);
+      coldCache();
+      env.ctx.UrlFetchApp.fetchAll = () => { throw new Error('Address unavailable'); };
+      const res = env.ctx.trainsLookup_({ q: 'JBP-R,NGP-R' }, now + 8 * day);
+      assert.deepEqual([res.results[0].ok, res.results[0].saved], [true, true]);
+      assert.deepEqual([res.results[1].ok, res.results[1].error], [false, 'unavailable']);
+      env.ctx.trainsLookup_ = () => { throw new Error('boom'); };
+      const out = JSON.parse(env.ctx.doGet({ parameter: { action: 'trains', q: 'JBP-R' } }).text);
+      assert.deepEqual({ ...out }, { ok: false, error: 'unavailable' });
+    });
+
     test('a refused key warns on Telegram once a day', () => {
       env.rail.answer = () => ({ code: 401, body: { success: false } });
       env.ctx.trainsLookup_({ q: 'JBP-R' }, now);
