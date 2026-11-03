@@ -629,6 +629,7 @@ export function BookingForm({
                 <TripEstimate
                   view={trip}
                   rail={rail}
+                  dateField="when"
                   city={values.city}
                   elsewhere={values.dest === ELSEWHERE}
                   onUseLocal={() => setValues((v) => ({ ...v, pkg: 'local-full-day' }))}

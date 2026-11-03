@@ -169,8 +169,11 @@ test('no train, time or running day is typed into the destinations — train rou
     for (const hub of d.rail.hubs ?? []) assert.ok(!d.rail.stations.includes(hub), `${d.id}: a change station is not a boarding one`);
   }
   // Long train routes all have their stations; the change at Nagpur where direct trains are few.
-  for (const id of ['nagpur', 'jabalpur', 'visakhapatnam', 'varanasi', 'hyderabad', 'kolkata', 'pune', 'mumbai', 'delhi', 'bengaluru'])
+  // Odisha, Ranchi and Bhopal (4 Nov 2026): direct overnight trains as quick as the bus, checked on the robot.
+  for (const id of ['nagpur', 'jabalpur', 'visakhapatnam', 'varanasi', 'hyderabad', 'kolkata', 'pune', 'mumbai', 'delhi', 'bengaluru', 'bhubaneswar', 'puri', 'ranchi', 'bhopal'])
     assert.ok(findDestination(id).rail, id);
+  // By bus where it is quicker than any train, or there is no daily one: no train box.
+  for (const id of ['sambalpur', 'ambikapur', 'jagdalpur', 'indore', 'patna']) assert.equal(findDestination(id).rail, undefined, id);
   assert.deepEqual([...findDestination('bengaluru').rail.hubs], ['NGP']);
 });
 

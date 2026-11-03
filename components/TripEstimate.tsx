@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 
+import { CalendarIcon } from '@/components/icons';
 import type { ReturnTrains } from '@/components/useReturnTrains';
+import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { cn } from '@/lib/cn';
 import { dayRateFor } from '@/lib/outstation';
@@ -33,6 +35,7 @@ export function TripEstimate({
   elsewhere,
   onUseLocal,
   rail,
+  dateField,
   className,
 }: {
   view: TripView;
@@ -43,6 +46,8 @@ export function TripEstimate({
   onUseLocal: () => void;
   /** The train lookup for a one-way drop (useReturnTrains); `view` already has the chosen train applied. */
   rail?: ReturnTrains;
+  /** The name of the form's date & time field: the train box opens it when no date is picked yet. */
+  dateField?: string;
   className?: string;
 }) {
   const oneWay = view.kind === 'one-way';
@@ -88,7 +93,7 @@ export function TripEstimate({
             </li>
           ))}
         </ul>
-        {rail && rail.status !== 'off' && <TrainsHome rail={rail} view={view} city={city} />}
+        {rail && rail.status !== 'off' && <TrainsHome rail={rail} view={view} city={city} dateField={dateField} />}
         <div className="border-border mt-3 border-t pt-3">
           <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">Not in this price</p>
           <ul className="text-fg-muted mt-1 list-disc pl-5 text-[0.8125rem]">
@@ -217,6 +222,19 @@ function CheckLinks() {
   );
 }
 
+/** Scrolls to the form's date & time field, focuses it and opens its picker where the browser can. */
+function openDateField(name: string) {
+  const el = document.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+  if (!el) return;
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  el.focus({ preventScroll: true });
+  try {
+    el.showPicker?.();
+  } catch {
+    // Older browsers, or not allowed here: the field is focused, a tap opens it.
+  }
+}
+
 /** "Direct" or "Change at Nagpur", and the trains: "12345 Some Express". */
 function routeTitle(o: ReturnOption) {
   return o.legs.map((l) => `${l.train.number} ${l.train.name}`).join(' + ');
@@ -228,15 +246,34 @@ function routeTitle(o: ReturnOption) {
  * the other), the routes to choose from, and plain warnings when it could not
  * check. Nothing here claims a seat or a ticket.
  */
-function TrainsHome({ rail, view, city }: { rail: ReturnTrains; view: TripView; city: string }) {
+function TrainsHome({
+  rail,
+  view,
+  city,
+  dateField,
+}: {
+  rail: ReturnTrains;
+  view: TripView;
+  city: string;
+  dateField?: string;
+}) {
   const lookup = rail.lookup;
   let body: ReactNode;
   if (rail.status === 'need-date') {
+    // On a phone the date field is far above: a button here takes them to it and opens the picker.
     body = (
-      <p className="text-fg-muted">
-        Pick the date and time above to see the real trains home for that day. Until then the price uses the typical
-        time home.
-      </p>
+      <>
+        <p className="text-fg-muted">
+          The trains depend on the day. Pick the date and time he leaves to see the real trains home for that day.
+          Until then the price uses the typical time home.
+        </p>
+        {dateField && (
+          <Button variant="outline" size="sm" className="mt-3" onClick={() => openDateField(dateField)}>
+            <CalendarIcon className="size-4" aria-hidden />
+            Pick the date to see the trains
+          </Button>
+        )}
+      </>
     );
   } else if (rail.status === 'not-set-up') {
     body = (

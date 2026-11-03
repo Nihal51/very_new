@@ -104,6 +104,7 @@ export function OneWayPriceChecker({ className }: { className?: string }) {
       <TripEstimate
         view={trip}
         rail={rail}
+        dateField="ow-when"
         city={city}
         elsewhere={dest === ELSEWHERE}
         onUseLocal={() => router.push(`/book/?pkg=local-full-day&city=${encodeURIComponent(city)}#booking-form`)}
