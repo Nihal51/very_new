@@ -61,6 +61,8 @@ export type SiteSettings = {
     routeMinPerDay: number;
     /** Final bill of a route price: home later than the plan by more than this → extraHour an hour. */
     lateAfterHours: number;
+    /** Hours of waiting for his train in the route price; more are charged like the way home. */
+    routeFreeWaitHours: number;
     /** Per hour the driver is still travelling home after the paid days. */
     returnHour: number;
     /** The most return hours cost in any 24 hours. */
@@ -222,6 +224,7 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   price('outstation.routeMinBase', o.routeMinBase);
   price('outstation.routeMinPerDay', o.routeMinPerDay);
   count('outstation.lateAfterHours', o.lateAfterHours, 24);
+  count('outstation.routeFreeWaitHours', o.routeFreeWaitHours, 48);
   if (o.shortDriveMinimum > s.prices.outstation.from)
     problems.push('outstation.shortDriveMinimum should not cost more than an outstation day');
   if (o.extraFullDayAfterHours >= o.hoursPerDay)

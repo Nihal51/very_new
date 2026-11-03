@@ -12,6 +12,7 @@ import { useReturnTrains } from '@/components/useReturnTrains';
 import { currentUser, loadProfile, mightBeSignedIn } from '@/lib/auth';
 import { NONSTOP_NOTE, isTripPackage, type BookingTrip } from '@/lib/bookings';
 import { findDestination } from '@/lib/outstation';
+import { waitNote } from '@/lib/rail';
 import { bookingPackages, cities } from '@/lib/content';
 import { submitDoc } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
@@ -73,12 +74,12 @@ function notesOf(v: Values, train?: string): string {
   return [nonstop ? NONSTOP_NOTE : '', train ?? '', v.notes.trim()].filter(Boolean).join(' ').slice(0, 500);
 }
 
-/** "Train home in the estimate: 12345 Some Express, Fri, 31 Oct, 11:40 pm (timetable)." */
+/** "Train home in the estimate: 12345 Some Express, Fri, 31 Oct, 11:40 pm (timetable; not booked; he waits 3 h in all)." */
 function trainNote(view: TripView | null): string | undefined {
   const o = view?.ret;
   if (!o) return undefined;
   const legs = o.legs.map((l) => `${l.train.number} ${l.train.name} ${whenText(l.depart)}`).join(', then ');
-  return `Train home in the estimate: ${legs} (${o.scheduled ? 'timetable' : 'live'}; not booked).`;
+  return `Train home in the estimate: ${legs} (${o.scheduled ? 'timetable' : 'live'}; not booked; ${waitNote(o)}).`;
 }
 
 /** Visual order — also the order we hunt for the first invalid field on submit. */

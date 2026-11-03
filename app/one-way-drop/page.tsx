@@ -113,7 +113,7 @@ const faqs = [
   },
   {
     q: 'Is the driver’s way home included?',
-    a: `On a longer drop (he is away ${priceText.routeAfter} or more) it is included in the route price. On a short drop it is charged by the hour, from the drop until he is home — waiting for his train included: ${late}. From your start date and time the estimate works out when he drops the car, the first train home he can catch that day and when he is home (Raipur → Nagpur: about 6 hours; Raipur → Mumbai: about 23). The final bill uses the real times. You book his train or bus ticket.`,
+    a: `On a longer drop (he is away ${priceText.routeAfter} or more) it is included in the route price, with ${priceText.routeWait}. On a short drop it is charged by the hour, from the drop until he is home — waiting for his train included: ${late}. From your start date and time the estimate works out when he drops the car, the first train home he can catch that day and when he is home (Raipur → Nagpur: about 6 hours; Raipur → Mumbai: about 23). The final bill uses the real times. You book his train or bus ticket.`,
   },
   {
     q: 'How many days will my drop take?',

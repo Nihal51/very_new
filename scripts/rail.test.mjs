@@ -19,6 +19,9 @@ import {
   legsFrom,
   planReturn,
   returnParts,
+  waitFromNotes,
+  waitHoursOf,
+  waitNote,
   weekdayOf,
 } from '../lib/rail.ts';
 import { makeFetcher, parseLookup } from '../lib/rail-client.ts';
@@ -415,6 +418,7 @@ const rules = {
     minBase: settings.outstation.routeMinBase,
     minPerDay: settings.outstation.routeMinPerDay,
     lateAfterHours: settings.outstation.lateAfterHours,
+    freeWaitHours: settings.outstation.routeFreeWaitHours,
   },
 
   returnHour: settings.outstation.returnHour,
@@ -444,8 +448,47 @@ test('the way home from a train: whole hours from the drop, once, with the daily
   // The driving is untouched by the train.
   assert.deepEqual([train.fullDays, train.extraHours], [plan.fullDays, plan.extraHours]);
   assert.equal(est.driving.from + est.returnCharge, plan.fullDays * rules.dayRate.from + plan.extraHours * rules.extraHour + 2400);
-  // Bengaluru is a route price (1 Nov 2026): ₹350 + ₹4.5 × 1,370 km = ₹6,515 → ₹6,500, the train's wait included.
-  assert.deepEqual([est.from, est.to, est.route.km], [6500, 6500, 1370]);
+  // Bengaluru is a route price (1 Nov 2026): ₹350 + ₹4.5 × 1,370 km = ₹6,515 → ₹6,500 with 6 h of waiting;
+  // this train leaves 12 h after the drop (3 Nov 2026): 6 h more × ₹120 = ₹720.
+  assert.deepEqual([est.from, est.to, est.route.km, est.route.waitHours, est.route.waitCharge], [7220, 7220, 1370, 12, 720]);
+});
+
+/* Decided with the owner, 3 Nov 2026: a longer drop's route price was the same
+   however long he waited for his train. Now it includes up to 6 h of waiting
+   (at the drop and at a change); every hour more is charged like his way
+   home — ₹120 an hour, more than 6 h in a day = ₹1,200 a day. */
+
+test('waiting for his train: 6 h in the route price, every hour more like the way home (3 Nov 2026)', () => {
+  const plan = planTrip(rules, 1370, 'one-way', 0, { hours: 28 }, 7, true); // Bengaluru, day and night
+  const price = (wait, ride = 24, change) => estimate(rules, withReturn(plan, plan.dropAt + wait, plan.dropAt + wait + ride, change)).from;
+  assert.equal(price(2), 6500, 'a train 2 h after the drop: the route price');
+  assert.equal(price(6), 6500, 'up to 6 h: included');
+  assert.equal(price(6.25), 6500 + 120, 'a started hour counts');
+  assert.equal(price(10), 6500 + 4 * 120, '10 h: 4 h more × ₹120');
+  assert.equal(price(12), 6500 + 6 * 120, '12 h: 6 h more, still by the hour');
+  assert.equal(price(13), 6500 + 1200, 'more than 6 h more: a full day, ₹1,200');
+  assert.equal(price(20), 7700, 'the owner’s example: 20 h waiting → ₹7,700');
+  assert.equal(price(31), 6500 + 1200 + 120, '25 h more: a day (₹1,200) + 1 h');
+  // A change of train counts too: 3 h at the drop + 5 h at Nagpur = 8 h → 2 h more.
+  assert.equal(price(3, 24, 8), 6500 + 240);
+  // The typical time (no train picked) is not charged for waiting.
+  assert.equal(estimate(rules, plan).from, 6500);
+  // Settings without the rule (older app files): no charge for waiting.
+  const { freeWaitHours, ...old } = rules.route;
+  assert.equal(freeWaitHours, 6);
+  assert.equal(estimate({ ...rules, route: old }, withReturn(plan, plan.dropAt + 20, plan.dropAt + 44)).from, 6500);
+});
+
+test('his waiting in all, in the booking note and back, for the admin’s price', () => {
+  assert.equal(waitHoursOf({ waitMinutes: 150 }), 2.5);
+  assert.equal(waitHoursOf({ waitMinutes: 180, transfer: { station: { code: 'NGP', name: 'Nagpur' }, minutes: 300 } }), 8);
+  assert.equal(waitNote({ waitMinutes: 600 }), 'he waits 10 h in all');
+  assert.equal(waitNote({ waitMinutes: 601 }), 'he waits 11 h in all', 'a started hour counts, as in the price');
+  const note = `Train home in the estimate: 12160 X Fri 6 Nov, 7:00 pm, then 12105 Y Sat 7 Nov, 5:30 am (timetable; not booked; ${waitNote({ waitMinutes: 240, transfer: { station: { code: 'NGP', name: 'Nagpur' }, minutes: 180 } })}). Please call first.`;
+  assert.equal(waitFromNotes(note), 7);
+  assert.equal(waitFromNotes('He waits 9 h in all, the customer says'), undefined, 'only the estimate’s own note');
+  assert.equal(waitFromNotes(''), undefined);
+  assert.equal(waitFromNotes(undefined), undefined);
 });
 
 test('a short wait and train: by the hour, under the cap', () => {

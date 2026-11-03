@@ -266,6 +266,8 @@ export type TripPlan = {
    * train from the lookup, set by withReturn).
    */
   homeBasis?: 'allowance' | 'train';
+  /** One-way: hours of waiting for his train (at the drop and at a change), for the route price. */
+  waitHours?: number;
 };
 
 /** When nothing better is known, the estimate assumes the driver leaves at 7 AM. */
@@ -342,12 +344,25 @@ export type RouteRules = {
   minBase: number;
   minPerDay: number;
   lateAfterHours: number;
+  /**
+   * Hours of waiting for his train (at the drop and at a change) the route
+   * price includes (decided 3 Nov 2026: 6). Every hour more is charged like
+   * the way home — returnHour each, more than returnFullDayAfter = a day at
+   * returnMaxPerDay — so a long wait costs the customer, not the margin.
+   * Left out: no charge for waiting.
+   */
+  freeWaitHours?: number;
 };
 
 export type RoutePrice = {
   price: number;
   /** base + perKm × km, before rounding. */
   kmPrice: number;
+  /** Whole hours of waiting for his train (at the drop and at a change). */
+  waitHours: number;
+  /** The waiting beyond freeWaitHours, and its charge (already in `price` when it is by km). */
+  extraWaitHours: number;
+  waitCharge: number;
   /** minBase + minPerDay × days. */
   floor: number;
   /** Days (24 h each, started ones count) he is away. */
@@ -369,7 +384,12 @@ const wholeHours = (h: number) => Math.max(0, Math.ceil((Number.isFinite(h) ? h 
  *   Nagpur 284 km, 12 h: ₹350 + ₹4.5 × 284 = ₹1,628, at least ₹400 + ₹1,300 → ₹1,700.
  *   Delhi 1,214 km, 60 h: ₹5,813 → ₹5,800 (at least ₹4,300 for 3 days).
  */
-export function routePrice(rules: Pick<TripRules, 'route'>, km: number, hours: number): RoutePrice | undefined {
+export function routePrice(
+  rules: Pick<TripRules, 'route'> & Partial<Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>>,
+  km: number,
+  hours: number,
+  waitHours = 0,
+): RoutePrice | undefined {
   const r = rules.route;
   const d = Math.round(Number(km) || 0);
   const awayHours = wholeHours(hours);
@@ -377,8 +397,28 @@ export function routePrice(rules: Pick<TripRules, 'route'>, km: number, hours: n
   const days = Math.max(1, Math.ceil(awayHours / 24));
   const kmPrice = r.base + r.perKm * d;
   const floor = r.minBase + r.minPerDay * days;
-  const price = Math.round(Math.max(kmPrice, floor) / 50) * 50;
-  return { price, kmPrice, floor, days, awayHours, km: d, by: kmPrice >= floor ? 'km' : 'days' };
+  // A long wait for his train: the hours beyond the free ones, like the way home.
+  const wait = wholeHours(waitHours);
+  const extraWaitHours = r.freeWaitHours === undefined ? 0 : Math.max(0, wait - r.freeWaitHours);
+  const waitCharge =
+    extraWaitHours > 0 && rules.returnHour
+      ? returnCost(extraWaitHours, rules.returnHour, rules.returnMaxPerDay ?? Infinity, rules.returnFullDayAfter ?? 24)
+      : 0;
+  const round50 = (n: number) => Math.round(n / 50) * 50;
+  const byKm = round50(kmPrice) + waitCharge;
+  const byDays = round50(floor);
+  return {
+    price: Math.max(byKm, byDays),
+    kmPrice,
+    waitHours: wait,
+    extraWaitHours,
+    waitCharge,
+    floor,
+    days,
+    awayHours,
+    km: d,
+    by: byKm >= byDays ? 'km' : 'days',
+  };
 }
 
 /** The route price in words: "1,214 km × ₹4.5 + ₹350" or "60 h away (3 days): at least ₹400 + 3 × ₹1,300". */
@@ -536,13 +576,15 @@ export function planTrip(
  * and `homeAt` in hours after the start (the train's departure and its
  * arrival home). The way home is then whole hours from the drop to homeAt.
  */
-export function withReturn(plan: TripPlan, leaveAt: number, homeAt: number): TripPlan {
+export function withReturn(plan: TripPlan, leaveAt: number, homeAt: number, waitHours?: number): TripPlan {
   if (plan.kind !== 'one-way' || plan.dropAt === undefined || !(homeAt > plan.dropAt)) return plan;
   return {
     ...plan,
     leaveAt,
     homeAt,
     returnHours: Math.max(0, Math.ceil(homeAt - plan.dropAt - 1e-9)),
+    // The waiting for his train: from the drop to boarding, and any change (lib/rail.ts).
+    waitHours: waitHours ?? Math.max(0, leaveAt - plan.dropAt),
     homeBasis: 'train',
   };
 }
@@ -603,7 +645,7 @@ export type Estimate = {
 /** What the customer sees: a range, from the per-day price range for the distance, plus the extra hours and the way home. */
 export function estimate(
   rules: TripRules,
-  plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'> & Partial<Pick<TripPlan, 'km' | 'kind' | 'homeAt'>>,
+  plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'> & Partial<Pick<TripPlan, 'km' | 'kind' | 'homeAt' | 'waitHours'>>,
 ): Estimate {
   const rate = dayRateFor(rules, plan.km);
   // A one-way drive shorter than a day: by the hour, at least the minimum (₹600).
@@ -615,7 +657,9 @@ export function estimate(
   const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay, rules.returnFullDayAfter);
   // One-way, away long enough: one price for the route (by distance, at least the days away).
   const route =
-    plan.kind !== 'round' && plan.homeAt !== undefined ? routePrice(rules, plan.km ?? 0, plan.homeAt) : undefined;
+    plan.kind !== 'round' && plan.homeAt !== undefined
+      ? routePrice(rules, plan.km ?? 0, plan.homeAt, plan.waitHours ?? 0)
+      : undefined;
   if (route) return { from: route.price, to: route.price, driving, extraCharge, returnCharge, route };
   return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, extraCharge, returnCharge };
 }

@@ -26,7 +26,7 @@ import {
   type TripKind,
   type TripPlan,
 } from './outstation';
-import { returnParts, type ReturnOption } from './rail';
+import { returnParts, waitHoursOf, type ReturnOption } from './rail';
 import { rupeeRange, rupees, settings, tripRules } from './settings';
 
 /** The picker's value for a place that is not in the list. */
@@ -215,7 +215,8 @@ export function withTrain(view: TripView, option: ReturnOption | undefined): Tri
   const start = startInstant(view);
   if (!option || !view.plan || view.plan.dropAt === undefined || start === undefined) return view;
   const h = (ms: number) => (ms - start) / 3_600_000;
-  const plan = withReturn(view.plan, h(option.depart), h(option.arrive));
+  // His waiting (drop → first train, and any change) for the route price.
+  const plan = withReturn(view.plan, h(option.depart), h(option.arrive), waitHoursOf(option));
   if (plan === view.plan) return view;
   return { ...view, plan, returnHours: plan.returnHours, est: estimate(tripRules, plan), ret: option };
 }
@@ -329,10 +330,24 @@ export function estimateLines(view: TripView): { label: string; amount: string }
   const route = view.est.route;
   if (route) {
     const away = view.ret ? ` (${returnParts(view.ret).join(' + ')})` : ' (typical time)';
+    const free = tripRules.route?.freeWaitHours;
+    // Waiting for his train beyond the hours included: charged like the way home.
+    const extra = route.by === 'km' && route.waitCharge > 0;
     return [
-      { label: `Route price — ${routeWords(tripRules, route, rupees)}`, amount: rupees(route.price) },
       {
-        label: `Driver’s way home and waiting: ${plural(p.returnHours, 'hour')}${away}, about ${route.awayHours} h away in all`,
+        label: `Route price — ${routeWords(tripRules, route, rupees)}`,
+        amount: rupees(extra ? route.price - route.waitCharge : route.price),
+      },
+      ...(extra
+        ? [
+            {
+              label: `Extra waiting for his train: ${plural(route.extraWaitHours, 'hour')} beyond the ${free} h included — ${returnWords(route.extraWaitHours, tripRules.returnHour, tripRules.returnMaxPerDay, tripRules.returnFullDayAfter, rupees)}`,
+              amount: rupees(route.waitCharge),
+            },
+          ]
+        : []),
+      {
+        label: `Driver’s way home and waiting: ${plural(p.returnHours, 'hour')}${away}, about ${route.awayHours} h away in all${free !== undefined ? ` — up to ${free} h of waiting included` : ''}`,
         amount: 'Included',
       },
     ];

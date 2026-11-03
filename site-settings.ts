@@ -137,6 +137,10 @@ export const settings = {
     routePerKm: 4.5,
     routeMinBase: 400,
     routeMinPerDay: 1300,
+    /* Waiting for his train (decided 3 Nov 2026): the route price includes up to this many
+       hours of waiting (at the drop and at a change of train); every hour more is charged
+       like the way home (returnHour, more than returnFullDayAfterHours = returnMaxPerDay). */
+    routeFreeWaitHours: 6,
     lateAfterHours: 3, //      final bill of a route price: home more than this many hours after the plan → extraHour an hour
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 600, //          how far one driver drives in a day (about 12 h at averageKmh)

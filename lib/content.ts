@@ -379,7 +379,7 @@ export const services: Service[] = [
       },
       {
         q: 'Is the driver’s return journey included in the price?',
-        a: `Yes. On a longer drop (he is away ${priceText.routeAfter} or more) it is in the route price — ${priceText.routeRule}. On a short drop it is by the hour: from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
+        a: `Yes. On a longer drop (he is away ${priceText.routeAfter} or more) it is in the route price — ${priceText.routeRule}, with ${priceText.routeWait}. On a short drop it is by the hour: from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
       },
     ],
   },
@@ -498,7 +498,7 @@ export const extraRates = [
   },
   {
     label: 'Driver’s way home after a one-way drop',
-    detail: `Shorter drops: from the drop until he is home, waiting included; more than ${settings.outstation.returnFullDayAfterHours} h in a day = a full day (${priceText.outstationReturnMax}). Longer drops (${priceText.routeAfter} away or more): included in the route price. You book his ticket`,
+    detail: `Shorter drops: from the drop until he is home, waiting included; more than ${settings.outstation.returnFullDayAfterHours} h in a day = a full day (${priceText.outstationReturnMax}). Longer drops (${priceText.routeAfter} away or more): included in the route price, with ${priceText.routeWait}. You book his ticket`,
     price: `${priceText.outstationReturnHour}/hour`,
   },
   {

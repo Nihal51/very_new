@@ -135,8 +135,8 @@ export function TripEstimate({
           <ul className="mt-1 list-disc pl-5">
             <li>
               A drop that keeps him away {priceText.routeAfter} or more — from when he leaves to when he is home —
-              is <strong>one price for the route</strong>: {priceText.routeRule}. His way home and the waiting for
-              his train are included.
+              is <strong>one price for the route</strong>: {priceText.routeRule}. His way home is included, with{' '}
+              {priceText.routeWait}.
             </li>
             <li>
               The price stays the same if the trip runs a little late. If he gets home more than{' '}

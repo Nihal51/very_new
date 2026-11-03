@@ -370,6 +370,24 @@ export function returnParts(o: ReturnOption): string[] {
   return parts;
 }
 
+/**
+ * Hours he waits for his train in all: from the drop to the first train
+ * leaving (getting to the station included), and any change between trains.
+ * The route price includes the first few (lib/outstation.ts routePrice).
+ */
+export const waitHoursOf = (o: Pick<ReturnOption, 'waitMinutes' | 'transfer'>): number =>
+  (o.waitMinutes + (o.transfer?.minutes ?? 0)) / 60;
+
+/** "he waits 11 h in all" — in the booking's train note, so the team prices the same waiting. */
+export const waitNote = (o: Pick<ReturnOption, 'waitMinutes' | 'transfer'>): string =>
+  `he waits ${Math.max(0, Math.ceil(waitHoursOf(o) - 1e-9))} h in all`;
+
+/** The waiting hours from a booking's train note (waitNote), for the admin's price; undefined when none. */
+export function waitFromNotes(notes: string | undefined): number | undefined {
+  const m = /Train home in the estimate:[\s\S]*?he waits (\d+) h in all/.exec(notes ?? '');
+  return m ? Number(m[1]) : undefined;
+}
+
 /* ------------------------------------------------------------- queries ---- */
 
 /**

@@ -47,6 +47,7 @@ const rules = {
     minBase: settings.outstation.routeMinBase,
     minPerDay: settings.outstation.routeMinPerDay,
     lateAfterHours: settings.outstation.lateAfterHours,
+    freeWaitHours: settings.outstation.routeFreeWaitHours,
   },
 
   returnHour: settings.outstation.returnHour,
@@ -291,7 +292,18 @@ test('the day price by distance (decided 29 Oct 2026): nearer places cost less a
 test('the route price of a longer drop (decided 1 Nov 2026)', () => {
   const r = (km, h) => routePrice(rules, km, h);
   assert.equal(r(284, 11), undefined, 'under 12 h away: by the hours');
-  assert.deepEqual(r(284, 12), { price: 1700, kmPrice: 350 + 4.5 * 284, floor: 1700, days: 1, awayHours: 12, km: 284, by: 'days' });
+  assert.deepEqual(r(284, 12), {
+    price: 1700, kmPrice: 350 + 4.5 * 284, waitHours: 0, extraWaitHours: 0, waitCharge: 0,
+    floor: 1700, days: 1, awayHours: 12, km: 284, by: 'days',
+  });
+  // Waiting for his train (3 Nov 2026): 6 h included, then like the way home.
+  const w = (wait) => routePrice(rules, 1370, 81, wait);
+  assert.deepEqual([w(6).price, w(7).price, w(10).price, w(20).price], [6500, 6620, 6980, 7700]);
+  assert.deepEqual([w(10).waitHours, w(10).extraWaitHours, w(10).waitCharge, w(10).by], [10, 4, 480, 'km']);
+  assert.equal(w(Number.NaN).price, 6500, 'no wait known: none charged');
+  assert.equal(routePrice({ route: rules.route }, 1370, 81, 20).price, 6500, 'no way-home rate given: no charge');
+  // When the days-away floor is the price, it already pays for the time: no waiting on top.
+  assert.deepEqual([r(284, 30).price, routePrice(rules, 284, 30, 14).price, routePrice(rules, 284, 30, 14).by], [3000, 3000, 'days']);
   assert.equal(r(334, 16).price, 1850, 'Ambikapur: ₹1,853');
   assert.equal(r(577, 25.5).price, 3000, 'Puri: ₹2,947, but 26 h = 2 days → at least ₹3,000');
   assert.equal(r(1214, 60).price, 5800, 'Delhi: ₹5,813');

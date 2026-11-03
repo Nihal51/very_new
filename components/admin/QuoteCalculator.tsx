@@ -11,6 +11,7 @@ import { saveQuote } from '@/lib/admin';
 import { formatDateTime, type Booking } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
 import { dayRateFor, planTrip, routePrice, routeQuote, quote as workOut } from '@/lib/outstation';
+import { waitFromNotes } from '@/lib/rail';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import { quoteBreakdown } from '@/lib/trip';
 
@@ -47,7 +48,9 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
   const [away, setAway] = useState(
     String(b.quote?.awayHours ?? (drive?.homeAt !== undefined ? Math.ceil(drive.homeAt - 1e-9) : 0)),
   );
-  const route = oneWay && b.trip?.km ? routePrice(tripRules, b.trip.km, int(away)) : undefined;
+  // His waiting for the train (drop → boarding, and any change): the train note on the booking says it.
+  const [wait, setWait] = useState(String(waitFromNotes(b.notes) ?? 0));
+  const route = oneWay && b.trip?.km ? routePrice(tripRules, b.trip.km, int(away), int(wait)) : undefined;
   const [routeTyped, setRouteTyped] = useState(b.quote?.awayHours ? String(b.quote.dayRate) : '');
   const routeAmount = int(routeTyped) || route?.price || 0;
   const [ticket, setTicket] = useState(String(b.quote?.ticket ?? 0));
@@ -197,10 +200,17 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
               )}
             {route &&
               num(
+                'Hours waiting for his train',
+                wait,
+                setWait,
+                `From the drop until his train leaves, and any change (the train note says it). The first ${tripRules.route?.freeWaitHours ?? 0} h are in the price; more: ${priceText.outstationReturnRule}`,
+              )}
+            {route &&
+              num(
                 'Route price',
                 routeTyped || String(route.price),
                 setRouteTyped,
-                `${rupees(route.price)} for ${route.km} km, ${route.awayHours} h away. Change it only for a reason`,
+                `${rupees(route.price)} for ${route.km} km, ${route.awayHours} h away${route.waitCharge > 0 ? ` (with ${rupees(route.waitCharge)} for ${route.extraWaitHours} h of extra waiting)` : ''}. Change it only for a reason`,
               )}
             {!route &&
               num(

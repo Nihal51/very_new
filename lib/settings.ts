@@ -60,11 +60,13 @@ export const priceText = {
   /** Longer one-way drops: the route price, in one sentence. */
   routeRule: `${rupees(settings.outstation.routeBase)} + ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(settings.outstation.routePerKm)} a km, at least ${rupees(settings.outstation.routeMinBase)} + ${rupees(settings.outstation.routeMinPerDay)} for each day he is away`,
   routeAfter: `${settings.outstation.routeAfterHours} hours`,
+  /** "up to 6 hours of waiting for his train included; each hour more ₹120 (more than 6 hours in a day = ₹1,200)" */
+  routeWait: `up to ${settings.outstation.routeFreeWaitHours} hours of waiting for his train included; each hour more ${rupees(settings.outstation.returnHour)} (more than ${settings.outstation.returnFullDayAfterHours} hours in a day = ${rupees(settings.outstation.returnMaxPerDay)})`,
   /** The whole one-way drop price in two sentences: short drops by the hour, longer ones by distance. */
   get oneWayRule() {
     return (
       `A short drop (he is away less than ${settings.outstation.routeAfterHours} hours): ${this.shortDrive}, plus his way home — from the drop until he is home, waiting included — ${this.outstationReturnRule}. ` +
-      `A longer drop: one price for the route — ${this.routeRule}, his way home and waiting included.`
+      `A longer drop: one price for the route — ${this.routeRule}, his way home and ${this.routeWait}.`
     );
   },
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
@@ -128,6 +130,7 @@ export const tripRules: TripRules = {
     minBase: settings.outstation.routeMinBase,
     minPerDay: settings.outstation.routeMinPerDay,
     lateAfterHours: settings.outstation.lateAfterHours,
+    freeWaitHours: settings.outstation.routeFreeWaitHours,
   },
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,

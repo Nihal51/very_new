@@ -72,6 +72,8 @@ export function GET() {
       routeMinBase: outstation.routeMinBase,
       routeMinPerDay: outstation.routeMinPerDay,
       lateAfterHours: outstation.lateAfterHours,
+      // Waiting for his train: up to routeFreeWaitHours in the route price; more like the way home.
+      routeFreeWaitHours: outstation.routeFreeWaitHours,
       mealAllowance: outstation.mealAllowance,
       kmPerDay: outstation.kmPerDay,
       localWithinKm: outstation.localWithinKm,
