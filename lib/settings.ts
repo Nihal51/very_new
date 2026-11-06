@@ -58,10 +58,10 @@ export const priceText = {
   /** "₹120 an hour of driving, at least ₹600" */
   shortDrive: `${rupees(settings.outstation.extraHour)} an hour of driving, at least ${rupees(settings.outstation.shortDriveMinimum)}`,
   /** Longer one-way drops: the route price, in one sentence. */
-  routeRule: `${rupees(settings.outstation.routeBase)} + ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(settings.outstation.routePerKm)} a km, at least ${rupees(settings.outstation.routeMinBase)} + ${rupees(settings.outstation.routeMinPerDay)} for each day he is away`,
+  routeRule: `${rupees(settings.outstation.routeBase)} + ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(settings.outstation.routePerKm)} a km, at least ${settings.outstation.routeMinBase > 0 ? `${rupees(settings.outstation.routeMinBase)} + ` : ''}${rupees(settings.outstation.routeMinPerDay)} and at most ${rupees(settings.outstation.routeMaxPerDay)} for each day he is away`,
   routeAfter: `${settings.outstation.routeAfterHours} hours`,
-  /** "up to 6 hours of waiting for his train included; each hour more ₹120 (more than 6 hours in a day = ₹1,200)" */
-  routeWait: `up to ${settings.outstation.routeFreeWaitHours} hours of waiting for his train included; each hour more ${rupees(settings.outstation.returnHour)} (more than ${settings.outstation.returnFullDayAfterHours} hours in a day = ${rupees(settings.outstation.returnMaxPerDay)})`,
+  /** "waiting for his train uses the time left in the days paid, at no charge; past them ₹120 an hour, at most one more day" */
+  routeWait: `waiting for his train uses the time left in the days paid, at no charge; past them ${rupees(settings.outstation.returnHour)} an hour, at most one more day's price for each 24 hours`,
   /** The whole one-way drop price in two sentences: short drops by the hour, longer ones by distance. */
   get oneWayRule() {
     return (
@@ -129,8 +129,7 @@ export const tripRules: TripRules = {
     perKm: settings.outstation.routePerKm,
     minBase: settings.outstation.routeMinBase,
     minPerDay: settings.outstation.routeMinPerDay,
-    lateAfterHours: settings.outstation.lateAfterHours,
-    freeWaitHours: settings.outstation.routeFreeWaitHours,
+    maxPerDay: settings.outstation.routeMaxPerDay,
   },
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,

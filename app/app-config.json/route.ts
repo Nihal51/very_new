@@ -65,15 +65,15 @@ export function GET() {
       // A one-way drive shorter than a day: extraHour an hour, at least this.
       shortDriveMinimum: outstation.shortDriveMinimum,
       // Longer one-way drops: away routeAfterHours or more → routeBase + routePerKm × km,
-      // at least routeMinBase + routeMinPerDay a day away, to the nearest ₹50.
+      // at least routeMinBase + routeMinPerDay and at most routeMaxPerDay a day away, to the nearest ₹50.
       routeAfterHours: outstation.routeAfterHours,
       routeBase: outstation.routeBase,
       routePerKm: outstation.routePerKm,
       routeMinBase: outstation.routeMinBase,
       routeMinPerDay: outstation.routeMinPerDay,
-      lateAfterHours: outstation.lateAfterHours,
-      // Waiting for his train: up to routeFreeWaitHours in the route price; more like the way home.
-      routeFreeWaitHours: outstation.routeFreeWaitHours,
+      routeMaxPerDay: outstation.routeMaxPerDay,
+      // Waiting for his train (7 Nov 2026): the time left in the days paid is free; past them returnHour an hour,
+      // at most the price per day for each 24 h.
       mealAllowance: outstation.mealAllowance,
       kmPerDay: outstation.kmPerDay,
       localWithinKm: outstation.localWithinKm,

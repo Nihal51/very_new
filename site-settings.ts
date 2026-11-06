@@ -126,22 +126,20 @@ export const settings = {
     returnHour: 120, //        each hour of his way home after a one-way drop (from the drop, waiting included)
     returnMaxPerDay: 1200, //  a full day of the way home (each 24 hours)
     returnFullDayAfterHours: 6, // the hours left over after the full days: up to this many by the hour; more = a full day
-    /* Longer one-way drops (decided 1 Nov 2026): when he is away (leaves → home)
-       routeAfterHours or more, one price for the route instead of the hours above:
-       routeBase + routePerKm × one-way km, but at least routeMinBase + routeMinPerDay
-       for each day (24 h) he is away — his way home and waiting included — rounded
-       to ₹50. Nagpur ₹1,700, Ambikapur ₹1,850, Delhi ₹5,800, Bengaluru ₹6,500.
-       His ticket and meals are paid separately. */
+    /* Longer one-way drops (decided 1 Nov 2026; days and waiting 7 Nov 2026): when he is
+       away (leaves → home) routeAfterHours or more, one price for the route instead of the
+       hours above, for the days the trip needs (the drive, the usual wait at the station and
+       his way home; each started 24 h is a day): routeBase + routePerKm × one-way km, but for
+       each day at least routeMinBase + routeMinPerDay and at most routeMaxPerDay, rounded to
+       ₹50. Nagpur ₹1,650, Mumbai ₹5,400, Delhi ₹5,550, Bengaluru ₹6,600. Waiting for his train
+       uses the time left in those days at no charge; the hours past them are returnHour each,
+       at most the trip's price per day for each 24 h. His ticket and meals are paid separately. */
     routeAfterHours: 12,
     routeBase: 350,
     routePerKm: 4.5,
-    routeMinBase: 400,
-    routeMinPerDay: 1300,
-    /* Waiting for his train (decided 3 Nov 2026): the route price includes up to this many
-       hours of waiting (at the drop and at a change of train); every hour more is charged
-       like the way home (returnHour, more than returnFullDayAfterHours = returnMaxPerDay). */
-    routeFreeWaitHours: 6,
-    lateAfterHours: 3, //      final bill of a route price: home more than this many hours after the plan → extraHour an hour
+    routeMinBase: 0,
+    routeMinPerDay: 1650,
+    routeMaxPerDay: 1850, //   for each day away, never more than this (a drop where he is home the same day stays cheap)
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 600, //          how far one driver drives in a day (about 12 h at averageKmh)
     averageKmh: 50, //         highway average with stops

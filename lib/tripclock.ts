@@ -168,7 +168,7 @@ export function billRates(quote: Booking['quote'], rules: TripRules, km?: number
   if (quote?.awayHours)
     return { ...base, dayRate: quote.dayRate, route: { price: quote.dayRate, awayHours: quote.awayHours, km: quote.km ?? km ?? 0 } };
   const route = !quote && km && plannedAway !== undefined ? routePrice(rules, km, plannedAway) : undefined;
-  if (route) return { ...base, dayRate: route.price, route: { price: route.price, awayHours: route.awayHours, km: route.km } };
+  if (route) return { ...base, dayRate: route.daysPrice, route: { price: route.daysPrice, awayHours: route.plannedHours, km: route.km } };
   return { ...base, dayRate: quote?.dayRate ?? dayRateFor(rules, km).from };
 }
 
@@ -253,11 +253,13 @@ export function billLines(
       label: `Route price (${b.route.km ? `${inr.format(b.route.km)} km, ` : ''}planned about ${b.route.awayHours} h away, his way home included)`,
       amount: rupees(b.dayRate),
     });
-    if (b.extraHours > 0)
+    if (b.extraHours > 0) {
+      const paid = b.route.paidDays ?? Math.max(1, Math.ceil(b.route.awayHours / 24));
       lines.push({
-        label: `Home ${b.route.realAwayHours - b.route.awayHours} h later than planned: ${plural(b.extraHours, 'hour')} × ${rupees(b.extraHourRate)} (the first ${rules.route?.lateAfterHours ?? 0} h free)`,
+        label: `Away ${b.route.realAwayHours} h — past the ${plural(paid, 'day')} paid (${paid * 24} h): ${plural(b.extraHours, 'hour')} × ${rupees(b.extraHourRate)}, at most one more day's price for each 24 h`,
         amount: rupees(b.extraCharge),
       });
+    }
     if (b.ticket > 0) lines.push({ label: 'Ticket home (we bought it)', amount: rupees(b.ticket) });
     return lines;
   }
@@ -304,7 +306,7 @@ export function billBreakdown(
   if (away)
     return [
       `${rupees(b.dayRate)} route price (about ${away} h away, way home included)`,
-      b.extraHours > 0 ? `${rupees(b.extraCharge)} for ${plural(b.extraHours, 'hour')} late` : null,
+      b.extraHours > 0 ? `${rupees(b.extraCharge)} for ${plural(b.extraHours, 'hour')} past the days paid` : null,
       b.ticket > 0 ? `${rupees(b.ticket)} ticket` : null,
     ]
       .filter(Boolean)
@@ -343,8 +345,11 @@ export function driverPay(
   returnHourPay: number,
   rules: Pick<TripRules, 'hoursPerDay' | 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): number {
-  // A route price: his day cost for each day (24 h, started ones count) he was away.
-  if (b.route) return Math.max(1, Math.ceil(b.route.realAwayHours / 24)) * dayCost;
+  // A route price: his day cost for each day paid, and his hourly pay for the hours past them (at most a day for each 24 h).
+  if (b.route) {
+    const paid = b.route.paidDays ?? Math.max(1, Math.ceil(b.route.awayHours / 24));
+    return paid * dayCost + (b.extraHours > 0 ? returnCost(b.extraHours, returnHourPay, dayCost, 24) : 0);
+  }
   const capHours = rules.returnMaxPerDay / rules.returnHour;
   return Math.round(
     b.days * dayCost +

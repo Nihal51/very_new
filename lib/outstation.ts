@@ -329,13 +329,15 @@ export function shortDriveWords(
 
 /**
  * The route price of a longer one-way drop (decided with the owner, 1 Nov
- * 2026): what customers pay in this market goes by distance — Nagpur
- * ₹1,600–1,700, Delhi ₹6,000, Bengaluru ₹6,500 all sit on `base + perKm ×
- * km` — but the driver is paid by the days he is away, so the price is never
- * below `minBase + minPerDay` for each day (24 h) he is away, his way home and
- * the waiting included. Rounded to the nearest ₹50. His ticket and meals are
- * paid separately, as before. `lateAfterHours`: the final bill adds
- * extraHour an hour only when he is home more than this long after the plan.
+ * 2026; the days and the waiting 7 Nov 2026). What customers pay goes by
+ * distance — `base + perKm × km` — but the driver is paid by the days he is
+ * away, so the price is for the days the trip needs (drive + the usual wait at
+ * the station + his way home; each started 24 h is a day): never below
+ * `minBase + minPerDay` nor above `maxPerDay` for each of them. Waiting for his
+ * train uses the time left in those days first, at no charge; only the hours
+ * past them cost extra — returnHour each, at most the trip's price per day for
+ * each 24 h — on the estimate and, from the real times, on the final bill.
+ * Rounded to the nearest ₹50. His ticket and meals are paid separately.
  */
 export type RouteRules = {
   afterHours: number;
@@ -343,93 +345,105 @@ export type RouteRules = {
   perKm: number;
   minBase: number;
   minPerDay: number;
-  lateAfterHours: number;
-  /**
-   * Hours of waiting for his train (at the drop and at a change) the route
-   * price includes (decided 3 Nov 2026: 6). Every hour more is charged like
-   * the way home — returnHour each, more than returnFullDayAfter = a day at
-   * returnMaxPerDay — so a long wait costs the customer, not the margin.
-   * Left out: no charge for waiting.
-   */
-  freeWaitHours?: number;
+  /** The most for each day (24 h) he is away. Left out: no upper limit. */
+  maxPerDay?: number;
 };
 
 export type RoutePrice = {
+  /** What the customer pays: the price for the days, and any hours past them. */
   price: number;
+  /** The price for the days the trip needs (what a quote saves). */
+  daysPrice: number;
   /** base + perKm × km, before rounding. */
   kmPrice: number;
-  /** Whole hours of waiting for his train (at the drop and at a change). */
-  waitHours: number;
-  /** The waiting beyond freeWaitHours, and its charge (already in `price` when it is by km). */
-  extraWaitHours: number;
-  waitCharge: number;
   /** minBase + minPerDay × days. */
   floor: number;
-  /** Days (24 h each, started ones count) he is away. */
+  /** maxPerDay × days, rounded (Infinity without maxPerDay). */
+  cap: number;
+  /** The days paid: the trip as planned (drive + usual wait + way home), each started 24 h. */
   days: number;
-  /** Whole hours he is away. */
+  /** daysPrice ÷ days, to ₹50: the most the hours past the days cost for each 24 h. */
+  dayPrice: number;
+  /** Whole hours the trip needs as planned, and whole hours he is away with the waiting. */
+  plannedHours: number;
   awayHours: number;
+  /** Hours the days paid leave after the trip as planned: waiting for his train there costs nothing. */
+  freeHours: number;
+  /** Hours past the days paid, and what they cost (in `price`). */
+  extraHours: number;
+  extraCharge: number;
   km: number;
-  /** Which one set the price. */
-  by: 'km' | 'days';
+  /** What set daysPrice: the km, the least for the days, or the most for the days. */
+  by: 'km' | 'days' | 'cap';
 };
 
 const wholeHours = (h: number) => Math.max(0, Math.ceil((Number.isFinite(h) ? h : 0) - 1e-9));
 
 /**
  * The route price for a one-way drop `km` away (one way, by road) that keeps
- * him away `hours` (he leaves → he is home); undefined when there are no
- * route rules, the place is unknown (km 0) or he is away less than
- * afterHours (then the hours are charged, as before).
- *   Nagpur 284 km, 12 h: ₹350 + ₹4.5 × 284 = ₹1,628, at least ₹400 + ₹1,300 → ₹1,700.
- *   Delhi 1,214 km, 60 h: ₹5,813 → ₹5,800 (at least ₹4,300 for 3 days).
+ * him away `hours` (he leaves → he is home), of which `plannedHours` the trip
+ * needs as planned (the drive, the usual wait at the station, his way home;
+ * the rest is waiting for his train). Undefined when there are no route rules,
+ * the place is unknown (km 0) or he is away less than afterHours (then the
+ * hours are charged, as before).
+ *   Nagpur 284 km, 12 h: ₹350 + ₹4.5 × 284 = ₹1,628 → ₹1,650 (₹1,650–1,850 for 1 day); 12 h left for waiting.
+ *   Visakhapatnam 546 km, 22 h: ₹2,807, at most ₹1,850 for 1 day; 7 h past the day: + 7 × ₹120.
+ *   Delhi 1,214 km, 60 h: ₹5,813, at most 3 × ₹1,850 = ₹5,550; 12 h left for waiting.
  */
 export function routePrice(
-  rules: Pick<TripRules, 'route'> & Partial<Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>>,
+  rules: Pick<TripRules, 'route'> & Partial<Pick<TripRules, 'returnHour'>>,
   km: number,
   hours: number,
-  waitHours = 0,
+  plannedHours: number = hours,
 ): RoutePrice | undefined {
   const r = rules.route;
   const d = Math.round(Number(km) || 0);
   const awayHours = wholeHours(hours);
   if (!r || d <= 0 || awayHours < r.afterHours) return undefined;
-  const days = Math.max(1, Math.ceil(awayHours / 24));
+  const planned = Math.min(awayHours, wholeHours(plannedHours) || awayHours);
+  const days = Math.max(1, Math.ceil(planned / 24));
   const kmPrice = r.base + r.perKm * d;
   const floor = r.minBase + r.minPerDay * days;
-  // A long wait for his train: the hours beyond the free ones, like the way home.
-  const wait = wholeHours(waitHours);
-  const extraWaitHours = r.freeWaitHours === undefined ? 0 : Math.max(0, wait - r.freeWaitHours);
-  const waitCharge =
-    extraWaitHours > 0 && rules.returnHour
-      ? returnCost(extraWaitHours, rules.returnHour, rules.returnMaxPerDay ?? Infinity, rules.returnFullDayAfter ?? 24)
-      : 0;
   const round50 = (n: number) => Math.round(n / 50) * 50;
-  const byKm = round50(kmPrice) + waitCharge;
+  const byKm = round50(kmPrice);
   const byDays = round50(floor);
+  // The most for the days (never below the least).
+  const cap = r.maxPerDay === undefined ? Infinity : Math.max(byDays, round50(r.maxPerDay * days));
+  const by: RoutePrice['by'] = byKm < byDays ? 'days' : byKm > cap ? 'cap' : 'km';
+  const daysPrice = by === 'days' ? byDays : by === 'cap' ? cap : byKm;
+  // Waiting first uses the time left in the days paid; the hours past them, returnHour each, at most a day's price per 24 h.
+  const dayPrice = round50(daysPrice / days);
+  const extraHours = Math.max(0, awayHours - days * 24);
+  const extraCharge = extraHours > 0 && rules.returnHour ? returnCost(extraHours, rules.returnHour, dayPrice, 24) : 0;
   return {
-    price: Math.max(byKm, byDays),
+    price: daysPrice + extraCharge,
+    daysPrice,
     kmPrice,
-    waitHours: wait,
-    extraWaitHours,
-    waitCharge,
     floor,
+    cap,
     days,
+    dayPrice,
+    plannedHours: planned,
     awayHours,
+    freeHours: days * 24 - planned,
+    extraHours,
+    extraCharge,
     km: d,
-    by: byKm >= byDays ? 'km' : 'days',
+    by,
   };
 }
 
-/** The route price in words: "1,214 km × ₹4.5 + ₹350" or "60 h away (3 days): at least ₹400 + 3 × ₹1,300". */
+/** The route price in words: "1,118 km: ₹350 + ₹4.5 a km", "26 h away (2 days, …): at least 2 × ₹1,650" or "… at most 1 × ₹1,850". */
 export function routeWords(rules: Pick<TripRules, 'route'>, p: RoutePrice, money: (n: number) => string): string {
   const r = rules.route!;
   const km = new Intl.NumberFormat('en-IN').format(p.km);
   // ₹4.5 a km: money() may round to whole rupees.
   const perKm = `₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(r.perKm)}`;
-  return p.by === 'km'
-    ? `${km} km: ${money(r.base)} + ${perKm} a km`
-    : `${p.awayHours} h away (${p.days} ${p.days === 1 ? 'day' : 'days'}, his way home included): at least ${money(r.minBase)} + ${p.days} × ${money(r.minPerDay)}`;
+  // The days paid: for the trip as planned (any waiting past them is its own line).
+  const away = `${p.plannedHours} h away (${p.days} ${p.days === 1 ? 'day' : 'days'}, his way home included)`;
+  if (p.by === 'km') return `${km} km: ${money(r.base)} + ${perKm} a km`;
+  if (p.by === 'cap') return `${km} km, ${away}: at most ${p.days} × ${money(r.maxPerDay ?? 0)}`;
+  return `${away}: at least ${r.minBase > 0 ? `${money(r.minBase)} + ` : ''}${p.days} × ${money(r.minPerDay)}`;
 }
 
 /** Hours of driving for a distance, at averageKmh. */
@@ -655,10 +669,11 @@ export function estimate(
     ? short
     : { from: plan.fullDays * rate.from + extraCharge, to: plan.fullDays * rate.to + extraCharge };
   const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay, rules.returnFullDayAfter);
-  // One-way, away long enough: one price for the route (by distance, at least the days away).
+  // One-way, away long enough: one price for the route, for the days the trip needs; waiting past them by the hour.
+  const extraWait = Math.max(0, (plan.waitHours ?? 0) - rules.stationHours);
   const route =
     plan.kind !== 'round' && plan.homeAt !== undefined
-      ? routePrice(rules, plan.km ?? 0, plan.homeAt, plan.waitHours ?? 0)
+      ? routePrice(rules, plan.km ?? 0, plan.homeAt, plan.homeAt - extraWait)
       : undefined;
   if (route) return { from: route.price, to: route.price, driving, extraCharge, returnCharge, route };
   return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, extraCharge, returnCharge };
@@ -677,21 +692,39 @@ export function routeQuote(input: {
   ticket: number;
   partnerPercent: number;
   minProfitPercent: number;
-}): { total: number; days: number; driverPay: number; partnerPay: number; profit: number; profitPercent: number; ok: boolean } {
-  const price = whole(input.price);
+  /** Hours past the days paid (waiting for his train), what the customer pays for them, and the driver's pay an hour (at most his day cost for each 24 h). */
+  extraHours?: number;
+  extraCharge?: number;
+  driverHourPay?: number;
+}): {
+  total: number;
+  days: number;
+  driverPay: number;
+  /** The driver's pay for the hours past the days paid (in driverPay). */
+  driverExtraPay: number;
+  partnerPay: number;
+  profit: number;
+  profitPercent: number;
+  ok: boolean;
+} {
+  const charged = whole(input.price) + whole(input.extraCharge ?? 0);
   const days = Math.max(1, Math.ceil(whole(input.awayHours) / 24));
-  const driverPay = days * whole(input.driverDayCost);
-  const partnerPay = Math.round((price * Math.min(50, Math.max(0, input.partnerPercent))) / 100);
-  const profit = price - driverPay - partnerPay;
-  const profitPercent = price > 0 ? Math.round((profit / price) * 1000) / 10 : 0;
+  const dayCost = whole(input.driverDayCost);
+  const driverExtraPay =
+    whole(input.extraHours ?? 0) > 0 ? returnCost(whole(input.extraHours ?? 0), whole(input.driverHourPay ?? 0), dayCost, 24) : 0;
+  const driverPay = days * dayCost + driverExtraPay;
+  const partnerPay = Math.round((charged * Math.min(50, Math.max(0, input.partnerPercent))) / 100);
+  const profit = charged - driverPay - partnerPay;
+  const profitPercent = charged > 0 ? Math.round((profit / charged) * 1000) / 10 : 0;
   return {
-    total: price + whole(input.ticket),
+    total: charged + whole(input.ticket),
     days,
     driverPay,
+    driverExtraPay,
     partnerPay,
     profit,
     profitPercent,
-    ok: price > 0 && profitPercent + 1e-9 >= input.minProfitPercent,
+    ok: charged > 0 && profitPercent + 1e-9 >= input.minProfitPercent,
   };
 }
 
@@ -871,9 +904,10 @@ export type BillInput = TripTimes & {
   graceMinutes: number;
   /**
    * One-way at a route price (the agreed price, or the estimate's): `price`
-   * and the hours away it was planned for. The bill is then that price,
-   * plus extraHourRate for each hour he was home later than awayHours +
-   * lateAfterHours. Left out: by the hours, as below.
+   * and the hours away it was planned for. The bill is then that price for
+   * the days paid (awayHours, each started 24 h); the hours he was away past
+   * them are returnHourRate each, at most the price per day for each 24 h.
+   * Left out: by the hours, as below.
    */
   route?: { price: number; awayHours: number; km: number };
 };
@@ -895,8 +929,11 @@ export type Bill = {
   returnHourRate: number;
   ticket: number;
   amount: number;
-  /** At a route price: the planned and the real hours away, and the km. (Then days = 1 at dayRate = the price, extraHours = the late hours.) */
-  route?: { awayHours: number; realAwayHours: number; km: number };
+  /**
+   * At a route price: the planned and the real hours away, the km and the days paid. (Then days = 1 at
+   * dayRate = the price; extraHours = the hours past the days paid, at extraHourRate = the way-home rate.)
+   */
+  route?: { awayHours: number; realAwayHours: number; km: number; paidDays?: number };
 };
 
 const minutesBetween = (a: number | undefined, b: number | undefined) =>
@@ -917,29 +954,31 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
   const driveMinutes = minutesBetween(input.startAt, driveEnd);
   const returnMinutes = oneWay ? minutesBetween(driveEnd, input.homeAt) : 0;
 
-  // A route price: the price, and the hours he was late beyond the plan and the allowance.
+  // A route price: the price for the days paid; waiting or delays use the time left in them first,
+  // and only the hours past them cost extra — the way-home rate, at most the price per day for each 24 h.
   if (oneWay && input.route && input.route.price > 0) {
     const realAwayHours = chargeHours(minutesBetween(input.startAt, input.homeAt), input.graceMinutes);
     const planned = whole(input.route.awayHours);
-    const late = Math.max(0, realAwayHours - planned - (rules.route?.lateAfterHours ?? 0));
+    const paidDays = Math.max(1, Math.ceil(planned / 24));
     const price = whole(input.route.price);
-    const rate = whole(input.extraHourRate);
-    const lateCharge = Math.min(late * rate, price);
+    const rate = whole(input.returnHourRate);
+    const past = Math.max(0, realAwayHours - paidDays * 24);
+    const pastCharge = past > 0 ? returnCost(past, rate, Math.round(price / paidDays / 50) * 50, 24) : 0;
     const ticket = whole(input.ticket);
     return {
       driveMinutes,
       days: 1,
-      extraHours: late,
-      extraCharge: lateCharge,
+      extraHours: past,
+      extraCharge: pastCharge,
       returnMinutes,
       returnHours: 0,
       returnCharge: 0,
       dayRate: price,
       extraHourRate: rate,
-      returnHourRate: whole(input.returnHourRate),
+      returnHourRate: rate,
       ticket,
-      amount: price + lateCharge + ticket,
-      route: { awayHours: planned, realAwayHours, km: whole(input.route.km) },
+      amount: price + pastCharge + ticket,
+      route: { awayHours: planned, realAwayHours, km: whole(input.route.km), paidDays },
     };
   }
 

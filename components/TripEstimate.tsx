@@ -144,9 +144,9 @@ export function TripEstimate({
               {priceText.routeWait}.
             </li>
             <li>
-              The price stays the same if the trip runs a little late. If he gets home more than{' '}
-              {settings.outstation.lateAfterHours} hours later than planned, each hour after that is{' '}
-              {rupees(tripRules.extraHour)}.
+              The price is for the days the trip needs (each started 24 hours is a day). Waiting for his train, or a
+              late train, first uses the time left in those days — no charge. Only the hours past them are{' '}
+              {rupees(tripRules.returnHour)} each, never more than one more day&apos;s price for each 24 hours.
             </li>
             <li>His ticket home and his meals are paid separately, as listed above.</li>
           </ul>

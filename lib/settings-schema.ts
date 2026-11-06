@@ -54,15 +54,13 @@ export type SiteSettings = {
     shortDriveMinimum: number;
     /** Longer one-way drops: away this many hours or more → the route price. */
     routeAfterHours: number;
-    /** Route price: routeBase + routePerKm × km, at least routeMinBase + routeMinPerDay a day away. */
+    /** Route price: routeBase + routePerKm × km, at least routeMinBase + routeMinPerDay and at most routeMaxPerDay a day away. */
     routeBase: number;
     routePerKm: number;
     routeMinBase: number;
     routeMinPerDay: number;
-    /** Final bill of a route price: home later than the plan by more than this → extraHour an hour. */
-    lateAfterHours: number;
-    /** Hours of waiting for his train in the route price; more are charged like the way home. */
-    routeFreeWaitHours: number;
+    /** Route price: at most this for each day (24 h) away. */
+    routeMaxPerDay: number;
     /** Per hour the driver is still travelling home after the paid days. */
     returnHour: number;
     /** The most return hours cost in any 24 hours. */
@@ -221,10 +219,11 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   price('outstation.routeBase', o.routeBase);
   if (!(typeof o.routePerKm === 'number' && o.routePerKm > 0 && o.routePerKm <= 100))
     problems.push('outstation.routePerKm must be rupees a km, more than 0 and at most 100 (e.g. 4.5)');
-  price('outstation.routeMinBase', o.routeMinBase);
+  count('outstation.routeMinBase', o.routeMinBase, 100000);
   price('outstation.routeMinPerDay', o.routeMinPerDay);
-  count('outstation.lateAfterHours', o.lateAfterHours, 24);
-  count('outstation.routeFreeWaitHours', o.routeFreeWaitHours, 48);
+  price('outstation.routeMaxPerDay', o.routeMaxPerDay);
+  if (o.routeMaxPerDay < o.routeMinBase + o.routeMinPerDay)
+    problems.push('outstation.routeMaxPerDay must be at least routeMinBase + routeMinPerDay (the most a day cannot be below the least)');
   if (o.shortDriveMinimum > s.prices.outstation.from)
     problems.push('outstation.shortDriveMinimum should not cost more than an outstation day');
   if (o.extraFullDayAfterHours >= o.hoursPerDay)

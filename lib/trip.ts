@@ -330,24 +330,20 @@ export function estimateLines(view: TripView): { label: string; amount: string }
   const route = view.est.route;
   if (route) {
     const away = view.ret ? ` (${returnParts(view.ret).join(' + ')})` : ' (typical time)';
-    const free = tripRules.route?.freeWaitHours;
-    // Waiting for his train beyond the hours included: charged like the way home.
-    const extra = route.by === 'km' && route.waitCharge > 0;
+    // The days paid; waiting first uses the time they leave, only the hours past them cost extra.
+    const paid = plural(route.days, 'day');
     return [
-      {
-        label: `Route price — ${routeWords(tripRules, route, rupees)}`,
-        amount: rupees(extra ? route.price - route.waitCharge : route.price),
-      },
-      ...(extra
+      { label: `Route price — ${routeWords(tripRules, route, rupees)}`, amount: rupees(route.daysPrice) },
+      ...(route.extraCharge > 0
         ? [
             {
-              label: `Extra waiting for his train: ${plural(route.extraWaitHours, 'hour')} beyond the ${free} h included — ${returnWords(route.extraWaitHours, tripRules.returnHour, tripRules.returnMaxPerDay, tripRules.returnFullDayAfter, rupees)}`,
-              amount: rupees(route.waitCharge),
+              label: `Waiting past the ${paid} paid: ${plural(route.extraHours, 'hour')} × ${rupees(tripRules.returnHour)}, at most ${rupees(route.dayPrice)} for each 24 h`,
+              amount: rupees(route.extraCharge),
             },
           ]
         : []),
       {
-        label: `Driver’s way home and waiting: ${plural(p.returnHours, 'hour')}${away}, about ${route.awayHours} h away in all${free !== undefined ? ` — up to ${free} h of waiting included` : ''}`,
+        label: `Driver’s way home and waiting: ${plural(p.returnHours, 'hour')}${away}, about ${route.awayHours} h away in all — ${paid} paid (${route.days * 24} h)${route.extraHours > 0 ? '' : `; waiting up to ${route.days * 24 - route.awayHours} h more costs nothing`}`,
         amount: 'Included',
       },
     ];
