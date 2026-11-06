@@ -56,7 +56,7 @@ export const priceText = {
   outstationReturnRule: `${rupees(settings.outstation.returnHour)} an hour — more than ${settings.outstation.returnFullDayAfterHours} hours in a day counts as a full day (${rupees(settings.outstation.returnMaxPerDay)})`,
   outstationExtraHour: rupees(settings.outstation.extraHour),
   /** "₹120 an hour of driving, at least ₹600" */
-  shortDrive: `${rupees(settings.outstation.extraHour)} an hour of driving, at least ${rupees(settings.outstation.shortDriveMinimum)}`,
+  shortDrive: `${rupees(settings.outstation.shortDriveMinimum)} for the first ${settings.outstation.shortDriveHours} hours of driving, then ${rupees(settings.outstation.extraHour)} an hour`,
   /** Longer one-way drops: the route price, in one sentence. */
   routeRule: `${rupees(settings.outstation.routeBase)} + ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(settings.outstation.routePerKm)} a km, at least ${settings.outstation.routeMinBase > 0 ? `${rupees(settings.outstation.routeMinBase)} + ` : ''}${rupees(settings.outstation.routeMinPerDay)} and at most ${rupees(settings.outstation.routeMaxPerDay)} for each day he is away`,
   routeAfter: `${settings.outstation.routeAfterHours} hours`,
@@ -122,7 +122,7 @@ export const tripRules: TripRules = {
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
   extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
-  shortDrive: { minimum: settings.outstation.shortDriveMinimum },
+  shortDrive: { minimum: settings.outstation.shortDriveMinimum, hours: settings.outstation.shortDriveHours },
   route: {
     afterHours: settings.outstation.routeAfterHours,
     base: settings.outstation.routeBase,

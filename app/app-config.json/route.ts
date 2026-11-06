@@ -64,6 +64,7 @@ export function GET() {
       extraFullDayAfterHours: outstation.extraFullDayAfterHours,
       // A one-way drive shorter than a day: extraHour an hour, at least this.
       shortDriveMinimum: outstation.shortDriveMinimum,
+      shortDriveHours: outstation.shortDriveHours,
       // Longer one-way drops: away routeAfterHours or more → routeBase + routePerKm × km,
       // at least routeMinBase + routeMinPerDay and at most routeMaxPerDay a day away, to the nearest ₹50.
       routeAfterHours: outstation.routeAfterHours,

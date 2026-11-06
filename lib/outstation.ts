@@ -79,9 +79,11 @@ export type TripRules = {
    * A one-way drive shorter than a day (decided 1 Nov 2026): extraHour an
    * hour, but never less than `minimum` (₹600, the 3-hour price) — so a short
    * hop is worth the driver's time, and a longer drive is plain hourly.
-   * Left out: the whole drive at extraHour. His way home is charged on top.
+   * `hours` (7 Nov 2026: 3): the first that many hours cost `minimum`, each
+   * hour after them extraHour. Left out: the whole drive at extraHour. His way
+   * home is charged on top.
    */
-  shortDrive?: { minimum: number };
+  shortDrive?: { minimum: number; hours?: number };
   /**
    * One-way drops that keep him away (he leaves → he is home) `afterHours`
    * or more (decided 1 Nov 2026): one price for the route instead of the
@@ -294,8 +296,10 @@ export function dayRateFor(rules: Pick<TripRules, 'dayRate' | 'nearRates'>, km: 
 
 /**
  * The driving charge of a one-way drive shorter than a day (`hours` whole
- * hours, no full days): `hourRate` an hour, at least shortDrive.minimum.
- *   1–5 h → ₹600 (5 × ₹120 = ₹600); 6 h → ₹720; 7 h → ₹840.
+ * hours, no full days): the first shortDrive.hours cost shortDrive.minimum,
+ * each hour after them `hourRate` (7 Nov 2026).
+ *   1–3 h → ₹600; 4 h → ₹720; 5 h → ₹840; 6 h → ₹960.
+ * Settings without shortDrive.hours: `hourRate` an hour, at least the minimum.
  * `hourRate`: extraHour, or the agreed rate on a quote or bill. Without
  * rules.shortDrive (older settings): hours × hourRate. (A range, like the
  * other estimate parts, though both ends are the same.)
@@ -307,13 +311,15 @@ export function shortDriveCharge(
 ): { from: number; to: number } {
   const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
   if (h === 0) return { from: 0, to: 0 };
-  const n = Math.max(h * hourRate, rules.shortDrive?.minimum ?? 0);
+  const min = rules.shortDrive?.minimum ?? 0;
+  const covered = rules.shortDrive?.hours;
+  const n = covered ? min + Math.max(0, h - covered) * hourRate : Math.max(h * hourRate, min);
   return { from: n, to: n };
 }
 
 /**
- * A short drive's charge in words: "3 h of driving: the minimum, ₹600" or
- * "6 driving hours × ₹120". `money` formats rupees.
+ * A short drive's charge in words: "3 h of driving: ₹600 for the first 3 h",
+ * "5 h of driving: ₹600 for the first 3 h + 2 h × ₹120". `money` formats rupees.
  */
 export function shortDriveWords(
   rules: Pick<TripRules, 'extraHour' | 'shortDrive'>,
@@ -323,6 +329,11 @@ export function shortDriveWords(
 ): string {
   const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
   const min = rules.shortDrive?.minimum ?? 0;
+  const covered = rules.shortDrive?.hours;
+  if (covered) {
+    const first = `${money(min)} for the first ${covered} h`;
+    return h <= covered ? `${h} h of driving: ${first}` : `${h} h of driving: ${first} + ${h - covered} h × ${money(hourRate)}`;
+  }
   if (h * hourRate < min) return `${h} h of driving: the minimum, ${money(min)}`;
   return `${h} driving ${h === 1 ? 'hour' : 'hours'} × ${money(hourRate)}`;
 }

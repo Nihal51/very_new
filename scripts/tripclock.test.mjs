@@ -28,7 +28,7 @@ import { settings } from '../site-settings.ts';
 const rules = {
   dayRate: { ...settings.prices.outstation },
   nearRates: settings.prices.outstationNear,
-  shortDrive: { minimum: settings.outstation.shortDriveMinimum },
+  shortDrive: { minimum: settings.outstation.shortDriveMinimum, hours: settings.outstation.shortDriveHours },
   route: {
     afterHours: settings.outstation.routeAfterHours,
     base: settings.outstation.routeBase,
@@ -134,7 +134,7 @@ test('a short one-way drop: at least ₹600 for the driving, then his way home b
   const { bill } = billNow(l, rates, rules, GRACE, Date.now());
   assert.deepEqual([bill.days, bill.extraHours, bill.extraCharge, bill.returnHours, bill.returnCharge, bill.amount], [0, 3, 600, 3, 360, 960]);
   assert.deepEqual(billLines(bill, rules), [
-    { label: '3 h of driving: the minimum, ₹600', amount: '₹600' },
+    { label: '3 h of driving: ₹600 for the first 3 h', amount: '₹600' },
     { label: 'Driver’s way home: 3 h = 3 h × ₹120', amount: '₹360' },
   ]);
   assert.equal(billBreakdown(bill), '₹600 for 3 h of driving + ₹360 way home (3 h)');

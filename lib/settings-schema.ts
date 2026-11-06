@@ -52,6 +52,8 @@ export type SiteSettings = {
     extraFullDayAfterHours: number;
     /** A one-way drive shorter than a day: extraHour an hour, but at least this much for the driving. */
     shortDriveMinimum: number;
+    /** The hours of driving shortDriveMinimum covers; each hour after them is extraHour. */
+    shortDriveHours: number;
     /** Longer one-way drops: away this many hours or more → the route price. */
     routeAfterHours: number;
     /** Route price: routeBase + routePerKm × km, at least routeMinBase + routeMinPerDay and at most routeMaxPerDay a day away. */
@@ -215,6 +217,8 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   count('outstation.graceMinutes', o.graceMinutes, 59);
   count('outstation.extraFullDayAfterHours', o.extraFullDayAfterHours, 23);
   price('outstation.shortDriveMinimum', o.shortDriveMinimum);
+  count('outstation.shortDriveHours', o.shortDriveHours, 11);
+  if (o.shortDriveHours < 1) problems.push('outstation.shortDriveHours must be at least 1');
   count('outstation.routeAfterHours', o.routeAfterHours, 72);
   price('outstation.routeBase', o.routeBase);
   if (!(typeof o.routePerKm === 'number' && o.routePerKm > 0 && o.routePerKm <= 100))

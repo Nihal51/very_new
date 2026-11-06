@@ -109,7 +109,7 @@ export const settings = {
      The customer picks a destination and the start date and time. One-way:
      each hoursPerDay of driving (about kmPerDay) is a day at
      prices.outstation, each hour left over extraHour. A drive shorter than a
-     day: extraHour an hour, but never less than shortDriveMinimum. From the start the site works out when he drops the car (12 h
+     day: the first shortDriveHours for shortDriveMinimum, then extraHour an hour. From the start the site works out when he drops the car (12 h
      driving and 12 of rest, or day and night if the customer asks), the
      first regular train/bus home he can catch that day and when he is home;
      that way home, the waiting included, is returnHour an hour, at most
@@ -122,7 +122,8 @@ export const settings = {
     sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
     extraHour: 120, //         each driving hour beyond the full days (or of a drive shorter than a day)
     extraFullDayAfterHours: 7, // driving hours left over after the full days: up to this many at extraHour; more = a full day
-    shortDriveMinimum: 600, //   a one-way drive shorter than a day: extraHour an hour, but at least this (like the 3-hour package)
+    shortDriveMinimum: 600, //   a one-way drive shorter than a day: the first shortDriveHours of driving cost this (like the 3-hour package) …
+    shortDriveHours: 3, //       … and each hour after them extraHour (decided 7 Nov 2026: Bilaspur 3 h = ₹600, Korba 5 h = ₹600 + 2 × ₹120)
     returnHour: 120, //        each hour of his way home after a one-way drop (from the drop, waiting included)
     returnMaxPerDay: 1200, //  a full day of the way home (each 24 hours)
     returnFullDayAfterHours: 6, // the hours left over after the full days: up to this many by the hour; more = a full day

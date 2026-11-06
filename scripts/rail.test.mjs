@@ -410,7 +410,7 @@ test('live status that cannot be had (busy) falls back to the timetable, so the 
 const rules = {
   dayRate: { ...settings.prices.outstation },
   nearRates: settings.prices.outstationNear,
-  shortDrive: { minimum: settings.outstation.shortDriveMinimum },
+  shortDrive: { minimum: settings.outstation.shortDriveMinimum, hours: settings.outstation.shortDriveHours },
   route: {
     afterHours: settings.outstation.routeAfterHours,
     base: settings.outstation.routeBase,
