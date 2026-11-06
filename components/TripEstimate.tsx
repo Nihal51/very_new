@@ -146,7 +146,7 @@ export function TripEstimate({
             <li>
               The price is for the days the trip needs (each started 24 hours is a day). Waiting for his train, or a
               late train, first uses the time left in those days — no charge. Only the hours past them are{' '}
-              {rupees(tripRules.returnHour)} each, never more than one more day&apos;s price for each 24 hours.
+              {rupees(tripRules.returnHour)} each, never more than {rupees(tripRules.returnMaxPerDay)} for each 24 hours.
             </li>
             <li>His ticket home and his meals are paid separately, as listed above.</li>
           </ul>

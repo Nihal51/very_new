@@ -74,6 +74,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
           extraHours: route.extraHours,
           extraCharge: route.extraCharge,
           driverHourPay: int(returnPay),
+          driverMaxPerDay: int(returnPay) * RETURN_DAY_HOURS,
         })
       : null;
   const q =
@@ -208,7 +209,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
                 'Hours waiting for his train',
                 wait,
                 setWait,
-                `From the drop until his train leaves, and any change (the train note says it). ${route.days} ${route.days === 1 ? 'day' : 'days'} paid leave ${route.freeHours} h for it at no charge; past them ${priceText.outstationReturnHour} an hour, at most ${rupees(route.dayPrice)} a day`,
+                `From the drop until his train leaves, and any change (the train note says it). ${route.days} ${route.days === 1 ? 'day' : 'days'} paid leave ${route.freeHours} h for it at no charge; past them ${priceText.outstationReturnHour} an hour, at most ${rupees(route.extraMaxPerDay)} a day`,
               )}
             {route &&
               num(
@@ -298,7 +299,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
                   <p className="text-fg-muted">
                     {rq.days} {rq.days === 1 ? 'day' : 'days'} away × {rupees(int(cost))}
                     {rq.driverExtraPay > 0
-                      ? ` + ${route.extraHours} h past the days × ${rupees(int(returnPay))} (at most ${rupees(int(cost))} a day) = ${rupees(rq.driverExtraPay + rq.days * int(cost))}`
+                      ? ` + ${route.extraHours} h past the days × ${rupees(int(returnPay))} (at most ${rupees(Math.min(int(cost), int(returnPay) * RETURN_DAY_HOURS))} a day) = ${rupees(rq.driverPay)}`
                       : ` = ${rupees(rq.driverPay)}`}
                     . The customer also gives his meals (or {rupees(settings.outstation.mealAllowance)} a day) and books his
                     ticket home.

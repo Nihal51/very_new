@@ -335,8 +335,9 @@ export function shortDriveWords(
  * the station + his way home; each started 24 h is a day): never below
  * `minBase + minPerDay` nor above `maxPerDay` for each of them. Waiting for his
  * train uses the time left in those days first, at no charge; only the hours
- * past them cost extra — returnHour each, at most the trip's price per day for
- * each 24 h — on the estimate and, from the real times, on the final bill.
+ * past them cost extra — returnHour each, at most returnMaxPerDay (₹1,200) for
+ * each 24 h, never more than the trip's price per day — on the estimate and,
+ * from the real times, on the final bill.
  * Rounded to the nearest ₹50. His ticket and meals are paid separately.
  */
 export type RouteRules = {
@@ -362,8 +363,10 @@ export type RoutePrice = {
   cap: number;
   /** The days paid: the trip as planned (drive + usual wait + way home), each started 24 h. */
   days: number;
-  /** daysPrice ÷ days, to ₹50: the most the hours past the days cost for each 24 h. */
+  /** daysPrice ÷ days, to ₹50. */
   dayPrice: number;
+  /** The most the hours past the days cost for each 24 h: returnMaxPerDay (₹1,200), never above dayPrice. */
+  extraMaxPerDay: number;
   /** Whole hours the trip needs as planned, and whole hours he is away with the waiting. */
   plannedHours: number;
   awayHours: number;
@@ -387,11 +390,11 @@ const wholeHours = (h: number) => Math.max(0, Math.ceil((Number.isFinite(h) ? h 
  * the place is unknown (km 0) or he is away less than afterHours (then the
  * hours are charged, as before).
  *   Nagpur 284 km, 12 h: ₹350 + ₹4.5 × 284 = ₹1,628 → ₹1,650 (₹1,650–1,850 for 1 day); 12 h left for waiting.
- *   Visakhapatnam 546 km, 22 h: ₹2,807, at most ₹1,850 for 1 day; 7 h past the day: + 7 × ₹120.
+ *   Visakhapatnam 546 km, 22 h: ₹2,807, at most ₹1,850 for 1 day; 7 h past the day: + 7 × ₹120; 12 h past: + ₹1,200.
  *   Delhi 1,214 km, 60 h: ₹5,813, at most 3 × ₹1,850 = ₹5,550; 12 h left for waiting.
  */
 export function routePrice(
-  rules: Pick<TripRules, 'route'> & Partial<Pick<TripRules, 'returnHour'>>,
+  rules: Pick<TripRules, 'route'> & Partial<Pick<TripRules, 'returnHour' | 'returnMaxPerDay'>>,
   km: number,
   hours: number,
   plannedHours: number = hours,
@@ -411,10 +414,12 @@ export function routePrice(
   const cap = r.maxPerDay === undefined ? Infinity : Math.max(byDays, round50(r.maxPerDay * days));
   const by: RoutePrice['by'] = byKm < byDays ? 'days' : byKm > cap ? 'cap' : 'km';
   const daysPrice = by === 'days' ? byDays : by === 'cap' ? cap : byKm;
-  // Waiting first uses the time left in the days paid; the hours past them, returnHour each, at most a day's price per 24 h.
+  // Waiting first uses the time left in the days paid; the hours past them, returnHour each,
+  // at most returnMaxPerDay (₹1,200) for each 24 h — the time not driving (7 Nov 2026).
   const dayPrice = round50(daysPrice / days);
+  const extraMaxPerDay = Math.min(dayPrice, rules.returnMaxPerDay ?? dayPrice);
   const extraHours = Math.max(0, awayHours - days * 24);
-  const extraCharge = extraHours > 0 && rules.returnHour ? returnCost(extraHours, rules.returnHour, dayPrice, 24) : 0;
+  const extraCharge = extraHours > 0 && rules.returnHour ? returnCost(extraHours, rules.returnHour, extraMaxPerDay, 24) : 0;
   return {
     price: daysPrice + extraCharge,
     daysPrice,
@@ -423,6 +428,7 @@ export function routePrice(
     cap,
     days,
     dayPrice,
+    extraMaxPerDay,
     plannedHours: planned,
     awayHours,
     freeHours: days * 24 - planned,
@@ -692,10 +698,11 @@ export function routeQuote(input: {
   ticket: number;
   partnerPercent: number;
   minProfitPercent: number;
-  /** Hours past the days paid (waiting for his train), what the customer pays for them, and the driver's pay an hour (at most his day cost for each 24 h). */
+  /** Hours past the days paid (waiting for his train), what the customer pays for them, the driver's pay an hour and the most of it for each 24 h. */
   extraHours?: number;
   extraCharge?: number;
   driverHourPay?: number;
+  driverMaxPerDay?: number;
 }): {
   total: number;
   days: number;
@@ -711,7 +718,9 @@ export function routeQuote(input: {
   const days = Math.max(1, Math.ceil(whole(input.awayHours) / 24));
   const dayCost = whole(input.driverDayCost);
   const driverExtraPay =
-    whole(input.extraHours ?? 0) > 0 ? returnCost(whole(input.extraHours ?? 0), whole(input.driverHourPay ?? 0), dayCost, 24) : 0;
+    whole(input.extraHours ?? 0) > 0
+      ? returnCost(whole(input.extraHours ?? 0), whole(input.driverHourPay ?? 0), Math.min(dayCost, whole(input.driverMaxPerDay ?? dayCost) || dayCost), 24)
+      : 0;
   const driverPay = days * dayCost + driverExtraPay;
   const partnerPay = Math.round((charged * Math.min(50, Math.max(0, input.partnerPercent))) / 100);
   const profit = charged - driverPay - partnerPay;
@@ -906,7 +915,7 @@ export type BillInput = TripTimes & {
    * One-way at a route price (the agreed price, or the estimate's): `price`
    * and the hours away it was planned for. The bill is then that price for
    * the days paid (awayHours, each started 24 h); the hours he was away past
-   * them are returnHourRate each, at most the price per day for each 24 h.
+   * them are returnHourRate each, at most returnMaxPerDay for each 24 h.
    * Left out: by the hours, as below.
    */
   route?: { price: number; awayHours: number; km: number };
@@ -963,7 +972,9 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
     const price = whole(input.route.price);
     const rate = whole(input.returnHourRate);
     const past = Math.max(0, realAwayHours - paidDays * 24);
-    const pastCharge = past > 0 ? returnCost(past, rate, Math.round(price / paidDays / 50) * 50, 24) : 0;
+    // At most returnMaxPerDay for each 24 h (in the agreed rate's hours), never more than the price per day.
+    const pastMax = Math.min(Math.round(price / paidDays / 50) * 50, rate * (rules.returnMaxPerDay / rules.returnHour));
+    const pastCharge = past > 0 ? returnCost(past, rate, pastMax, 24) : 0;
     const ticket = whole(input.ticket);
     return {
       driveMinutes,

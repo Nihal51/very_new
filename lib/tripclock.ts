@@ -256,7 +256,7 @@ export function billLines(
     if (b.extraHours > 0) {
       const paid = b.route.paidDays ?? Math.max(1, Math.ceil(b.route.awayHours / 24));
       lines.push({
-        label: `Away ${b.route.realAwayHours} h — past the ${plural(paid, 'day')} paid (${paid * 24} h): ${plural(b.extraHours, 'hour')} × ${rupees(b.extraHourRate)}, at most one more day's price for each 24 h`,
+        label: `Away ${b.route.realAwayHours} h — past the ${plural(paid, 'day')} paid (${paid * 24} h): ${plural(b.extraHours, 'hour')} × ${rupees(b.extraHourRate)}, at most ${rupees(Math.round(b.extraHourRate * (rules.returnMaxPerDay / rules.returnHour)))} for each 24 h`,
         amount: rupees(b.extraCharge),
       });
     }
@@ -348,7 +348,8 @@ export function driverPay(
   // A route price: his day cost for each day paid, and his hourly pay for the hours past them (at most a day for each 24 h).
   if (b.route) {
     const paid = b.route.paidDays ?? Math.max(1, Math.ceil(b.route.awayHours / 24));
-    return paid * dayCost + (b.extraHours > 0 ? returnCost(b.extraHours, returnHourPay, dayCost, 24) : 0);
+    const max = Math.min(dayCost, returnHourPay * (rules.returnMaxPerDay / rules.returnHour));
+    return paid * dayCost + (b.extraHours > 0 ? returnCost(b.extraHours, returnHourPay, max, 24) : 0);
   }
   const capHours = rules.returnMaxPerDay / rules.returnHour;
   return Math.round(

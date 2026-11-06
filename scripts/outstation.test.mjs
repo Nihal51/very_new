@@ -296,7 +296,7 @@ test('the route price of a longer drop (decided 1 Nov 2026)', () => {
   const r = (km, h) => routePrice(rules, km, h);
   assert.equal(r(284, 11), undefined, 'under 12 h away: by the hours');
   assert.deepEqual(r(284, 12), {
-    price: 1650, daysPrice: 1650, kmPrice: 350 + 4.5 * 284, floor: 1650, cap: 1850, days: 1, dayPrice: 1650,
+    price: 1650, daysPrice: 1650, kmPrice: 350 + 4.5 * 284, floor: 1650, cap: 1850, days: 1, dayPrice: 1650, extraMaxPerDay: 1200,
     plannedHours: 12, awayHours: 12, freeHours: 12, extraHours: 0, extraCharge: 0, km: 284, by: 'km',
   });
   // 7 Nov 2026: at least ₹1,650 and at most ₹1,850 for each day the trip needs.
@@ -313,10 +313,12 @@ test('the route price of a longer drop (decided 1 Nov 2026)', () => {
   // Waiting for his train first uses the time left in the days paid — no charge (the owner, 7 Nov 2026).
   const w = (planned, away) => routePrice(rules, 1214, away, planned); // Delhi, 60 h as planned: 3 days, 12 h left
   assert.deepEqual([w(60, 72).price, w(60, 72).freeHours, w(60, 72).extraHours], [5550, 12, 0], '12 h of waiting: inside the 3 days');
-  // Only the hours past the days paid: ₹120 each, at most the price per day (₹1,850) for each 24 h.
+  // Only the hours past the days paid: ₹120 each, at most ₹1,200 for each 24 h — the time not driving (7 Nov 2026).
   assert.deepEqual([w(60, 76).extraHours, w(60, 76).extraCharge, w(60, 76).price], [4, 480, 6030]);
-  assert.deepEqual([w(60, 90).extraHours, w(60, 90).extraCharge], [18, 1850], '18 h × ₹120 = ₹2,160, but at most ₹1,850');
-  assert.deepEqual([w(60, 100).extraCharge], [1850 + 4 * 120], '28 h past: a day + 4 h');
+  assert.deepEqual([w(60, 82).extraHours, w(60, 82).extraCharge], [10, 1200], '10 h × ₹120 = ₹1,200');
+  assert.deepEqual([w(60, 84).extraHours, w(60, 84).extraCharge], [12, 1200], '12 h × ₹120 = ₹1,440, but at most ₹1,200');
+  assert.deepEqual([w(60, 90).extraHours, w(60, 90).extraCharge], [18, 1200]);
+  assert.deepEqual([w(60, 100).extraCharge], [1200 + 4 * 120], '28 h past: ₹1,200 for a day + 4 h');
   assert.equal(w(60, 90).daysPrice, 5550, 'the days paid do not change with the waiting');
   // Without the way-home rate (older settings): no charge for the hours past.
   assert.equal(routePrice({ route: rules.route }, 1214, 90, 60).price, 5550);
@@ -618,9 +620,9 @@ test('final bill: a route price for the days paid; only the hours past them cost
   // 77 h 30 m → 78 h: 6 h past the 3 days × ₹120.
   const late = bill({ route, ticket: 900, startAt: ist(start), dropAt: ist('2026-11-03T08:00'), homeAt: ist('2026-11-05T12:30') });
   assert.deepEqual([late.route.realAwayHours, late.extraHours, late.extraCharge, late.amount], [78, 6, 720, 5550 + 720 + 900]);
-  // 20 h past: never more than the price per day (₹5,550 ÷ 3 = ₹1,850).
+  // 20 h past: never more than ₹1,200 for each 24 h.
   const long = bill({ route, startAt: ist(start), dropAt: ist('2026-11-03T08:00'), homeAt: ist('2026-11-06T03:00') });
-  assert.deepEqual([long.extraHours, long.extraCharge], [20, 1850]);
+  assert.deepEqual([long.extraHours, long.extraCharge], [20, 1200]);
   // Early: never less than the price.
   const early = bill({ route, startAt: ist(start), dropAt: ist('2026-11-03T06:00'), homeAt: ist('2026-11-04T12:00') });
   assert.equal(early.amount, 5550);

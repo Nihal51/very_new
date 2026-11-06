@@ -186,7 +186,7 @@ test('a route price on the bill: the agreed one, or the estimate’s for the pla
   assert.deepEqual([bill.amount, bill.extraHours, bill.route.realAwayHours], [5550 + 720, 6, 78]);
   assert.deepEqual(billLines(bill, rules), [
     { label: 'Route price (1,214 km, planned about 60 h away, his way home included)', amount: '₹5,550' },
-    { label: 'Away 78 h — past the 3 days paid (72 h): 6 hours × ₹120, at most one more day\'s price for each 24 h', amount: '₹720' },
+    { label: 'Away 78 h — past the 3 days paid (72 h): 6 hours × ₹120, at most ₹1,200 for each 24 h', amount: '₹720' },
   ]);
   assert.equal(billBreakdown(bill), '₹5,550 route price (about 60 h away, way home included) + ₹720 for 6 hours past the days paid');
   assert.equal(daysText(bill), 'route price, 78 h away');

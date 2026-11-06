@@ -337,7 +337,7 @@ export function estimateLines(view: TripView): { label: string; amount: string }
       ...(route.extraCharge > 0
         ? [
             {
-              label: `Waiting past the ${paid} paid: ${plural(route.extraHours, 'hour')} × ${rupees(tripRules.returnHour)}, at most ${rupees(route.dayPrice)} for each 24 h`,
+              label: `Waiting past the ${paid} paid: ${plural(route.extraHours, 'hour')} × ${rupees(tripRules.returnHour)}, at most ${rupees(route.extraMaxPerDay)} for each 24 h`,
               amount: rupees(route.extraCharge),
             },
           ]

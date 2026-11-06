@@ -457,17 +457,18 @@ test('the way home from a train: whole hours from the drop, once, with the daily
    (at the drop and at a change); every hour more is charged like his way
    home — ₹120 an hour, more than 6 h in a day = ₹1,200 a day. */
 
-test('waiting for his train: free inside the days paid; past them ₹120 an hour, at most a day (7 Nov 2026)', () => {
+test('waiting for his train: free inside the days paid; past them ₹120 an hour, at most ₹1,200 a day (7 Nov 2026)', () => {
   const plan = planTrip(rules, 1370, 'one-way', 0, { hours: 28 }, 7); // Bengaluru, resting at night: drops on day 3
   const route = (wait, ride = 24, change) => estimate(rules, withReturn(plan, plan.dropAt + wait, plan.dropAt + wait + ride, change)).route;
   // As planned (drive, 1 h at the station, 24 h home): 77 h → 4 days paid (96 h): ₹6,500 by the km, at least 4 × ₹1,650.
   assert.deepEqual([route(1).days, route(1).price, route(1).freeHours], [4, 6600, 19]);
   // Waiting up to the end of the 4 days: no charge — the owner's rule.
   for (const wait of [2, 6, 10, 13, 20]) assert.equal(route(wait).price, 6600, `${wait} h of waiting`);
-  // 31 h of waiting: 107 h away, 11 h past the 96 h paid × ₹120 (less than a day, ₹6,600 ÷ 4 = ₹1,650).
-  assert.deepEqual([route(31).extraHours, route(31).extraCharge, route(31).price], [11, 1320, 7920]);
-  // 40 h: 20 h past — never more than a day's price.
-  assert.deepEqual([route(40).extraHours, route(40).extraCharge], [20, 1650]);
+  // 28 h of waiting: 104 h away, 8 h past the 96 h paid × ₹120.
+  assert.deepEqual([route(28).extraHours, route(28).extraCharge, route(28).price], [8, 960, 7560]);
+  // 31 h: 11 h past — never more than ₹1,200 for each 24 h.
+  assert.deepEqual([route(31).extraHours, route(31).extraCharge, route(31).price], [11, 1200, 7800]);
+  assert.deepEqual([route(40).extraHours, route(40).extraCharge], [20, 1200]);
   // A change of train counts as waiting: 3 h at the drop + 5 h at Nagpur, 19 h on the trains → the trip needs
   // 72 h (3 days, ₹5,550); he is home after 79 h: 7 h past × ₹120.
   assert.deepEqual([route(3, 24, 8).days, route(3, 24, 8).extraHours, route(3, 24, 8).price], [3, 7, 5550 + 840]);
@@ -482,7 +483,7 @@ test('a route price stays within ₹1,650–1,850 for each day paid; the hours p
       const r = estimate(rules, withReturn(plan, plan.dropAt + wait, plan.dropAt + wait + 26)).route;
       const label = `${nonstop ? 'day and night' : 'resting'}, ${wait} h wait`;
       assert.ok(r.daysPrice >= 1650 * r.days && r.daysPrice <= 1850 * r.days, `${label}: ₹${r.daysPrice} for ${r.days} days`);
-      assert.ok(r.extraCharge <= r.dayPrice * Math.ceil(r.extraHours / 24), `${label}: ₹${r.extraCharge} for ${r.extraHours} h`);
+      assert.ok(r.extraCharge <= 1200 * Math.ceil(r.extraHours / 24), `${label}: ₹${r.extraCharge} for ${r.extraHours} h`);
       assert.equal(r.price, r.daysPrice + r.extraCharge);
     }
   }
