@@ -5,7 +5,6 @@
 
 import { TRIP_PACKAGES, type BookingQuote, type BookingTrip, type TripPackage } from './bookings';
 import {
-  routeWords,
   DEFAULT_START_HOUR,
   destinations,
   estimate,
@@ -15,10 +14,8 @@ import {
   pickupCities,
   pickupStations,
   planTrip,
-  returnWords,
-  dayRateFor,
+  pricedByTime,
   roadKm,
-  shortDriveWords,
   withReturn,
   type Destination,
   type Estimate,
@@ -215,7 +212,7 @@ export function withTrain(view: TripView, option: ReturnOption | undefined): Tri
   const start = startInstant(view);
   if (!option || !view.plan || view.plan.dropAt === undefined || start === undefined) return view;
   const h = (ms: number) => (ms - start) / 3_600_000;
-  // His waiting (drop → first train, and any change) for the route price.
+  // His waiting (drop → first train, and any change), for the timeline.
   const plan = withReturn(view.plan, h(option.depart), h(option.arrive), waitHoursOf(option));
   if (plan === view.plan) return view;
   return { ...view, plan, returnHours: plan.returnHours, est: estimate(tripRules, plan), ret: option };
@@ -316,69 +313,53 @@ export function tripSummary(t: BookingTrip, city: string): string {
     .join(' · ');
 }
 
-/** The estimate's breakdown lines, for the estimate card. */
+/** "about 7 h" — hours to the nearest quarter, for the way home. */
+const hoursAbout = (h: number) => {
+  const q = Math.round(h * 4) / 4;
+  return q < 1 ? `${Math.round(h * 60)} min` : `${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(q)} h`;
+};
+
+/**
+ * The estimate's breakdown lines, for the estimate card. One-way (8 Nov
+ * 2026): the driver's time — the 24-hour blocks, any hours past them, and how
+ * his time is made up (the drive, the wait and the ride home: the train
+ * picked, or the route's average). Round trips: the days.
+ */
 export function estimateLines(view: TripView): { label: string; amount: string }[] {
   const p = view.plan;
-  if (!view.est || !p) return [];
-  const day = dayRateFor(tripRules, p.km);
-  const rate = rupeeRange(day.from, day.to);
-  if (view.kind === 'round') {
-    return [{ label: `${plural(p.fullDays, 'day')} × ${rate}`, amount: rupeeRange(view.est.driving.from, view.est.driving.to) }];
-  }
-  const lines: { label: string; amount: string }[] = [];
-  // A longer drop: one price for the route; his way home and the waiting are in it.
-  const route = view.est.route;
-  if (route) {
-    const away = view.ret ? ` (${returnParts(view.ret).join(' + ')})` : ' (typical time)';
-    // The days paid; waiting first uses the time they leave, only the hours past them cost extra.
-    const paid = plural(route.days, 'day');
-    return [
-      { label: `Route price — ${routeWords(tripRules, route, rupees)}`, amount: rupees(route.daysPrice) },
-      ...(route.extraCharge > 0
-        ? [
-            {
-              label: `Waiting past the ${paid} paid: ${plural(route.extraHours, 'hour')} × ${rupees(tripRules.returnHour)}, at most ${rupees(route.extraMaxPerDay)} for each 24 h`,
-              amount: rupees(route.extraCharge),
-            },
-          ]
-        : []),
-      {
-        label: `Driver’s way home and waiting: ${plural(p.returnHours, 'hour')}${away}, about ${route.awayHours} h away in all — ${paid} paid (${route.days * 24} h)${route.extraHours > 0 ? '' : `; waiting up to ${route.days * 24 - route.awayHours} h more costs nothing`}`,
-        amount: 'Included',
-      },
-    ];
-  }
-  if (p.fullDays > 0)
+  const est = view.est;
+  if (!est || !p) return [];
+  const t = est.time;
+  if (view.kind === 'round' || !t)
+    return [{ label: `${plural(est.days, 'day')} × ${rupeeRange(est.dayRate.from, est.dayRate.to)}`, amount: rupeeRange(est.from, est.to) }];
+  const lines: { label: string; amount: string }[] = [
+    {
+      label:
+        t.short && t.days === 1
+          ? `One price for the trip — ${kmText(t.km)}, he is home the same day`
+          : `${t.days} × 24 h of the driver’s time × ${rupees(t.dayRate)}`,
+      amount: rupees(t.days * t.dayRate),
+    },
+  ];
+  if (t.extraHours > 0)
     lines.push({
-      label: `${plural(p.fullDays, 'driving day')} (${tripRules.hoursPerDay} h each) × ${rate}`,
-      amount: rupeeRange(p.fullDays * day.from, p.fullDays * day.to),
+      label: `${plural(t.extraHours, 'hour')} past the ${t.days * 24} h × ${rupees(t.extraHourRate)} (never more than one more day)`,
+      amount: rupees(t.extraCharge),
     });
-  if (p.fullDays === 0 && p.extraHours > 0 && tripRules.shortDrive)
-    // A drive shorter than a day: ₹600 for the first 3 h, then by the hour.
-    lines.push({
-      label: shortDriveWords(tripRules, p.extraHours, rupees),
-      amount: rupeeRange(view.est.driving.from, view.est.driving.to),
-    });
-  else if (p.extraHours > 0)
-    lines.push({
-      label: `${plural(p.extraHours, 'driving hour')}${p.fullDays > 0 ? ' more' : ''} × ${rupees(tripRules.extraHour)}`,
-      amount: rupees(view.est.extraCharge),
-    });
+  // How his time is made up: the train picked, or the route's average.
   const w = wayHome(view);
-  // A real train: the wait and the ride. No train confirmed: the typical time, said plainly — not a "wait".
-  const split = !w
-    ? ''
-    : view.ret
-      ? ` (${returnParts(view.ret).join(' + ')})`
-      : ' (typical time, no train confirmed yet)';
-  lines.push(
-    p.returnHours > 0
-      ? {
-          label: `Driver’s way home: ${plural(p.returnHours, 'hour')} from the drop until he is home${split} = ${returnWords(p.returnHours, tripRules.returnHour, tripRules.returnMaxPerDay, tripRules.returnFullDayAfter, rupees)}`,
-          amount: rupees(view.est.returnCharge),
-        }
-      : { label: 'Driver’s way home', amount: 'No charge' },
-  );
+  const home = view.ret
+    ? returnParts(view.ret).join(', ')
+    : w
+      ? `waiting about ${hoursAbout(w.wait)} and ${hoursAbout(w.travel)} on the ${view.home?.by ?? 'bus or train'} (the route’s average)`
+      : 'his way home';
+  const left = t.days * 24 - t.hours;
+  lines.push({
+    label:
+      `His time: about ${t.hours} h, from when he leaves until he is home — driving ${aboutHours(p.driveHours)}, then ${home}` +
+      (t.extraHours === 0 && left > 0 ? `. ${left} h to spare in the ${t.days * 24} h: a delay costs nothing until then` : ''),
+    amount: 'Included',
+  });
   return lines;
 }
 
@@ -392,9 +373,20 @@ export function notIncluded(view: TripView): string[] {
   ];
 }
 
-/** "₹1,550 × 2 days + ₹120 × 1 extra hour + ₹2,400 way home (35 h) + ₹650 ticket" — the agreed price, itemised. */
+/** "₹1,750 × 2 × 24 h of his time + ₹130 × 9 h + ₹650 ticket" — the agreed price, itemised. */
 export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
-  // A route price: one price, his way home included.
+  // The driver's time (from 8 Nov 2026): the 24-hour blocks and the hours past them.
+  if (pricedByTime(q))
+    return [
+      q.days === 1 && q.extraHours === 0
+        ? `${rupees(q.dayRate)} for the driver’s time (${kmText(q.km ?? 0)}, up to 24 h, his way home included)`
+        : `${rupees(q.dayRate)} × ${q.days} × 24 h of the driver’s time`,
+      q.extraHours > 0 ? `${rupees(q.extraHourRate)} × ${q.extraHours} h past them` : null,
+      q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+  // A route price (before 8 Nov 2026): one price, his way home included.
   if (q.awayHours)
     return [
       `${rupees(q.dayRate)} route price (${q.km ? `${q.km} km, ` : ''}about ${q.awayHours} h away, way home included)`,

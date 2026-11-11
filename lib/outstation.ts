@@ -8,58 +8,61 @@
  * /app-config.json, in the mobile app. The rupee amounts come from
  * site-settings.ts and are passed in — none are typed here.
  *
- * How a trip is priced (decided with the owner, 19 Oct 2026; timings and the
- * hourly rules 28 Oct 2026):
- *   - One-way distance from the pickup city decides everything. Most trips are
- *     one-way drops: the driver delivers the car and comes home by bus/train.
- *   - Driving (one-way): the hours of driving at averageKmh. Each hoursPerDay
- *     of driving (12 h, about 600 km) is one day (dayRate); the hours left
- *     over — or the whole drive, if it is shorter — extraHour each.
- *   - A drive shorter than a day: extraHour an hour, at least ₹600
- *     (shortDrive, decided 1 Nov 2026).
- *   - The day price depends on how far the place is (decided 29 Oct 2026):
- *     nearRates for places close by (e.g. up to 150 km ₹1,300–1,400, up to
- *     300 km ₹1,450–1,550), dayRate beyond — see dayRateFor.
+ * How a trip is priced (decided with the owner on 8 Nov 2026 — one rule for
+ * the driver's TIME, in place of the earlier day/hour/route prices):
+ *   - One-way distance from the pickup city decides the price for each 24
+ *     hours of his time (dayRateFor): it rises with the distance — about
+ *     ₹1,050 close by to ₹1,350 at 160 km, then ₹1,450 rising to ₹1,750 at
+ *     300 km and farther.
+ *   - One-way drops (timePrice): he is paid for the time from when he leaves
+ *     until he is home — the drive, waiting for his train and the ride home.
+ *     Up to 160 km he is home the same day: one price for the trip. Farther:
+ *     the price for each 24 hours; the hours past those 24-hour blocks
+ *     extraHour (₹130) each, never more than one more day. If he arrives in
+ *     8 hours, the rest of the 24 is his waiting and his ride home — no extra.
+ *   - The waiting and the ride home: the route's AVERAGE from the timetables
+ *     (every hour of every day of the week, Destination.home.wait and the
+ *     hours home) until the customer picks a date; then the real train for
+ *     that date (lib/rail.ts, withReturn); the FINAL bill uses the real times.
  *   - Timings: from the start date and time. Normally he drives 12 hours and
  *     rests 12 (up to an hour more finishes that evening); or, if the customer
- *     wants it, day and night without the rest (same price). That gives the
- *     drop time; then stationHours to the station and the train home: on
- *     train routes the real trains for that date from the lookup (lib/rail.ts,
- *     direct first, then a confirmed change such as Nagpur), applied with
- *     withReturn. Bus routes, and a train route whose lookup cannot confirm a
- *     train, use the typical hours home as a labelled allowance (decided
- *     29 Oct 2026: no train times are typed into this file).
- *   - The way home (one-way): from the drop until he is home — the waiting
- *     included — each 24 hours a day (returnMaxPerDay); the hours left over
- *     returnHour each up to returnFullDayAfter (6), more = a full day.
- *   - Round trips: the days of the trip (the driver is with the customer).
- *   - The customer books and pays for the driver's ticket home. The FINAL bill
- *     uses the real times; the estimate predicts them.
- *   - Final bill (finalBill, decided 29 Oct 2026): the driver taps Start, Drop
- *     and Home on his trip link. Driving is start → drop: each 24 h is a day
- *     (12 driving, 12 rest) and what is left after the last 24 is driving
- *     (12 h a day, the rest by the hour); day and night: every 12 h a day.
- *     The first 15 minutes of an hour are free. Round trips: start → back,
- *     the same way, at least one day.
- *   - The customer sees an estimate; the team quotes the exact price on the
- *     call, from the driver's real cost plus at least the minimum profit.
+ *     wants it, day and night without the rest (same price).
+ *   - Round trips: the days of the trip at the day price for the distance,
+ *     driving beyond hoursPerDay a day extraHour each.
+ *   - The customer books and pays for the driver's ticket home and gives his
+ *     meals. The team confirms the exact price on the call (/admin works it
+ *     out from what the driver costs, inside the profit band).
+ *   - Final bill (finalBill): the driver taps Start, Drop and Home on his trip
+ *     link; one-way: start → home, the same 24-hour blocks; round trips:
+ *     start → back, each 24 h a day. The first 15 minutes of an hour are free.
+ *     Quotes and bills from before 8 Nov 2026 (by the hours, or a route price)
+ *     are still billed the way they were agreed.
  */
 
 /* ------------------------------------------------------------- rules ---- */
 
 /** The trip rules from site-settings.ts (`outstation`), plus the per-day price range. */
 export type TripRules = {
-  /** Customer price per day (24 h from the start, up to hoursPerDay driving) for places farther than the last nearRates tier. */
+  /** Customer price per 24 hours of the driver's time for places farther than the last nearRates tier (rising with the distance, see dayRateFor). */
   dayRate: { from: number; to: number };
   /**
    * Cheaper days for places closer by, nearest first: up to `upToKm` (one
-   * way, by road, from the pickup city) a day is from–to. Left out: dayRate
-   * everywhere. See dayRateFor.
+   * way, by road, from the pickup city) a day is from–to. The first tier is
+   * also the same-day drop: up to its upToKm (160 km) he is home the same
+   * day, one price for the trip. Left out: dayRate everywhere. See dayRateFor.
    */
   nearRates?: readonly NearRate[];
-  /** Customer price per hour of the driver's way home (one-way: from the drop until he is home). */
+  /**
+   * The day price rises with the distance (decided 8 Nov 2026): the first
+   * tier's `from` up to nearFromKm, rising to its `to` at its upToKm; past the
+   * last tier, dayRate.from rising to dayRate.to at dayTopFromKm. Left out:
+   * each tier's from–to as a range (older settings).
+   */
+  nearFromKm?: number;
+  dayTopFromKm?: number;
+  /** Quotes and bills from before 8 Nov 2026 only: customer price per hour of his way home. */
   returnHour: number;
-  /** The most the way home costs in any 24 hours. */
+  /** Quotes and bills from before 8 Nov 2026 only: the most the way home costs in any 24 hours. */
   returnMaxPerDay: number;
   /**
    * The way home's hours left over after its full days (24 h each, at
@@ -68,28 +71,17 @@ export type TripRules = {
    */
   returnFullDayAfter: number;
   /**
-   * Driving hours left over after the full days: up to this many at
-   * extraHour, more count as one more full day at dayRate (decided
-   * 29 Oct 2026: 7). A shorter drive than this is all by the hour.
+   * Round trips and older bills: driving hours left over after the full days
+   * — up to this many at extraHour, more count as one more full day at
+   * dayRate (decided 29 Oct 2026: 7).
    */
   extraFullDayAfter: number;
-  /** Customer price per driving hour beyond the full days (and after the first hours of a short drive). */
+  /**
+   * Customer price per hour past the 24-hour blocks of a one-way drop (never
+   * more than one more day, 8 Nov 2026), and per driving hour beyond
+   * hoursPerDay a day on a round trip.
+   */
   extraHour: number;
-  /**
-   * A one-way drive shorter than a day (decided 1 Nov 2026): extraHour an
-   * hour, but never less than `minimum` (₹600, the 3-hour price) — so a short
-   * hop is worth the driver's time, and a longer drive is plain hourly.
-   * `hours` (7 Nov 2026: 3): the first that many hours cost `minimum`, each
-   * hour after them extraHour. Left out: the whole drive at extraHour. His way
-   * home is charged on top.
-   */
-  shortDrive?: { minimum: number; hours?: number };
-  /**
-   * One-way drops that keep him away (he leaves → he is home) `afterHours`
-   * or more (decided 1 Nov 2026): one price for the route instead of the
-   * hours — see routePrice. Left out: the hours, as above.
-   */
-  route?: RouteRules;
   /** Driving hours in one outstation day. */
   hoursPerDay: number;
   /** A round trip with up to this many hours of driving in all is back within the 24 hours: one day. */
@@ -120,17 +112,25 @@ export type Destination = {
   /** One-way road and straight-line distance from Raipur, in km. */
   fromRaipur: { road: number; air: number };
   /**
-   * The driver's way home after a one-way drop: how he usually travels, and a
-   * typical number of hours on board to Raipur, to Durg (also used for
-   * Bhilai) and to Bilaspur. These are an ALLOWANCE for the estimate when no
-   * train can be confirmed (and for bus routes): never shown as a train or a
-   * timetable. Getting to the station (stationHours) is added on top.
+   * The driver's way home after a one-way drop: how he usually travels, and
+   * the AVERAGE hours on board to Raipur, to Durg (also used for Bhilai) and
+   * to Bilaspur — from the timetables over every hour of every day of the
+   * week (8 Nov 2026; bus routes: the usual time). The estimate uses them
+   * until the customer picks a date and a train (then the real train), never
+   * shown as a train or a timetable.
    */
   home: {
     by: 'train' | 'bus' | 'bus + train';
     raipur: number;
     durg: number;
     bilaspur: number;
+    /**
+     * The average hours from the drop until he boards (getting to the station
+     * and any change of train included), over every hour of every day of the
+     * week, from the timetables (8 Nov 2026); bus routes 1.5 h. Left out:
+     * stationHours.
+     */
+    wait?: number;
   };
   /**
    * Train routes: the destination's stations (Indian Railways codes, the main
@@ -157,42 +157,42 @@ export const destinations: readonly Destination[] = [
   { id: 'raipur', name: 'Raipur', nameHi: 'रायपुर', region: 'cg', lat: 21.2514, lng: 81.6296, fromRaipur: { road: 0, air: 0 }, home: { by: 'train', raipur: 0, durg: 0.75, bilaspur: 1.5 } },
   { id: 'bhilai', name: 'Bhilai', nameHi: 'भिलाई', region: 'cg', lat: 21.1938, lng: 81.3509, fromRaipur: { road: 33, air: 29.6 }, home: { by: 'train', raipur: 0.75, durg: 0.3, bilaspur: 2.75 } },
   { id: 'durg', name: 'Durg', nameHi: 'दुर्ग', region: 'cg', lat: 21.1904, lng: 81.2849, fromRaipur: { road: 40, air: 36.4 }, home: { by: 'train', raipur: 0.75, durg: 0, bilaspur: 2.75 } },
-  { id: 'mahasamund', name: 'Mahasamund', nameHi: 'महासमुंद', region: 'cg', lat: 21.1074, lng: 82.0948, fromRaipur: { road: 55, air: 51.1 }, home: { by: 'bus', raipur: 1.5, durg: 2.5, bilaspur: 3.5 } },
-  { id: 'dhamtari', name: 'Dhamtari', nameHi: 'धमतरी', region: 'cg', lat: 20.7076, lng: 81.5494, fromRaipur: { road: 67, air: 61.6 }, home: { by: 'bus', raipur: 2, durg: 2.25, bilaspur: 4 } },
+  { id: 'mahasamund', name: 'Mahasamund', nameHi: 'महासमुंद', region: 'cg', lat: 21.1074, lng: 82.0948, fromRaipur: { road: 55, air: 51.1 }, home: { by: 'bus', raipur: 1.5, durg: 2.5, bilaspur: 3.5, wait: 1.5 } },
+  { id: 'dhamtari', name: 'Dhamtari', nameHi: 'धमतरी', region: 'cg', lat: 20.7076, lng: 81.5494, fromRaipur: { road: 67, air: 61.6 }, home: { by: 'bus', raipur: 2, durg: 2.25, bilaspur: 4, wait: 1.5 } },
   { id: 'rajnandgaon', name: 'Rajnandgaon', nameHi: 'राजनांदगांव', region: 'cg', lat: 21.0974, lng: 81.0337, fromRaipur: { road: 74, air: 64.5 }, home: { by: 'train', raipur: 1.5, durg: 0.75, bilaspur: 3 }, rail: { stations: ['RJN'] } },
   { id: 'dongargarh', name: 'Dongargarh', nameHi: 'डोंगरगढ़', region: 'cg', lat: 21.1891, lng: 80.755, fromRaipur: { road: 108, air: 90.5 }, home: { by: 'train', raipur: 2, durg: 1.25, bilaspur: 3.75 }, rail: { stations: ['DGG'] } },
-  { id: 'bilaspur', name: 'Bilaspur', nameHi: 'बिलासपुर', region: 'cg', lat: 22.0797, lng: 82.1409, fromRaipur: { road: 113, air: 106.1 }, home: { by: 'train', raipur: 1.5, durg: 2.5, bilaspur: 0 }, rail: { stations: ['BSP'] } },
-  { id: 'kawardha', name: 'Kawardha', nameHi: 'कवर्धा', region: 'cg', lat: 22.0086, lng: 81.2318, fromRaipur: { road: 116, air: 94.1 }, home: { by: 'bus', raipur: 3, durg: 2.75, bilaspur: 3.25 } },
-  { id: 'kanker', name: 'Kanker', nameHi: 'कांकेर', region: 'cg', lat: 20.2719, lng: 81.492, fromRaipur: { road: 127, air: 109.8 }, home: { by: 'bus', raipur: 3.5, durg: 3.75, bilaspur: 5.5 } },
-  { id: 'janjgir', name: 'Janjgir', nameHi: 'जांजगीर', region: 'cg', lat: 22.009, lng: 82.5772, fromRaipur: { road: 160, air: 128.9 }, home: { by: 'train', raipur: 3, durg: 3.5, bilaspur: 1 }, rail: { stations: ['NIA'] } },
-  { id: 'amarkantak', name: 'Amarkantak', nameHi: 'अमरकंटक', region: 'cg', lat: 22.673, lng: 81.7536, fromRaipur: { road: 209, air: 159.7 }, home: { by: 'bus + train', raipur: 5.5, durg: 6.5, bilaspur: 3 } },
-  { id: 'korba', name: 'Korba', nameHi: 'कोरबा', region: 'cg', lat: 22.3595, lng: 82.7501, fromRaipur: { road: 216, air: 169 }, home: { by: 'train', raipur: 4, durg: 4.75, bilaspur: 2 }, rail: { stations: ['KRBA'] } },
-  { id: 'raigarh', name: 'Raigarh', nameHi: 'रायगढ़', region: 'cg', lat: 21.8974, lng: 83.395, fromRaipur: { road: 258, air: 196.2 }, home: { by: 'train', raipur: 4, durg: 4.5, bilaspur: 2.25 }, rail: { stations: ['RIG'] } },
-  { id: 'jagdalpur', name: 'Jagdalpur', nameHi: 'जगदलपुर', region: 'cg', lat: 19.0748, lng: 82.008, fromRaipur: { road: 287, air: 245.3 }, home: { by: 'bus', raipur: 7, durg: 8, bilaspur: 9 } },
-  { id: 'ambikapur', name: 'Ambikapur', nameHi: 'अंबिकापुर', region: 'cg', lat: 23.1355, lng: 83.182, fromRaipur: { road: 334, air: 263.6 }, home: { by: 'bus', raipur: 7.5, durg: 8.5, bilaspur: 5.25 } },
+  { id: 'bilaspur', name: 'Bilaspur', nameHi: 'बिलासपुर', region: 'cg', lat: 22.0797, lng: 82.1409, fromRaipur: { road: 113, air: 106.1 }, home: { by: 'train', raipur: 1.5, durg: 2.5, bilaspur: 0, wait: 2 }, rail: { stations: ['BSP'] } },
+  { id: 'kawardha', name: 'Kawardha', nameHi: 'कवर्धा', region: 'cg', lat: 22.0086, lng: 81.2318, fromRaipur: { road: 116, air: 94.1 }, home: { by: 'bus', raipur: 3, durg: 2.75, bilaspur: 3.25, wait: 1.5 } },
+  { id: 'kanker', name: 'Kanker', nameHi: 'कांकेर', region: 'cg', lat: 20.2719, lng: 81.492, fromRaipur: { road: 127, air: 109.8 }, home: { by: 'bus', raipur: 3.5, durg: 3.75, bilaspur: 5.5, wait: 1.5 } },
+  { id: 'janjgir', name: 'Janjgir', nameHi: 'जांजगीर', region: 'cg', lat: 22.009, lng: 82.5772, fromRaipur: { road: 160, air: 128.9 }, home: { by: 'train', raipur: 3, durg: 3.5, bilaspur: 1, wait: 3.25 }, rail: { stations: ['NIA'] } },
+  { id: 'amarkantak', name: 'Amarkantak', nameHi: 'अमरकंटक', region: 'cg', lat: 22.673, lng: 81.7536, fromRaipur: { road: 209, air: 159.7 }, home: { by: 'bus + train', raipur: 5.5, durg: 6.5, bilaspur: 3, wait: 1.5 } },
+  { id: 'korba', name: 'Korba', nameHi: 'कोरबा', region: 'cg', lat: 22.3595, lng: 82.7501, fromRaipur: { road: 216, air: 169 }, home: { by: 'train', raipur: 4, durg: 4.75, bilaspur: 2, wait: 4.75 }, rail: { stations: ['KRBA'] } },
+  { id: 'raigarh', name: 'Raigarh', nameHi: 'रायगढ़', region: 'cg', lat: 21.8974, lng: 83.395, fromRaipur: { road: 258, air: 196.2 }, home: { by: 'train', raipur: 4.25, durg: 4.75, bilaspur: 2.5, wait: 3 }, rail: { stations: ['RIG'] } },
+  { id: 'jagdalpur', name: 'Jagdalpur', nameHi: 'जगदलपुर', region: 'cg', lat: 19.0748, lng: 82.008, fromRaipur: { road: 287, air: 245.3 }, home: { by: 'bus', raipur: 7, durg: 8, bilaspur: 9, wait: 1.5 } },
+  { id: 'ambikapur', name: 'Ambikapur', nameHi: 'अंबिकापुर', region: 'cg', lat: 23.1355, lng: 83.182, fromRaipur: { road: 334, air: 263.6 }, home: { by: 'bus', raipur: 7.5, durg: 8.5, bilaspur: 5.25, wait: 1.5 } },
   // Other states
-  { id: 'gondia', name: 'Gondia', nameHi: 'गोंदिया', region: 'india', lat: 21.4624, lng: 80.192, fromRaipur: { road: 201, air: 147.9 }, home: { by: 'train', raipur: 3, durg: 2.25, bilaspur: 4.5 }, rail: { stations: ['G'] } },
-  { id: 'sambalpur', name: 'Sambalpur', nameHi: 'संबलपुर', region: 'india', lat: 21.4669, lng: 83.9812, fromRaipur: { road: 275, air: 244.8 }, home: { by: 'bus', raipur: 6, durg: 6.5, bilaspur: 4.5 } },
-  { id: 'nagpur', name: 'Nagpur', nameHi: 'नागपुर', region: 'india', lat: 21.1458, lng: 79.0882, fromRaipur: { road: 284, air: 263.8 }, home: { by: 'train', raipur: 5, durg: 4.25, bilaspur: 6.5 }, rail: { stations: ['NGP'] } },
-  { id: 'jharsuguda', name: 'Jharsuguda', nameHi: 'झारसुगुड़ा', region: 'india', lat: 21.8554, lng: 84.0062, fromRaipur: { road: 320, air: 254.9 }, home: { by: 'train', raipur: 5, durg: 6, bilaspur: 3.25 }, rail: { stations: ['JSG'] } },
-  { id: 'jabalpur', name: 'Jabalpur', nameHi: 'जबलपुर', region: 'india', lat: 23.1815, lng: 79.9864, fromRaipur: { road: 383, air: 273.5 }, home: { by: 'train', raipur: 9, durg: 8.5, bilaspur: 8.5 }, rail: { stations: ['JBP'], hubs: ['NGP', 'G'] } },
-  { id: 'visakhapatnam', name: 'Visakhapatnam', nameHi: 'विशाखापत्तनम', region: 'india', lat: 17.6868, lng: 83.2185, fromRaipur: { road: 546, air: 430 }, home: { by: 'train', raipur: 10, durg: 11, bilaspur: 12 }, rail: { stations: ['VSKP'] } },
-  { id: 'bhubaneswar', name: 'Bhubaneswar', nameHi: 'भुवनेश्वर', region: 'india', lat: 20.2961, lng: 85.8245, fromRaipur: { road: 547, air: 449 }, home: { by: 'train', raipur: 11.5, durg: 12.25, bilaspur: 13.5 }, rail: { stations: ['BBS'] } },
-  { id: 'puri', name: 'Puri', nameHi: 'पुरी', region: 'india', lat: 19.8135, lng: 85.8312, fromRaipur: { road: 577, air: 465.9 }, home: { by: 'train', raipur: 13, durg: 13.75, bilaspur: 15 }, rail: { stations: ['PURI'] } },
-  { id: 'prayagraj', name: 'Prayagraj', nameHi: 'प्रयागराज', region: 'india', lat: 25.4358, lng: 81.8463, fromRaipur: { road: 578, air: 465.9 }, home: { by: 'train', raipur: 13.5, durg: 14.5, bilaspur: 11.5 }, rail: { stations: ['PRYJ', 'PCOI'], hubs: ['NGP'] } },
-  { id: 'ranchi', name: 'Ranchi', nameHi: 'रांची', region: 'india', lat: 23.3441, lng: 85.3096, fromRaipur: { road: 616, air: 444 }, home: { by: 'train', raipur: 12, durg: 12.5, bilaspur: 10 }, rail: { stations: ['RNC', 'HTE'] } },
-  { id: 'bhopal', name: 'Bhopal', nameHi: 'भोपाल', region: 'india', lat: 23.2599, lng: 77.4126, fromRaipur: { road: 628, air: 488 }, home: { by: 'train', raipur: 11.75, durg: 12, bilaspur: 13 }, rail: { stations: ['BPL', 'RKMP'], hubs: ['NGP'] } },
-  { id: 'varanasi', name: 'Varanasi', nameHi: 'वाराणसी', region: 'india', lat: 25.3176, lng: 82.9739, fromRaipur: { road: 644, air: 472.7 }, home: { by: 'train', raipur: 17, durg: 18, bilaspur: 15 }, rail: { stations: ['BSB'], hubs: ['NGP', 'G'] } },
-  { id: 'indore', name: 'Indore', nameHi: 'इंदौर', region: 'india', lat: 22.7196, lng: 75.8577, fromRaipur: { road: 727, air: 617.2 }, home: { by: 'bus', raipur: 16.5, durg: 17.25, bilaspur: 18.5 } },
-  { id: 'patna', name: 'Patna', nameHi: 'पटना', region: 'india', lat: 25.5941, lng: 85.1376, fromRaipur: { road: 739, air: 601 }, home: { by: 'bus', raipur: 19, durg: 19.75, bilaspur: 21 } },
-  { id: 'lucknow', name: 'Lucknow', nameHi: 'लखनऊ', region: 'india', lat: 26.8467, lng: 80.9462, fromRaipur: { road: 779, air: 626.2 }, home: { by: 'train', raipur: 20, durg: 21, bilaspur: 18 }, rail: { stations: ['LKO', 'LJN'], hubs: ['NGP'] } },
-  { id: 'hyderabad', name: 'Hyderabad', nameHi: 'हैदराबाद', region: 'india', lat: 17.385, lng: 78.4867, fromRaipur: { road: 780, air: 542 }, home: { by: 'train', raipur: 15, durg: 15, bilaspur: 16.5 }, rail: { stations: ['SC', 'HYB', 'KCG'], hubs: ['NGP'] } },
-  { id: 'kolkata', name: 'Kolkata', nameHi: 'कोलकाता', region: 'india', lat: 22.5726, lng: 88.3639, fromRaipur: { road: 831, air: 710 }, home: { by: 'train', raipur: 13.25, durg: 14.25, bilaspur: 11.25 }, rail: { stations: ['HWH', 'SHM'] } },
-  { id: 'pune', name: 'Pune', nameHi: 'पुणे', region: 'india', lat: 18.5204, lng: 73.8567, fromRaipur: { road: 1007, air: 867 }, home: { by: 'train', raipur: 20, durg: 19.5, bilaspur: 22 }, rail: { stations: ['PUNE'], hubs: ['NGP'] } },
-  { id: 'mumbai', name: 'Mumbai', nameHi: 'मुंबई', region: 'india', lat: 19.076, lng: 72.8777, fromRaipur: { road: 1118, air: 945 }, home: { by: 'train', raipur: 18, durg: 17.25, bilaspur: 20.5 }, rail: { stations: ['CSMT', 'LTT'], hubs: ['NGP'] } },
-  { id: 'delhi', name: 'Delhi', nameHi: 'दिल्ली', region: 'india', lat: 28.6139, lng: 77.209, fromRaipur: { road: 1214, air: 946 }, home: { by: 'train', raipur: 22.5, durg: 22, bilaspur: 21 }, rail: { stations: ['NDLS', 'NZM'], hubs: ['NGP'] } },
-  { id: 'bengaluru', name: 'Bengaluru', nameHi: 'बेंगलुरु', region: 'india', lat: 12.9716, lng: 77.5946, fromRaipur: { road: 1370, air: 1015.7 }, home: { by: 'train', raipur: 28, durg: 27.25, bilaspur: 30 }, rail: { stations: ['SMVB', 'SBC', 'YPR'], hubs: ['NGP'] } },
-  { id: 'chennai', name: 'Chennai', nameHi: 'चेन्नई', region: 'india', lat: 13.0827, lng: 80.2707, fromRaipur: { road: 1405, air: 920 }, home: { by: 'train', raipur: 23, durg: 22.25, bilaspur: 25 }, rail: { stations: ['MAS'], hubs: ['NGP'] } },
+  { id: 'gondia', name: 'Gondia', nameHi: 'गोंदिया', region: 'india', lat: 21.4624, lng: 80.192, fromRaipur: { road: 201, air: 147.9 }, home: { by: 'train', raipur: 3.25, durg: 2.5, bilaspur: 4.75, wait: 2 }, rail: { stations: ['G'] } },
+  { id: 'sambalpur', name: 'Sambalpur', nameHi: 'संबलपुर', region: 'india', lat: 21.4669, lng: 83.9812, fromRaipur: { road: 275, air: 244.8 }, home: { by: 'bus', raipur: 6, durg: 6.5, bilaspur: 4.5, wait: 1.5 } },
+  { id: 'nagpur', name: 'Nagpur', nameHi: 'नागपुर', region: 'india', lat: 21.1458, lng: 79.0882, fromRaipur: { road: 284, air: 263.8 }, home: { by: 'train', raipur: 4.75, durg: 4, bilaspur: 6.25, wait: 2.5 }, rail: { stations: ['NGP'] } },
+  { id: 'jharsuguda', name: 'Jharsuguda', nameHi: 'झारसुगुड़ा', region: 'india', lat: 21.8554, lng: 84.0062, fromRaipur: { road: 320, air: 254.9 }, home: { by: 'train', raipur: 5.25, durg: 6.25, bilaspur: 3.5, wait: 3 }, rail: { stations: ['JSG'] } },
+  { id: 'jabalpur', name: 'Jabalpur', nameHi: 'जबलपुर', region: 'india', lat: 23.1815, lng: 79.9864, fromRaipur: { road: 383, air: 273.5 }, home: { by: 'train', raipur: 8.75, durg: 8.25, bilaspur: 8.25, wait: 7.25 }, rail: { stations: ['JBP'], hubs: ['NGP', 'G'] } },
+  { id: 'visakhapatnam', name: 'Visakhapatnam', nameHi: 'विशाखापत्तनम', region: 'india', lat: 17.6868, lng: 83.2185, fromRaipur: { road: 546, air: 430 }, home: { by: 'train', raipur: 9.5, durg: 10.5, bilaspur: 11.5, wait: 4.75 }, rail: { stations: ['VSKP'] } },
+  { id: 'bhubaneswar', name: 'Bhubaneswar', nameHi: 'भुवनेश्वर', region: 'india', lat: 20.2961, lng: 85.8245, fromRaipur: { road: 547, air: 449 }, home: { by: 'train', raipur: 13, durg: 13.75, bilaspur: 15, wait: 8.5 }, rail: { stations: ['BBS'] } },
+  { id: 'puri', name: 'Puri', nameHi: 'पुरी', region: 'india', lat: 19.8135, lng: 85.8312, fromRaipur: { road: 577, air: 465.9 }, home: { by: 'train', raipur: 14.75, durg: 15.5, bilaspur: 16.75, wait: 8.5 }, rail: { stations: ['PURI'] } },
+  { id: 'prayagraj', name: 'Prayagraj', nameHi: 'प्रयागराज', region: 'india', lat: 25.4358, lng: 81.8463, fromRaipur: { road: 578, air: 465.9 }, home: { by: 'train', raipur: 13.75, durg: 14.75, bilaspur: 11.75, wait: 6.5 }, rail: { stations: ['PRYJ', 'PCOI'], hubs: ['NGP'] } },
+  { id: 'ranchi', name: 'Ranchi', nameHi: 'रांची', region: 'india', lat: 23.3441, lng: 85.3096, fromRaipur: { road: 616, air: 444 }, home: { by: 'train', raipur: 10, durg: 10.5, bilaspur: 8, wait: 10.75 }, rail: { stations: ['RNC', 'HTE'] } },
+  { id: 'bhopal', name: 'Bhopal', nameHi: 'भोपाल', region: 'india', lat: 23.2599, lng: 77.4126, fromRaipur: { road: 628, air: 488 }, home: { by: 'train', raipur: 12.5, durg: 12.75, bilaspur: 13.75, wait: 8 }, rail: { stations: ['BPL', 'RKMP'], hubs: ['NGP'] } },
+  { id: 'varanasi', name: 'Varanasi', nameHi: 'वाराणसी', region: 'india', lat: 25.3176, lng: 82.9739, fromRaipur: { road: 644, air: 472.7 }, home: { by: 'train', raipur: 17, durg: 18, bilaspur: 15, wait: 7 }, rail: { stations: ['BSB'], hubs: ['NGP', 'G'] } },
+  { id: 'indore', name: 'Indore', nameHi: 'इंदौर', region: 'india', lat: 22.7196, lng: 75.8577, fromRaipur: { road: 727, air: 617.2 }, home: { by: 'bus', raipur: 16.5, durg: 17.25, bilaspur: 18.5, wait: 1.5 } },
+  { id: 'patna', name: 'Patna', nameHi: 'पटना', region: 'india', lat: 25.5941, lng: 85.1376, fromRaipur: { road: 739, air: 601 }, home: { by: 'bus', raipur: 19, durg: 19.75, bilaspur: 21, wait: 1.5 } },
+  { id: 'lucknow', name: 'Lucknow', nameHi: 'लखनऊ', region: 'india', lat: 26.8467, lng: 80.9462, fromRaipur: { road: 779, air: 626.2 }, home: { by: 'train', raipur: 19.5, durg: 20.5, bilaspur: 17.5, wait: 20.75 }, rail: { stations: ['LKO', 'LJN'], hubs: ['NGP'] } },
+  { id: 'hyderabad', name: 'Hyderabad', nameHi: 'हैदराबाद', region: 'india', lat: 17.385, lng: 78.4867, fromRaipur: { road: 780, air: 542 }, home: { by: 'train', raipur: 13.5, durg: 13.5, bilaspur: 15, wait: 9.5 }, rail: { stations: ['SC', 'HYB', 'KCG'], hubs: ['NGP'] } },
+  { id: 'kolkata', name: 'Kolkata', nameHi: 'कोलकाता', region: 'india', lat: 22.5726, lng: 88.3639, fromRaipur: { road: 831, air: 710 }, home: { by: 'train', raipur: 13, durg: 14, bilaspur: 11, wait: 4 }, rail: { stations: ['HWH', 'SHM'] } },
+  { id: 'pune', name: 'Pune', nameHi: 'पुणे', region: 'india', lat: 18.5204, lng: 73.8567, fromRaipur: { road: 1007, air: 867 }, home: { by: 'train', raipur: 19.5, durg: 19, bilaspur: 21.5, wait: 10 }, rail: { stations: ['PUNE'], hubs: ['NGP'] } },
+  { id: 'mumbai', name: 'Mumbai', nameHi: 'मुंबई', region: 'india', lat: 19.076, lng: 72.8777, fromRaipur: { road: 1118, air: 945 }, home: { by: 'train', raipur: 17, durg: 16.25, bilaspur: 19.5, wait: 4.75 }, rail: { stations: ['CSMT', 'LTT'], hubs: ['NGP'] } },
+  { id: 'delhi', name: 'Delhi', nameHi: 'दिल्ली', region: 'india', lat: 28.6139, lng: 77.209, fromRaipur: { road: 1214, air: 946 }, home: { by: 'train', raipur: 22, durg: 21.5, bilaspur: 20.5, wait: 7.25 }, rail: { stations: ['NDLS', 'NZM'], hubs: ['NGP'] } },
+  { id: 'bengaluru', name: 'Bengaluru', nameHi: 'बेंगलुरु', region: 'india', lat: 12.9716, lng: 77.5946, fromRaipur: { road: 1370, air: 1015.7 }, home: { by: 'train', raipur: 26, durg: 25.25, bilaspur: 28, wait: 8.75 }, rail: { stations: ['SMVB', 'SBC', 'YPR'], hubs: ['NGP'] } },
+  { id: 'chennai', name: 'Chennai', nameHi: 'चेन्नई', region: 'india', lat: 13.0827, lng: 80.2707, fromRaipur: { road: 1405, air: 920 }, home: { by: 'train', raipur: 22.25, durg: 21.5, bilaspur: 24.25, wait: 9.25 }, rail: { stations: ['MAS'], hubs: ['NGP'] } },
 ];
 
 /** The four pickup cities — booking `city` values — and where they are. */
@@ -268,7 +268,7 @@ export type TripPlan = {
    * train from the lookup, set by withReturn).
    */
   homeBasis?: 'allowance' | 'train';
-  /** One-way: hours of waiting for his train (at the drop and at a change), for the route price. */
+  /** One-way: hours of waiting for his train (at the drop and at a change), from the lookup. */
   waitHours?: number;
 };
 
@@ -283,184 +283,121 @@ export type NearRate = { upToKm: number; from: number; to: number };
 
 /**
  * The day price for a place `km` away (one way, by road, from the pickup
- * city): the first nearby tier it falls in, else dayRate. A place not in the
- * list (km 0, unknown) gets dayRate — the team quotes it on the call.
- *   Bilaspur 113 km → ₹1,300–1,400; Nagpur 284 km → ₹1,450–1,550;
- *   Jabalpur 383 km → ₹1,550–1,650.
+ * city), decided with the owner on 8 Nov 2026: it rises with the distance —
+ * the first tier's `from` up to nearFromKm, its `to` at its upToKm; farther,
+ * dayRate.from rising to dayRate.to at dayTopFromKm — to the nearest ₹50. A
+ * place not in the list (km 0, unknown): the whole span, as a range — the
+ * team quotes it on the call. Without nearFromKm (older settings): the tier's
+ * from–to as a range.
+ *   Bilaspur 113 km → ₹1,200; Janjgir 160 km → ₹1,350; Korba 216 km → ₹1,550;
+ *   Nagpur 284 km → ₹1,700; 300 km and farther → ₹1,750.
  */
-export function dayRateFor(rules: Pick<TripRules, 'dayRate' | 'nearRates'>, km: number | undefined): { from: number; to: number } {
-  const d = Math.round(Number(km) || 0);
-  const tier = d > 0 ? rules.nearRates?.find((t) => d <= t.upToKm) : undefined;
-  return tier ? { from: tier.from, to: tier.to } : { from: rules.dayRate.from, to: rules.dayRate.to };
-}
-
-/**
- * The driving charge of a one-way drive shorter than a day (`hours` whole
- * hours, no full days): the first shortDrive.hours cost shortDrive.minimum,
- * each hour after them `hourRate` (7 Nov 2026).
- *   1–3 h → ₹600; 4 h → ₹720; 5 h → ₹840; 6 h → ₹960.
- * Settings without shortDrive.hours: `hourRate` an hour, at least the minimum.
- * `hourRate`: extraHour, or the agreed rate on a quote or bill. Without
- * rules.shortDrive (older settings): hours × hourRate. (A range, like the
- * other estimate parts, though both ends are the same.)
- */
-export function shortDriveCharge(
-  rules: Pick<TripRules, 'extraHour' | 'shortDrive'>,
-  hours: number,
-  hourRate: number = rules.extraHour,
+export function dayRateFor(
+  rules: Pick<TripRules, 'dayRate' | 'nearRates' | 'nearFromKm' | 'dayTopFromKm'>,
+  km: number | undefined,
 ): { from: number; to: number } {
-  const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
-  if (h === 0) return { from: 0, to: 0 };
-  const min = rules.shortDrive?.minimum ?? 0;
-  const covered = rules.shortDrive?.hours;
-  const n = covered ? min + Math.max(0, h - covered) * hourRate : Math.max(h * hourRate, min);
-  return { from: n, to: n };
-}
-
-/**
- * A short drive's charge in words: "3 h of driving: ₹600 for the first 3 h",
- * "5 h of driving: ₹600 for the first 3 h + 2 h × ₹120". `money` formats rupees.
- */
-export function shortDriveWords(
-  rules: Pick<TripRules, 'extraHour' | 'shortDrive'>,
-  hours: number,
-  money: (n: number) => string,
-  hourRate: number = rules.extraHour,
-): string {
-  const h = Math.max(0, Math.round(Number.isFinite(hours) ? hours : 0));
-  const min = rules.shortDrive?.minimum ?? 0;
-  const covered = rules.shortDrive?.hours;
-  if (covered) {
-    const first = `${money(min)} for the first ${covered} h`;
-    return h <= covered ? `${h} h of driving: ${first}` : `${h} h of driving: ${first} + ${h - covered} h × ${money(hourRate)}`;
+  const d = Math.round(Number(km) || 0);
+  const tiers = rules.nearRates ?? [];
+  if (d <= 0) {
+    const all = [...tiers, rules.dayRate];
+    return { from: Math.min(...all.map((t) => t.from)), to: Math.max(...all.map((t) => t.to)) };
   }
-  if (h * hourRate < min) return `${h} h of driving: the minimum, ${money(min)}`;
-  return `${h} driving ${h === 1 ? 'hour' : 'hours'} × ${money(hourRate)}`;
+  const tier = tiers.find((t) => d <= t.upToKm);
+  if (rules.nearFromKm === undefined) return tier ? { from: tier.from, to: tier.to } : { ...rules.dayRate };
+  const round50 = (n: number) => Math.round(n / 50) * 50;
+  const along = (from: number, to: number, lo: number, hi: number) =>
+    round50(hi <= lo ? to : from + ((to - from) * Math.min(1, Math.max(0, (d - lo) / (hi - lo)))));
+  let low = rules.nearFromKm;
+  for (const t of tiers) {
+    if (d <= t.upToKm) {
+      const v = along(t.from, t.to, low, t.upToKm);
+      return { from: v, to: v };
+    }
+    low = t.upToKm;
+  }
+  const v = along(rules.dayRate.from, rules.dayRate.to, low, rules.dayTopFromKm ?? low);
+  return { from: v, to: v };
 }
 
 /**
- * The route price of a longer one-way drop (decided with the owner, 1 Nov
- * 2026; the days and the waiting 7 Nov 2026). What customers pay goes by
- * distance — `base + perKm × km` — but the driver is paid by the days he is
- * away, so the price is for the days the trip needs (drive + the usual wait at
- * the station + his way home; each started 24 h is a day): never below
- * `minBase + minPerDay` nor above `maxPerDay` for each of them. Waiting for his
- * train uses the time left in those days first, at no charge; only the hours
- * past them cost extra — returnHour each, at most returnMaxPerDay (₹1,200) for
- * each 24 h, never more than the trip's price per day — on the estimate and,
- * from the real times, on the final bill.
- * Rounded to the nearest ₹50. His ticket and meals are paid separately.
+ * A one-way drop's price for the driver's time (decided with the owner on
+ * 8 Nov 2026). He is paid by his time away — the drive, waiting for his train
+ * and the ride home — and the customer pays for that time:
+ *   - The day price for the distance (dayRateFor) for each 24 hours he is
+ *     away (leaves → home); up to the first tier's upToKm (160 km) he is home
+ *     the same day, so that is one price for the trip.
+ *   - Past the 24-hour blocks, extraHour an hour — never more than one more
+ *     day (then it is one more day).
+ * `hours`: from the start until he is home — the average wait and ride for
+ * the route until a train is picked, then the train's (withReturn), and on
+ * the final bill the real times. `rates`: the agreed rates on a quote or a
+ * bill. Undefined for an unknown place (km 0).
+ *   Bilaspur 113 km, 6 h → ₹1,200. Visakhapatnam 546 km, 26 h → ₹1,750 + 2 h × ₹130.
+ *   Delhi 1,214 km, 66 h → 2 × ₹1,750 + 18 h — more than a day: 3 × ₹1,750 = ₹5,250.
  */
-export type RouteRules = {
-  afterHours: number;
-  base: number;
-  perKm: number;
-  minBase: number;
-  minPerDay: number;
-  /** The most for each day (24 h) he is away. Left out: no upper limit. */
-  maxPerDay?: number;
-};
-
-export type RoutePrice = {
-  /** What the customer pays: the price for the days, and any hours past them. */
+export type TimePrice = {
   price: number;
-  /** The price for the days the trip needs (what a quote saves). */
-  daysPrice: number;
-  /** base + perKm × km, before rounding. */
-  kmPrice: number;
-  /** minBase + minPerDay × days. */
-  floor: number;
-  /** maxPerDay × days, rounded (Infinity without maxPerDay). */
-  cap: number;
-  /** The days paid: the trip as planned (drive + usual wait + way home), each started 24 h. */
+  /** Up to the first tier's upToKm (160 km): home the same day, one price for the trip. */
+  short: boolean;
+  /** The price for each 24 h of his time. */
+  dayRate: number;
+  /** The 24-hour blocks (at least 1). */
   days: number;
-  /** daysPrice ÷ days, to ₹50. */
-  dayPrice: number;
-  /** The most the hours past the days cost for each 24 h: returnMaxPerDay (₹1,200), never above dayPrice. */
-  extraMaxPerDay: number;
-  /** Whole hours the trip needs as planned, and whole hours he is away with the waiting. */
-  plannedHours: number;
-  awayHours: number;
-  /** Hours the days paid leave after the trip as planned: waiting for his train there costs nothing. */
-  freeHours: number;
-  /** Hours past the days paid, and what they cost (in `price`). */
+  /** Whole hours from the start until he is home. */
+  hours: number;
+  /** Hours past the blocks, and what they cost (extraHour each, less than a day). */
   extraHours: number;
+  extraHourRate: number;
   extraCharge: number;
   km: number;
-  /** What set daysPrice: the km, the least for the days, or the most for the days. */
-  by: 'km' | 'days' | 'cap';
 };
 
-const wholeHours = (h: number) => Math.max(0, Math.ceil((Number.isFinite(h) ? h : 0) - 1e-9));
+/** The 24-hour blocks for `hours` of his time, and the hours past them (never more than one more day). */
+export function timeBlocks(hours: number, dayRate: number, hourRate: number): { days: number; extraHours: number } {
+  const h = Math.max(0, Math.ceil((Number.isFinite(hours) ? hours : 0) - 1e-9));
+  const days = h <= 24 ? 1 : Math.floor(h / 24);
+  const extraHours = Math.max(0, h - days * 24);
+  // The hours past the blocks never cost more than one more day.
+  return extraHours > 0 && extraHours * hourRate >= dayRate ? { days: days + 1, extraHours: 0 } : { days, extraHours };
+}
 
-/**
- * The route price for a one-way drop `km` away (one way, by road) that keeps
- * him away `hours` (he leaves → he is home), of which `plannedHours` the trip
- * needs as planned (the drive, the usual wait at the station, his way home;
- * the rest is waiting for his train). Undefined when there are no route rules,
- * the place is unknown (km 0) or he is away less than afterHours (then the
- * hours are charged, as before).
- *   Nagpur 284 km, 12 h: ₹350 + ₹4.5 × 284 = ₹1,628 → ₹1,650 (₹1,650–1,850 for 1 day); 12 h left for waiting.
- *   Visakhapatnam 546 km, 22 h: ₹2,807, at most ₹1,850 for 1 day; 7 h past the day: + 7 × ₹120; 12 h past: + ₹1,200.
- *   Delhi 1,214 km, 60 h: ₹5,813, at most 3 × ₹1,850 = ₹5,550; 12 h left for waiting.
- */
-export function routePrice(
-  rules: Pick<TripRules, 'route'> & Partial<Pick<TripRules, 'returnHour' | 'returnMaxPerDay'>>,
+export function timePrice(
+  rules: Pick<TripRules, 'dayRate' | 'nearRates' | 'nearFromKm' | 'dayTopFromKm' | 'extraHour'>,
   km: number,
   hours: number,
-  plannedHours: number = hours,
-): RoutePrice | undefined {
-  const r = rules.route;
+  rates: { dayRate?: number; extraHour?: number } = {},
+): TimePrice | undefined {
   const d = Math.round(Number(km) || 0);
-  const awayHours = wholeHours(hours);
-  if (!r || d <= 0 || awayHours < r.afterHours) return undefined;
-  const planned = Math.min(awayHours, wholeHours(plannedHours) || awayHours);
-  const days = Math.max(1, Math.ceil(planned / 24));
-  const kmPrice = r.base + r.perKm * d;
-  const floor = r.minBase + r.minPerDay * days;
-  const round50 = (n: number) => Math.round(n / 50) * 50;
-  const byKm = round50(kmPrice);
-  const byDays = round50(floor);
-  // The most for the days (never below the least).
-  const cap = r.maxPerDay === undefined ? Infinity : Math.max(byDays, round50(r.maxPerDay * days));
-  const by: RoutePrice['by'] = byKm < byDays ? 'days' : byKm > cap ? 'cap' : 'km';
-  const daysPrice = by === 'days' ? byDays : by === 'cap' ? cap : byKm;
-  // Waiting first uses the time left in the days paid; the hours past them, returnHour each,
-  // at most returnMaxPerDay (₹1,200) for each 24 h — the time not driving (7 Nov 2026).
-  const dayPrice = round50(daysPrice / days);
-  const extraMaxPerDay = Math.min(dayPrice, rules.returnMaxPerDay ?? dayPrice);
-  const extraHours = Math.max(0, awayHours - days * 24);
-  const extraCharge = extraHours > 0 && rules.returnHour ? returnCost(extraHours, rules.returnHour, extraMaxPerDay, 24) : 0;
+  if (d <= 0) return undefined;
+  const dayRate = Math.round(rates.dayRate ?? dayRateFor(rules, d).from);
+  const extraHourRate = Math.round(rates.extraHour ?? rules.extraHour);
+  const h = Math.max(0, Math.ceil((Number.isFinite(hours) ? hours : 0) - 1e-9));
+  const { days, extraHours } = timeBlocks(h, dayRate, extraHourRate);
+  const extraCharge = extraHours * extraHourRate;
   return {
-    price: daysPrice + extraCharge,
-    daysPrice,
-    kmPrice,
-    floor,
-    cap,
+    price: days * dayRate + extraCharge,
+    short: d <= (rules.nearRates?.[0]?.upToKm ?? 0),
+    dayRate,
     days,
-    dayPrice,
-    extraMaxPerDay,
-    plannedHours: planned,
-    awayHours,
-    freeHours: days * 24 - planned,
+    hours: h,
     extraHours,
+    extraHourRate,
     extraCharge,
     km: d,
-    by,
   };
 }
 
-/** The route price in words: "1,118 km: ₹350 + ₹4.5 a km", "26 h away (2 days, …): at least 2 × ₹1,650" or "… at most 1 × ₹1,850". */
-export function routeWords(rules: Pick<TripRules, 'route'>, p: RoutePrice, money: (n: number) => string): string {
-  const r = rules.route!;
-  const km = new Intl.NumberFormat('en-IN').format(p.km);
-  // ₹4.5 a km: money() may round to whole rupees.
-  const perKm = `₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(r.perKm)}`;
-  // The days paid: for the trip as planned (any waiting past them is its own line).
-  const away = `${p.plannedHours} h away (${p.days} ${p.days === 1 ? 'day' : 'days'}, his way home included)`;
-  if (p.by === 'km') return `${km} km: ${money(r.base)} + ${perKm} a km`;
-  if (p.by === 'cap') return `${km} km, ${away}: at most ${p.days} × ${money(r.maxPerDay ?? 0)}`;
-  return `${away}: at least ${r.minBase > 0 ? `${money(r.minBase)} + ` : ''}${p.days} × ${money(r.minPerDay)}`;
+/**
+ * The time price in words: "One price for the trip — he is home the same day",
+ * "2 × 24 h of the driver’s time × ₹1,750", plus "3 h past them × ₹130".
+ * `money` formats rupees (passed in: this file has no formatting).
+ */
+export function timeWords(t: Pick<TimePrice, 'short' | 'days' | 'dayRate' | 'extraHours' | 'extraHourRate'>, money: (n: number) => string): string[] {
+  const days =
+    t.short && t.days === 1
+      ? `One price for the trip (he is home the same day)`
+      : `${t.days} × 24 h of the driver’s time × ${money(t.dayRate)}`;
+  return t.extraHours > 0 ? [days, `${t.extraHours} h past ${t.days === 1 ? 'the 24 h' : 'them'} × ${money(t.extraHourRate)}`] : [days];
 }
 
 /** Hours of driving for a distance, at averageKmh. */
@@ -498,11 +435,13 @@ export function homeTravelHours(dest: Destination | undefined, city: PickupCity)
 export type HomeWay = {
   /** Typical hours on board (homeTravelHours). Left out: the distance at busKmh. */
   hours?: number;
+  /** The average wait from the drop until he boards. Left out: stationHours. */
+  wait?: number;
 };
 
-/** The allowance for the way home from a destination to a pickup city. */
+/** The allowance for the way home from a destination to a pickup city: the average wait and ride. */
 export function homeWay(dest: Destination, city: PickupCity): HomeWay {
-  return { hours: homeTravelHours(dest, city) ?? 0 };
+  return { hours: homeTravelHours(dest, city) ?? 0, ...(dest.home.wait !== undefined && { wait: dest.home.wait }) };
 }
 
 /**
@@ -582,9 +521,9 @@ export function planTrip(
   const fullDays = extraDays > 0 ? booked : full + (roundUp ? 1 : 0);
   const extraHours = extraDays > 0 || roundUp ? 0 : leftover;
 
-  // The way home (the allowance): getting to the station, then the typical hours home.
+  // The way home (the allowance): the average wait for his train (or getting to the station), then the ride home.
   const dropAt = lastDayAt + (nonstop ? 0 : extraDays * 24);
-  const leaveAt = dropAt + rules.stationHours;
+  const leaveAt = dropAt + (way.wait ?? rules.stationHours);
   const homeAt = leaveAt + (way.hours || oneWay / rules.busKmh);
   return {
     ...base,
@@ -621,7 +560,7 @@ export function withReturn(plan: TripPlan, leaveAt: number, homeAt: number, wait
 }
 
 /**
- * The way home's charge in words: "2 days × ₹1,200 (1 day + 14 h; more than
+ * Quotes and bills from before 8 Nov 2026 (by the hours): the way home's charge in words: "2 days × ₹1,200 (1 day + 14 h; more than
  * 6 h left over = a full day)", "1 day × ₹1,200 + 5 h × ₹120", "6 h × ₹120".
  * `money` formats rupees (passed in: this file has no formatting).
  */
@@ -644,7 +583,7 @@ export function returnWords(
 }
 
 /**
- * What `hours` of the way home cost: each full 24 hours is a day
+ * Quotes and bills from before 8 Nov 2026 (by the hours): what `hours` of the way home cost: each full 24 hours is a day
  * (`maxPerDay`); the hours left over are `rate` each up to `fullDayAfter`,
  * and more than that count as one more day (never more than a day).
  *   6 → 6 × ₹120 = ₹720;  8 → ₹1,200;  32 → ₹1,200 + ₹1,200;  56 → ₹3,600.
@@ -659,109 +598,132 @@ export function returnCost(hours: number, rate: number, maxPerDay: number, fullD
 
 /* ----------------------------------------------------------- estimate ---- */
 
-type Money = { from: number; to: number };
 export type Estimate = {
+  /** What the customer sees: one number for a place in the list, a range for a place not in it. */
   from: number;
   to: number;
-  /** The full days at dayRate, plus the extra driving hours. */
-  driving: Money;
-  /** The extra driving hours alone (a drive shorter than a day: its whole charge, the low end). */
-  extraCharge: number;
-  /** The way home (one-way). */
-  returnCharge: number;
-  /** One-way, away routeAfterHours or more: the route price — then from = to = route.price, and the parts above are only for reference. */
-  route?: RoutePrice;
+  /** The days charged and the price for each (one-way: the 24-hour blocks of his time). */
+  days: number;
+  dayRate: { from: number; to: number };
+  /** One-way to a place in the list (8 Nov 2026): the price for the driver's time. */
+  time?: TimePrice;
 };
 
-/** What the customer sees: a range, from the per-day price range for the distance, plus the extra hours and the way home. */
+/**
+ * What the customer sees. One-way to a place in the list: the price for the
+ * driver's time (timePrice) from the start until he is home (plan.homeAt).
+ * Round trips: the days at the day price for the distance. A place not in
+ * the list: the days at the whole span of day prices, as a range.
+ */
 export function estimate(
   rules: TripRules,
-  plan: Pick<TripPlan, 'fullDays' | 'extraHours' | 'returnHours'> & Partial<Pick<TripPlan, 'km' | 'kind' | 'homeAt' | 'waitHours'>>,
+  plan: Pick<TripPlan, 'fullDays'> & Partial<Pick<TripPlan, 'km' | 'kind' | 'homeAt'>>,
 ): Estimate {
-  const rate = dayRateFor(rules, plan.km);
-  // A one-way drive shorter than a day: by the hour, at least the minimum (₹600).
-  const short = plan.fullDays === 0 ? shortDriveCharge(rules, plan.extraHours) : undefined;
-  const extraCharge = short ? short.from : plan.extraHours * rules.extraHour;
-  const driving = short
-    ? short
-    : { from: plan.fullDays * rate.from + extraCharge, to: plan.fullDays * rate.to + extraCharge };
-  const returnCharge = returnCost(plan.returnHours, rules.returnHour, rules.returnMaxPerDay, rules.returnFullDayAfter);
-  // One-way, away long enough: one price for the route, for the days the trip needs; waiting past them by the hour.
-  const extraWait = Math.max(0, (plan.waitHours ?? 0) - rules.stationHours);
-  const route =
-    plan.kind !== 'round' && plan.homeAt !== undefined
-      ? routePrice(rules, plan.km ?? 0, plan.homeAt, plan.homeAt - extraWait)
-      : undefined;
-  if (route) return { from: route.price, to: route.price, driving, extraCharge, returnCharge, route };
-  return { from: driving.from + returnCharge, to: driving.to + returnCharge, driving, extraCharge, returnCharge };
-}
-
-/**
- * The /admin price for a route-priced drop: the route price (or the price
- * typed), the driver's days away at his day cost, and what is left. The
- * customer's quote is saved as one day at the route price (firestore.rules
- * isQuote: with awayHours, days = 1 and nothing else charged).
- */
-export function routeQuote(input: {
-  price: number;
-  awayHours: number;
-  driverDayCost: number;
-  ticket: number;
-  partnerPercent: number;
-  minProfitPercent: number;
-  /** Hours past the days paid (waiting for his train), what the customer pays for them, the driver's pay an hour and the most of it for each 24 h. */
-  extraHours?: number;
-  extraCharge?: number;
-  driverHourPay?: number;
-  driverMaxPerDay?: number;
-}): {
-  total: number;
-  days: number;
-  driverPay: number;
-  /** The driver's pay for the hours past the days paid (in driverPay). */
-  driverExtraPay: number;
-  partnerPay: number;
-  profit: number;
-  profitPercent: number;
-  ok: boolean;
-} {
-  const charged = whole(input.price) + whole(input.extraCharge ?? 0);
-  const days = Math.max(1, Math.ceil(whole(input.awayHours) / 24));
-  const dayCost = whole(input.driverDayCost);
-  const driverExtraPay =
-    whole(input.extraHours ?? 0) > 0
-      ? returnCost(whole(input.extraHours ?? 0), whole(input.driverHourPay ?? 0), Math.min(dayCost, whole(input.driverMaxPerDay ?? dayCost) || dayCost), 24)
-      : 0;
-  const driverPay = days * dayCost + driverExtraPay;
-  const partnerPay = Math.round((charged * Math.min(50, Math.max(0, input.partnerPercent))) / 100);
-  const profit = charged - driverPay - partnerPay;
-  const profitPercent = charged > 0 ? Math.round((profit / charged) * 1000) / 10 : 0;
-  return {
-    total: charged + whole(input.ticket),
-    days,
-    driverPay,
-    driverExtraPay,
-    partnerPay,
-    profit,
-    profitPercent,
-    ok: charged > 0 && profitPercent + 1e-9 >= input.minProfitPercent,
-  };
+  const time = plan.kind !== 'round' && plan.homeAt !== undefined ? timePrice(rules, plan.km ?? 0, plan.homeAt) : undefined;
+  if (time) return { from: time.price, to: time.price, days: time.days, dayRate: { from: time.dayRate, to: time.dayRate }, time };
+  const dayRate = dayRateFor(rules, plan.km);
+  const days = Math.max(1, Math.floor(plan.fullDays) || 0);
+  return { from: days * dayRate.from, to: days * dayRate.to, days, dayRate };
 }
 
 /* -------------------------------------------------------------- quote ---- */
 
-export type QuoteInput = {
+const whole = (n: number) => Math.max(0, Math.round(Number.isFinite(n) ? n : 0));
+const nearest = (n: number, step: number) => Math.round(n / step) * step;
+
+/** The profit band the team keeps (site-settings.ts outstation): the % the price is worked out with, and the least and the most. */
+export type ProfitBand = {
+  /** What the price is worked out with. */
+  targetProfitPercent: number;
+  minProfitPercent: number;
+  maxProfitPercent: number;
+};
+
+export type TimeQuoteInput = ProfitBand & {
+  /** One-way road km to the place. */
+  km: number;
+  /** Hours from the start until he is home: the plan's (the average wait and ride, or the train's). */
+  hours: number;
+  /** What this driver asked for each 24 hours of his time (up to 160 km: for the trip). */
+  driverDayCost: number;
+  /** What he gets for each hour past the 24-hour blocks. */
+  driverHourPay: number;
+  /** The customer's price for each 24 h, if the team types one (0 or left out: from the driver's cost). */
+  dayRate?: number;
+  /** Bus/train ticket home if we bought it — passed straight through, no profit on it. */
+  ticket: number;
+  /** % of the booking paid to a partner who sent the customer (0 if none). */
+  partnerPercent: number;
+};
+
+export type TimeQuote = {
+  /** What the customer pays for the driver's time (the 24-hour blocks and the hours past them). */
+  time: TimePrice;
+  /** time.price + ticket — the number to tell the customer. */
+  total: number;
+  /** The driver's pay: his cost for each block, his hourly pay for the hours past them. Admin-only. */
+  driverPay: number;
+  partnerPay: number;
+  profit: number;
+  /** profit as % of time.price, one decimal. */
+  profitPercent: number;
+  /** Below minProfitPercent or above maxProfitPercent. */
+  low: boolean;
+  high: boolean;
+  ok: boolean;
+  /** The price customers were shown for the same hours (the estimate). */
+  shown: TimePrice;
+};
+
+/**
+ * The /admin price for a one-way drop (8 Nov 2026): the driver's cost for
+ * each 24 hours of his time and his pay an hour past them, and on top the
+ * profit (targetProfitPercent, and a partner's commission if a partner sent
+ * the customer) — to the nearest ₹50 a day and ₹10 an hour, so the profit stays
+ * between minProfitPercent and maxProfitPercent. Or the day price the team
+ * types. The blocks are counted at the customer's rates and paid the same to
+ * the driver. Undefined without the km or a price.
+ */
+export function timeQuote(rules: TripRules, input: TimeQuoteInput): TimeQuote | undefined {
+  const cost = whole(input.driverDayCost);
+  const hourPay = whole(input.driverHourPay);
+  const margin = Math.min(60, Math.max(0, input.targetProfitPercent)) / 100;
+  const partner = Math.min(30, Math.max(0, input.partnerPercent)) / 100;
+  const keep = 1 - margin - partner;
+  const dayRate = whole(input.dayRate ?? 0) || nearest(cost / keep, 50);
+  const extraHour = hourPay > 0 ? nearest(hourPay / keep, 10) : rules.extraHour;
+  if (!(dayRate > 0)) return undefined;
+  const time = timePrice(rules, input.km, input.hours, { dayRate, extraHour });
+  const shown = timePrice(rules, input.km, input.hours);
+  if (!time || !shown) return undefined;
+  const driverPay = time.days * cost + time.extraHours * hourPay;
+  const partnerPay = Math.round(time.price * partner);
+  const profit = time.price - driverPay - partnerPay;
+  const profitPercent = time.price > 0 ? Math.round((profit / time.price) * 1000) / 10 : 0;
+  const low = profitPercent + 1e-9 < input.minProfitPercent;
+  const high = profitPercent - 1e-9 > input.maxProfitPercent;
+  return {
+    time,
+    total: time.price + whole(input.ticket),
+    driverPay,
+    partnerPay,
+    profit,
+    profitPercent,
+    low,
+    high,
+    ok: !low && !high,
+    shown,
+  };
+}
+
+export type QuoteInput = Partial<ProfitBand> & {
   /** What this driver charges for one outstation day. */
   driverDayCost: number;
-  /** What the driver gets per hour of his way home (at most 10 of them in any 24 hours). */
-  driverReturnHourPay: number;
-  /** Full days at the day rate. */
+  /** Days of the trip. */
   days: number;
-  /** One-way: hours from the drop until he is home. */
-  returnHours: number;
-  /** Driving hours beyond the full days (and any overtime), summed over the trip. */
+  /** Driving hours beyond hoursPerDay a day, summed over the trip. */
   extraHours: number;
-  /** Bus/train ticket home — passed straight through, no profit on it. */
+  /** Bus/train ticket — passed straight through, no profit on it. */
   ticket: number;
   /** % of the booking paid to a partner who sent the customer (0 if none). */
   partnerPercent: number;
@@ -773,15 +735,12 @@ export type QuoteInput = {
 
 export type Quote = {
   dayRate: number;
-  /** The full days charged (0 for a drive shorter than a day). */
   days: number;
-  /** Customer price per hour of the way home: the driver's pay plus the profit, never below returnHour. */
-  returnHourRate: number;
-  /** The extra driving hours: hours × extraHourRate, but a drive shorter than a day never below the short-drive price. */
-  extraCharge: number;
-  /** The way home, to the customer, with the daily maximum. */
-  returnCharge: number;
+  /** The extra driving hours charged (0 when more than extraFullDayAfter made them one more day). */
+  extraHours: number;
   extraHourRate: number;
+  /** The extra driving hours × extraHourRate, never more than a day. */
+  extraCharge: number;
   /** Driver charges the customer pays, before the ticket. */
   charges: number;
   /** charges + ticket — the number to tell the customer. */
@@ -791,59 +750,43 @@ export type Quote = {
   profit: number;
   /** profit as % of charges, one decimal. */
   profitPercent: number;
-  /** profitPercent >= minProfitPercent. */
+  /** Inside the profit band (minProfitPercent … maxProfitPercent). */
   ok: boolean;
-  /** The day or return-hour rate is above what customers were shown. */
+  /** The day rate is above what customers were shown. */
   aboveShownRange: boolean;
 };
 
-const roundUpTo = (n: number, step: number) => Math.ceil(n / step - 1e-9) * step;
-const whole = (n: number) => Math.max(0, Math.round(Number.isFinite(n) ? n : 0));
-
 /**
- * The exact price for the call: the driver's real day cost plus the minimum
- * profit, rounded up to the next ₹50 a day (₹10 an hour for extra driving
- * hours and the way home). The way home keeps the same daily maximum in hours
- * as customers were shown (returnMaxPerDay ÷ returnHour, 10), for the driver
- * and the customer alike.
+ * The exact price for a round trip on the call: the driver's real day cost
+ * and the profit on top (targetProfitPercent; minProfitPercent if left out), to
+ * the nearest ₹50 a day (₹10 an hour for driving beyond hoursPerDay a day,
+ * never below extraHour). More than extraFullDayAfter extra hours are one
+ * more day.
  */
 export function quote(rules: TripRules, input: QuoteInput): Quote {
-  const back = whole(input.returnHours);
   const typedHours = whole(input.extraHours);
-  // More than extraFullDayAfter driving hours left over are one more full day.
   const roundUp = typedHours > (rules.extraFullDayAfter ?? 24);
   const hours = roundUp ? 0 : typedHours;
-  // 0 full days is a drive shorter than a day, priced by the hour; nothing at all is one day.
-  const days = Math.min(60, whole(input.days) + (roundUp ? 1 : 0) || (hours > 0 ? 0 : 1));
+  const days = Math.min(60, Math.max(1, whole(input.days) + (roundUp ? 1 : 0)));
   const cost = whole(input.driverDayCost);
-  const backPay = whole(input.driverReturnHourPay);
-  const margin = Math.min(90, Math.max(0, input.minProfitPercent)) / 100;
-  const partner = Math.min(50, Math.max(0, input.partnerPercent)) / 100;
+  const margin = Math.min(60, Math.max(0, input.targetProfitPercent ?? input.minProfitPercent)) / 100;
+  const partner = Math.min(30, Math.max(0, input.partnerPercent)) / 100;
 
-  // Price so that what is left after the driver AND the partner is still the margin.
+  // Price so that what is left after the driver AND the partner is the margin.
   const keep = 1 - margin - partner;
-  const dayRate = roundUpTo(cost / keep, 50);
+  const dayRate = Math.max(50, nearest(cost / keep, 50));
   const hourCost = cost / rules.hoursPerDay;
-  const extraHourRate = Math.max(rules.extraHour, roundUpTo(hourCost / keep, 10));
-  const returnHourRate = Math.max(rules.returnHour, roundUpTo(backPay / keep, 10));
-  const capHours = rules.returnMaxPerDay / rules.returnHour;
-  const returnCharge = returnCost(back, returnHourRate, returnHourRate * capHours, rules.returnFullDayAfter);
-
-  // A drive shorter than a day never costs less than the minimum customers were shown (₹600).
-  const short = days === 0 && hours > 0 ? shortDriveCharge(rules, hours) : undefined;
-  const extraCharge = Math.max(hours * extraHourRate, short?.from ?? 0);
-  const charges = days * dayRate + returnCharge + extraCharge;
-  const driverPay = Math.round(
-    days * cost + returnCost(back, backPay, backPay * capHours, rules.returnFullDayAfter) + hours * hourCost,
-  );
+  const extraHourRate = Math.max(rules.extraHour, nearest(hourCost / keep, 10));
+  const extraCharge = Math.min(hours * extraHourRate, dayRate);
+  const charges = days * dayRate + extraCharge;
+  const driverPay = Math.round(days * cost + Math.min(hours * hourCost, cost));
   const partnerPay = Math.round(charges * partner);
   const profit = charges - driverPay - partnerPay;
   const profitPercent = charges > 0 ? Math.round((profit / charges) * 1000) / 10 : 0;
   return {
     dayRate,
     days,
-    returnHourRate,
-    returnCharge,
+    extraHours: hours,
     extraHourRate,
     extraCharge,
     charges,
@@ -852,11 +795,8 @@ export function quote(rules: TripRules, input: QuoteInput): Quote {
     partnerPay,
     profit,
     profitPercent,
-    ok: profitPercent + 1e-9 >= input.minProfitPercent,
-    aboveShownRange:
-      (days > 0 && dayRate > dayRateFor(rules, input.km).to) ||
-      (short !== undefined && extraCharge > short.to) ||
-      (back > 0 && returnHourRate > rules.returnHour),
+    ok: profitPercent + 1e-9 >= input.minProfitPercent && profitPercent - 1e-9 <= (input.maxProfitPercent ?? 100),
+    aboveShownRange: dayRate > dayRateFor(rules, input.km).to,
   };
 }
 
@@ -923,6 +863,13 @@ export type BillInput = TripTimes & {
   /** Minutes of an hour not charged (site-settings.ts outstation.graceMinutes). */
   graceMinutes: number;
   /**
+   * One-way, priced by the driver's time (quotes from 8 Nov 2026, and every
+   * one-way drop to a known place without a quote): the km. The bill is then
+   * his time from the start until he is home in 24-hour blocks at dayRate,
+   * the hours past them at extraHourRate (timePrice). Left out: as below.
+   */
+  time?: { km: number };
+  /**
    * One-way at a route price (the agreed price, or the estimate's): `price`
    * and the hours away it was planned for. The bill is then that price for
    * the days paid (awayHours, each started 24 h); the hours he was away past
@@ -949,12 +896,18 @@ export type Bill = {
   returnHourRate: number;
   ticket: number;
   amount: number;
+  /** Priced by the driver's time: the km, the whole hours from the start until he was home, and whether he was home the same day (up to 160 km). */
+  time?: { km: number; hours: number; short: boolean };
   /**
-   * At a route price: the planned and the real hours away, the km and the days paid. (Then days = 1 at
+   * At a route price (before 8 Nov 2026): the planned and the real hours away, the km and the days paid. (Then days = 1 at
    * dayRate = the price; extraHours = the hours past the days paid, at extraHourRate = the way-home rate.)
    */
   route?: { awayHours: number; realAwayHours: number; km: number; paidDays?: number };
 };
+
+/** A saved quote or bill priced by the driver's time (from 8 Nov 2026): the km, and no route hours or way-home charge. */
+export const pricedByTime = (q: { km?: number; awayHours?: number; returnHours: number; returnCharge: number }): boolean =>
+  Boolean(q.km && q.km > 0 && !q.awayHours && !q.returnHours && !q.returnCharge);
 
 const minutesBetween = (a: number | undefined, b: number | undefined) =>
   a === undefined || b === undefined || !Number.isFinite(a) || !Number.isFinite(b) ? 0 : Math.max(0, Math.floor((b - a) / 60000));
@@ -962,6 +915,9 @@ const minutesBetween = (a: number | undefined, b: number | undefined) =>
 /**
  * The FINAL bill from the real times, with the agreed rates. The same rules
  * as the estimate, on the clock instead of the prediction:
+ *   - One-way by the driver's time (`time`): start → home in 24-hour blocks,
+ *     the hours past them by the hour, never more than one more day.
+ *   - Otherwise (round trips, and quotes from before 8 Nov 2026):
  *   - Driving (one-way: start → drop; round trip: start → back): billDays.
  *     A round trip is at least one day.
  *   - The extra hours never cost more than one more day.
@@ -974,7 +930,29 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
   const driveMinutes = minutesBetween(input.startAt, driveEnd);
   const returnMinutes = oneWay ? minutesBetween(driveEnd, input.homeAt) : 0;
 
-  // A route price: the price for the days paid; waiting or delays use the time left in them first,
+  // The driver's time (8 Nov 2026): start → home, in 24-hour blocks at the agreed price.
+  if (oneWay && input.time && input.time.km > 0 && whole(input.dayRate) > 0) {
+    const hours = chargeHours(minutesBetween(input.startAt, input.homeAt), input.graceMinutes);
+    const t = timePrice(rules, input.time.km, hours, { dayRate: whole(input.dayRate), extraHour: whole(input.extraHourRate) })!;
+    const ticket = whole(input.ticket);
+    return {
+      driveMinutes,
+      days: t.days,
+      extraHours: t.extraHours,
+      extraCharge: t.extraCharge,
+      returnMinutes,
+      returnHours: 0,
+      returnCharge: 0,
+      dayRate: t.dayRate,
+      extraHourRate: t.extraHourRate,
+      returnHourRate: 0,
+      ticket,
+      amount: t.price + ticket,
+      time: { km: t.km, hours: t.hours, short: t.short },
+    };
+  }
+
+  // A route price (before 8 Nov 2026): the price for the days paid; waiting or delays use the time left in them first,
   // and only the hours past them cost extra — the way-home rate, at most the price per day for each 24 h.
   if (oneWay && input.route && input.route.price > 0) {
     const realAwayHours = chargeHours(minutesBetween(input.startAt, input.homeAt), input.graceMinutes);
@@ -1013,11 +991,8 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
   const extraHourRate = whole(input.extraHourRate);
   const returnHourRate = whole(input.returnHourRate);
   const ticket = whole(input.ticket);
-  // One-way, shorter than a day: the agreed hourly rate, at least the minimum (₹600).
-  const extraCharge =
-    oneWay && days === 0 && hours > 0
-      ? Math.min(shortDriveCharge(rules, hours, extraHourRate).from, dayRate)
-      : Math.min(hours * extraHourRate, dayRate);
+  // The extra hours never cost more than one more day.
+  const extraCharge = Math.min(hours * extraHourRate, dayRate);
   const returnHours = oneWay ? chargeHours(returnMinutes, input.graceMinutes) : 0;
   const capHours = rules.returnMaxPerDay / rules.returnHour;
   const returnCharge = returnCost(returnHours, returnHourRate, returnHourRate * capHours, rules.returnFullDayAfter);
@@ -1043,7 +1018,7 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
  * Everything the mobile app needs for its estimate, worked out here once so
  * the app and the website can never disagree: for each destination its
  * railway stations (for the train lookup), and from each pickup city the
- * km, the hours of driving, the average way home (`homeHours`), and — for a 7 AM start on an
+ * km, the hours of driving, the average wait for his train (`wait`) and ride home (`homeHours`), and — for a 7 AM start on an
  * unknown day — the calendar days and the hours of the way home; plus the
  * fewest days for a round trip. The app repeats planTrip for the customer's
  * own start (lib/outstation.ts is the reference).
@@ -1070,6 +1045,8 @@ export function destinationTable(rules: TripRules) {
               days: one.minDays,
               returnHours: one.returnHours,
               driveHours: r3(one.driveHours),
+              // The average wait from the drop until he boards (getting to the station included).
+              wait: r3(way.wait ?? rules.stationHours),
               // The hours planTrip used (a place without a figure: by bus at busKmh).
               homeHours: r3(
                 one.homeAt !== undefined && one.leaveAt !== undefined ? one.homeAt - one.leaveAt : (way.hours ?? 0),
@@ -1083,7 +1060,7 @@ export function destinationTable(rules: TripRules) {
       PickupCity,
       {
         km: number;
-        oneWay: { days: number; returnHours: number; driveHours: number; homeHours: number };
+        oneWay: { days: number; returnHours: number; driveHours: number; wait: number; homeHours: number };
         roundDays: number;
       }
     >,

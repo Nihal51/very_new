@@ -81,11 +81,17 @@ export type BookingQuote = {
   /** The extra hours' charge (quotes from 29 Oct 2026): a drive shorter than a day at the short-drive price. Missing: extraHours × extraHourRate. */
   extraCharge?: number;
   /**
-   * A route price (quotes from 1 Nov 2026, lib/outstation.ts routePrice):
-   * the hours away it was planned for and the km. Then days = 1 at
-   * dayRate = the route price, and nothing else is charged but the ticket.
+   * A route price (quotes from 1 Nov to 7 Nov 2026): the hours away it was
+   * planned for and the km. Then days = 1 at dayRate = the route price, and
+   * nothing else is charged but the ticket.
    */
   awayHours?: number;
+  /**
+   * The one-way km. Without awayHours (quotes from 8 Nov 2026,
+   * lib/outstation.ts pricedByTime): priced by the driver's time — days =
+   * the 24-hour blocks at dayRate, extraHours past them at extraHourRate, no
+   * way-home charge.
+   */
   km?: number;
   ticket: number;
   at?: Date;
@@ -107,8 +113,9 @@ export type BookingBill = {
   returnHourRate: number;
   /** The way home with the daily maximum applied. */
   returnCharge: number;
-  /** A route price (bills from 1 Nov 2026): the planned hours away and the km; days = 1 at the price, extraHours = hours late. */
+  /** A route price (bills from 1 Nov to 7 Nov 2026): the planned hours away and the km; days = 1 at the price, extraHours = hours late. */
   awayHours?: number;
+  /** The one-way km; without awayHours (from 8 Nov 2026): priced by the driver's time (24-hour blocks, the hours past them). */
   km?: number;
   ticket: number;
   /** Driven day and night (every 12 h a day). */
@@ -300,7 +307,7 @@ export function toBill(v: unknown): BookingBill | null {
   if (keys.some((k) => Number.isNaN(n(k)))) return null;
   return {
     ...(Object.fromEntries(keys.map((k) => [k, n(k)])) as Record<(typeof keys)[number], number>),
-    // A route price (bills from 1 Nov 2026): the planned hours away and the km.
+    // A route price (bills from 1 Nov 2026): the planned hours away and the km; the km alone: the driver's time.
     ...(n('awayHours') > 0 && { awayHours: n('awayHours') }),
     ...(n('km') > 0 && { km: n('km') }),
     nonstop: b.nonstop === true,

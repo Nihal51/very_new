@@ -219,9 +219,9 @@ export const pricesHi: { name: string; price: string; unit: string }[] = [
     unit: m.premiumJoiningFeePercent > 0 ? 'प्रति माह + एक बार जॉइनिंग फ़ीस' : 'प्रति माह, कोई जॉइनिंग फ़ीस नहीं',
   },
   {
-    name: 'वन-वे ड्रॉप के बाद ड्राइवर की घर वापसी — कार पहुँचाने से घर पहुँचने तक, ट्रेन का इंतज़ार भी',
-    price: `${priceText.outstationReturnHour}/घंटा`,
-    unit: `हर 24 घंटे ${priceText.outstationReturnMax}; बचे घंटे ${settings.outstation.returnFullDayAfterHours} से ज़्यादा तो पूरा दिन; लंबी ड्रॉप (${settings.outstation.routeAfterHours} घंटे या ज़्यादा) में रूट की एक कीमत में शामिल (ट्रेन का इंतज़ार चुकाए गए दिनों के बचे समय में मुफ़्त; उसके बाद ${priceText.outstationReturnHour}/घंटा, 24 घंटे में ज़्यादा से ज़्यादा ${priceText.outstationReturnMax}); टिकट आप बुक करें`,
+    name: 'वन-वे ड्रॉप — ड्राइवर का समय, निकलने से घर पहुँचने तक (ड्राइव, ट्रेन का इंतज़ार और घर वापसी)',
+    price: `हर 24 घंटे ${priceText.outstation}`,
+    unit: `दूरी के हिसाब से; ${priceText.sameDayKm} तक (उसी दिन घर) पूरी ट्रिप की एक कीमत ${priceText.sameDayDrop}; 24 घंटे के बाद ${priceText.outstationExtraHour}/घंटा, एक दिन से ज़्यादा नहीं; टिकट आप बुक करें`,
   },
   { name: 'शादी / इवेंट', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
 ];

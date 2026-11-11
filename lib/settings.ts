@@ -40,33 +40,29 @@ export const priceText = {
   oneHour: rupees(p.oneHour),
   threeHours: rupees(p.threeHours),
   fullDay: rupeeRange(p.fullDay.from, p.fullDay.to),
-  /** Per day of an outstation trip or one-way drop farther than the nearby tiers (and of every long drive). */
+  /** Per 24 h of the driver's time on an outstation trip or one-way drop farther than the nearby tiers. */
   outstation: rupeeRange(p.outstation.from, p.outstation.to),
-  /** Per day of an outstation trip, nearest to farthest: "₹1,300–1,650". */
+  /** Per day of an outstation trip, nearest to farthest: "₹1,050–1,750". */
   outstationSpan: rupeeRange(Math.min(p.outstation.from, ...p.outstationNear.map((t) => t.from)), p.outstation.to),
-  /** "₹1,300–1,400 a day up to 150 km away, ₹1,450–1,550 up to 300 km, ₹1,550–1,650 farther" */
+  /** "₹1,050–1,350 a day up to 160 km away, ₹1,450–1,750 farther" */
   outstationByDistance: [
     ...p.outstationNear.map((t, i) => `${rupeeRange(t.from, t.to)}${i === 0 ? ' a day' : ''} up to ${t.upToKm} km${i === 0 ? ' away' : ''}`),
     `${rupeeRange(p.outstation.from, p.outstation.to)}${p.outstationNear.length ? ' farther' : ' a day'}`,
   ].join(', '),
-  /** Per hour the driver is still travelling home after the paid days, and the daily maximum. */
-  outstationReturnHour: rupees(settings.outstation.returnHour),
-  outstationReturnMax: rupees(settings.outstation.returnMaxPerDay),
-  /** "₹120 an hour — more than 6 hours in a day counts as a full day (₹1,200)" */
-  outstationReturnRule: `${rupees(settings.outstation.returnHour)} an hour — more than ${settings.outstation.returnFullDayAfterHours} hours in a day counts as a full day (${rupees(settings.outstation.returnMaxPerDay)})`,
+  /** A same-day one-way drop (up to the first nearby tier): "₹1,050–1,350". */
+  sameDayDrop: p.outstationNear[0] ? rupeeRange(p.outstationNear[0].from, p.outstationNear[0].to) : rupeeRange(p.outstation.from, p.outstation.to),
+  /** "160 km" — he is home the same day up to this far. */
+  sameDayKm: `${p.outstationNear[0]?.upToKm ?? 0} km`,
+  /** Each hour past the 24-hour blocks (and of driving beyond the day on a round trip). */
   outstationExtraHour: rupees(settings.outstation.extraHour),
-  /** "₹120 an hour of driving, at least ₹600" */
-  shortDrive: `${rupees(settings.outstation.shortDriveMinimum)} for the first ${settings.outstation.shortDriveHours} hours of driving, then ${rupees(settings.outstation.extraHour)} an hour`,
-  /** Longer one-way drops: the route price, in one sentence. */
-  routeRule: `${rupees(settings.outstation.routeBase)} + ₹${new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(settings.outstation.routePerKm)} a km, at least ${settings.outstation.routeMinBase > 0 ? `${rupees(settings.outstation.routeMinBase)} + ` : ''}${rupees(settings.outstation.routeMinPerDay)} and at most ${rupees(settings.outstation.routeMaxPerDay)} for each day he is away`,
-  routeAfter: `${settings.outstation.routeAfterHours} hours`,
-  /** "waiting for his train uses the time left in the days paid, at no charge; past them ₹120 an hour, at most ₹1,200 a day" */
-  routeWait: `waiting for his train uses the time left in the days paid, at no charge; past them ${rupees(settings.outstation.returnHour)} an hour, at most ${rupees(settings.outstation.returnMaxPerDay)} for each 24 hours`,
-  /** The whole one-way drop price in two sentences: short drops by the hour, longer ones by distance. */
+  /** One-way drops, in a few words: "each 24 hours of his time ₹1,450–1,750 by distance; past them ₹130 an hour, never more than a day". */
+  timeRule: `each 24 hours of his time ${rupeeRange(p.outstation.from, p.outstation.to)} by distance; the hours past them ${rupees(settings.outstation.extraHour)} each, never more than one more day`,
+  /** The whole one-way drop price (decided 8 Nov 2026): the driver's time, from when he leaves until he is home. */
   get oneWayRule() {
     return (
-      `A short drop (he is away less than ${settings.outstation.routeAfterHours} hours): ${this.shortDrive}, plus his way home — from the drop until he is home, waiting included — ${this.outstationReturnRule}. ` +
-      `A longer drop: one price for the route — ${this.routeRule}, his way home and ${this.routeWait}.`
+      `Priced by the driver’s time, from when he leaves until he is home by train or bus — the drive, waiting for his train and the ride home. ` +
+      `Up to ${this.sameDayKm} he is home the same day: one price for the trip, ${this.sameDayDrop} by distance. ` +
+      `Farther: ${this.timeRule}. If he arrives in 8 hours, the rest of the 24 covers his waiting and ride home at no extra charge.`
     );
   },
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
@@ -117,20 +113,13 @@ export const railLookupUrl = (settings.trains.lookupUrl || settings.alerts.pingU
 export const tripRules: TripRules = {
   dayRate: { from: p.outstation.from, to: p.outstation.to },
   nearRates: p.outstationNear.map((t) => ({ upToKm: t.upToKm, from: t.from, to: t.to })),
+  nearFromKm: settings.outstation.nearFromKm,
+  dayTopFromKm: settings.outstation.dayTopFromKm,
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
   extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
-  shortDrive: { minimum: settings.outstation.shortDriveMinimum, hours: settings.outstation.shortDriveHours },
-  route: {
-    afterHours: settings.outstation.routeAfterHours,
-    base: settings.outstation.routeBase,
-    perKm: settings.outstation.routePerKm,
-    minBase: settings.outstation.routeMinBase,
-    minPerDay: settings.outstation.routeMinPerDay,
-    maxPerDay: settings.outstation.routeMaxPerDay,
-  },
   hoursPerDay: settings.outstation.hoursPerDay,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,
   kmPerDay: settings.outstation.kmPerDay,

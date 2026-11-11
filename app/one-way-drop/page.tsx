@@ -11,13 +11,12 @@ import { Section } from '@/components/ui/Section';
 import { CheckIcon, CloseIcon, PhoneIcon } from '@/components/icons';
 import { breadcrumbSchema, faqSchema, oneWayDropSchema } from '@/lib/schema';
 import { pageMeta } from '@/lib/seo';
-import { priceText, rupeeRange, rupees, settings } from '@/lib/settings';
+import { priceText, rupeeRange, settings } from '@/lib/settings';
 import { formatPhone, site, telHref } from '@/lib/site';
 import { homeText, kmText, tripFor } from '@/lib/trip';
 import { DEFAULT_START_HOUR } from '@/lib/outstation';
 
 const trail = [{ name: 'One-Way Drop', path: '/one-way-drop/' }];
-const late = priceText.outstationReturnRule;
 
 export const metadata: Metadata = pageMeta({
   title: 'One-Way Drop Driver: You & Your Car to Any City',
@@ -54,6 +53,20 @@ const ROUTES = [
   .filter((t) => t.dest && t.est)
   .sort((a, b) => a.km - b.km);
 
+/** "about 13 h" — the driver's time on a route in the table (leaves → home, the route's average). */
+const awayText = (id: string) => {
+  const h = ROUTES.find((t) => t.dest?.id === id)?.est?.time?.hours;
+  return h ? `about ${h} hours` : 'a day or more';
+};
+
+/** "Same day" / "1 × 24 h + 2 h" — what a route in the table is charged. */
+const chargedText = (t: (typeof ROUTES)[number]) => {
+  const x = t.est?.time;
+  if (!x) return '';
+  if (x.short && x.days === 1) return 'Same day — one price';
+  return `${x.days} × 24 h${x.extraHours > 0 ? ` + ${x.extraHours} h` : ''}`;
+};
+
 const options = [
   {
     title: 'You and your car',
@@ -82,14 +95,15 @@ const steps = [
   },
   {
     title: 'He comes home',
-    body: `By bus or train — you book his ticket. From the drop until he is home, waiting for his train included: ${late}.`,
+    body: `By bus or train — you book his ticket. His time until he is home is in the price: ${priceText.timeRule}.`,
   },
 ];
 
 const included = [
   'A police-verified, sober, highway-experienced driver',
-  `Longer drops (he is away ${priceText.routeAfter} or more): one price for the route — ${priceText.routeRule}, his way home included`,
-  `Short drops: ${priceText.shortDrive}, plus his way home by the hour`,
+  `One price for the driver’s time, from when he leaves until he is home — ${priceText.timeRule}`,
+  `Up to ${priceText.sameDayKm} he is home the same day: one price for the trip, ${priceText.sameDayDrop} by distance`,
+  'Waiting for his train and his ride home, inside the 24-hour blocks',
   'The estimate times his train home from your start date and time',
   'Ride along or send the car alone — the same price',
 ];
@@ -97,7 +111,6 @@ const included = [
 const notIncluded = [
   'Fuel, tolls and parking',
   'His bus or train ticket home — you book it',
-  `His way home: ${late}`,
   `His meals — or ${priceText.mealAllowance} a day`,
   'His overnight stay on routes longer than a day',
 ];
@@ -105,7 +118,7 @@ const notIncluded = [
 const faqs = [
   {
     q: 'Can I travel with the driver and my car?',
-    a: `Yes. Many one-way drops are families travelling in their own car. The driver drives you to the address you give, then comes home on his own by bus or train. The price is the same whether you ride along or send the car alone: by distance — ${priceText.routeRule} for a longer drop.`,
+    a: `Yes. Many one-way drops are families travelling in their own car. The driver drives you to the address you give, then comes home on his own by bus or train. The price is the same whether you ride along or send the car alone: the driver’s time — ${priceText.timeRule}.`,
   },
   {
     q: 'Can a driver take my car to another city without me?',
@@ -113,7 +126,7 @@ const faqs = [
   },
   {
     q: 'Is the driver’s way home included?',
-    a: `On a longer drop (he is away ${priceText.routeAfter} or more) it is included in the route price, with ${priceText.routeWait}. On a short drop it is charged by the hour, from the drop until he is home — waiting for his train included: ${late}. From your start date and time the estimate works out when he drops the car, the first train home he can catch that day and when he is home (Raipur → Nagpur: about 6 hours; Raipur → Mumbai: about 23). The final bill uses the real times. You book his train or bus ticket.`,
+    a: `Yes — the price is for his time, from when he leaves until he is home: the drive, waiting for his train and the ride home. ${priceText.oneWayRule} Until you pick the date, the estimate uses the route’s average wait and ride home from the timetables (Raipur → Nagpur: ${awayText('nagpur')} in all; Raipur → Mumbai: ${awayText('mumbai')}); with your date, the train home you pick. The final bill uses the real times. You book his train or bus ticket.`,
   },
   {
     q: 'How many days will my drop take?',
@@ -135,7 +148,7 @@ export default function OneWayDropPage() {
       <PageHero
         eyebrow="One-way drop"
         title="One-way drop to another city — you and your car, or just the car"
-        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. Priced by distance — ${priceText.routeRule}, his way home included; short drops by the hour.`}
+        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. Priced by the driver’s time — ${priceText.sameDayDrop} for a same-day drop up to ${priceText.sameDayKm}; farther, ${priceText.timeRule}. His wait and his train home are included.`}
         trail={trail}
         actions={
           <>
@@ -177,7 +190,7 @@ export default function OneWayDropPage() {
         id="routes"
         eyebrow="Popular routes"
         title="One-way drops from Raipur"
-        lede={`Leaving Raipur at ${DEFAULT_START_HOUR} AM, with the regular train or bus he can catch home. Another start time or Bhilai, Durg or Bilaspur: use the price checker above.`}
+        lede={`Leaving Raipur at ${DEFAULT_START_HOUR} AM, with the route’s average wait and ride home from the timetables. Another start time or Bhilai, Durg or Bilaspur: use the price checker above.`}
       >
         <div className="border-border overflow-x-auto rounded-xl border">
           <table className="w-full text-left text-[0.9375rem]">
@@ -187,10 +200,10 @@ export default function OneWayDropPage() {
                   Destination
                 </th>
                 <th scope="col" className="hidden px-4 py-3 font-semibold sm:table-cell">
-                  Driving days
+                  Driver’s time
                 </th>
                 <th scope="col" className="hidden px-4 py-3 font-semibold sm:table-cell">
-                  Driver’s way home
+                  Charged
                 </th>
                 <th scope="col" className="px-4 py-3 text-right font-semibold">
                   Estimate
@@ -204,21 +217,18 @@ export default function OneWayDropPage() {
                     {t.dest?.name}
                     <span className="text-fg-subtle block text-xs font-normal">
                       {kmText(t.km)}
-                      {/* Phones: days and the way home under the name, the price stays in view. */}
+                      {/* Phones: his time and what is charged under the name, the price stays in view. */}
                       <span className="sm:hidden">
                         {' · '}
-                        {t.days} {t.days === 1 ? 'day' : 'days'} ·{' '}
-                        {`+${t.returnHours} h home`}
+                        {`about ${t.est?.time?.hours ?? 0} h away · ${chargedText(t)}`}
                       </span>
                     </span>
                   </th>
-                  <td className="tabular hidden px-4 py-3 sm:table-cell">{t.days}</td>
-                  <td className="text-fg-muted hidden px-4 py-3 sm:table-cell">
-                    {t.home ? <span className="block">{homeText(t.home)} (typical)</span> : null}
-                    <span className="text-fg text-xs">
-                      {`${t.returnHours} h from the drop · ${rupees(t.est?.returnCharge ?? 0)}`}
-                    </span>
+                  <td className="hidden px-4 py-3 sm:table-cell">
+                    <span className="tabular block">about {t.est?.time?.hours ?? 0} h, leaves → home</span>
+                    {t.home ? <span className="text-fg-muted block text-xs">home by {homeText(t.home)} (average)</span> : null}
                   </td>
+                  <td className="tabular text-fg-muted hidden px-4 py-3 sm:table-cell">{chargedText(t)}</td>
                   <td className="tabular px-4 py-3 text-right font-semibold whitespace-nowrap">
                     {t.est ? rupeeRange(t.est.from, t.est.to) : ''}
                   </td>
@@ -228,8 +238,8 @@ export default function OneWayDropPage() {
           </table>
         </div>
         <p className="text-fg-subtle mt-3 text-sm">
-          The way home here is a typical time. Pick your date on the booking form and the estimate looks up the real
-          trains home for that day. Fuel, tolls, parking and meals are extra; you book his ticket home. Exact price
+          His wait and ride home here are the route’s average from the timetables. Pick your date on the booking form
+          and the estimate looks up the real trains home for that day. Fuel, tolls, parking and meals are extra; you book his ticket home. Exact price
           confirmed on the call.
         </p>
       </Section>
@@ -284,7 +294,7 @@ export default function OneWayDropPage() {
         lede="Check the price above, book in a minute, or call — we confirm everything with you before the driver leaves."
       />
 
-      <JsonLd data={oneWayDropSchema({ from: settings.outstation.shortDriveMinimum })} />
+      <JsonLd data={oneWayDropSchema({ from: settings.prices.outstationNear[0]?.from ?? settings.prices.outstation.from })} />
       <JsonLd data={faqSchema(faqs)} />
       <JsonLd data={breadcrumbSchema(trail)} />
     </>

@@ -45,16 +45,21 @@ export function GET() {
       standInPerDay: monthly.standInPerDay,
       replacementDays: monthly.replacementDays,
     },
-    /* The trip estimate: rules, and for each destination its stations for
-       the train lookup (no train times — those come from `trains.lookupUrl`
-       for the date) and from each pickup city the km, the hours of driving
-       and the typical way home (lib/outstation.ts destinationTable). The app redoes
-       planTrip for the customer's start: each hoursPerDay of driving a day at
-       the day price for the distance (prices.outstationNear, else
-       prices.outstation), the rest extraHour an hour; the way home from the
-       drop: each 24 h returnMaxPerDay, the hours left over returnHour each up
-       to returnFullDayAfterHours, more = a full day. */
+    /* The trip estimate (decided 8 Nov 2026 — the driver's TIME): rules, and
+       for each destination its stations for the train lookup (no train times
+       — those come from `trains.lookupUrl` for the date) and from each pickup
+       city the km, the hours of driving, the average wait for his train and
+       the average ride home (lib/outstation.ts destinationTable). The app
+       redoes planTrip for the customer's start, then timePrice: from the
+       start until he is home, each 24 hours at the day price for the distance
+       (prices.outstationNear from nearFromKm, else prices.outstation up to
+       dayTopFromKm — dayRateFor), the hours past the blocks extraHour each,
+       never more than one more day; up to the first tier's upToKm he is home
+       the same day: one price. Round trips: the days at the day price. The
+       return* keys are for quotes from before 8 Nov 2026. */
     outstation: {
+      nearFromKm: outstation.nearFromKm,
+      dayTopFromKm: outstation.dayTopFromKm,
       hoursPerDay: outstation.hoursPerDay,
       sameDayMaxHours: outstation.sameDayMaxHours,
       extraHour: outstation.extraHour,
@@ -62,19 +67,6 @@ export function GET() {
       returnMaxPerDay: outstation.returnMaxPerDay,
       returnFullDayAfterHours: outstation.returnFullDayAfterHours,
       extraFullDayAfterHours: outstation.extraFullDayAfterHours,
-      // A one-way drive shorter than a day: extraHour an hour, at least this.
-      shortDriveMinimum: outstation.shortDriveMinimum,
-      shortDriveHours: outstation.shortDriveHours,
-      // Longer one-way drops: away routeAfterHours or more → routeBase + routePerKm × km,
-      // at least routeMinBase + routeMinPerDay and at most routeMaxPerDay a day away, to the nearest ₹50.
-      routeAfterHours: outstation.routeAfterHours,
-      routeBase: outstation.routeBase,
-      routePerKm: outstation.routePerKm,
-      routeMinBase: outstation.routeMinBase,
-      routeMinPerDay: outstation.routeMinPerDay,
-      routeMaxPerDay: outstation.routeMaxPerDay,
-      // Waiting for his train (7 Nov 2026): the time left in the days paid is free; past them returnHour an hour,
-      // at most the price per day for each 24 h.
       mealAllowance: outstation.mealAllowance,
       kmPerDay: outstation.kmPerDay,
       localWithinKm: outstation.localWithinKm,

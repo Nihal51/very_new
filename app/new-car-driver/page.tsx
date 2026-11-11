@@ -92,7 +92,7 @@ const faqs = [
   },
   {
     q: 'Can you deliver the new car to another town?',
-    a: 'Yes. If the showroom is in Raipur and home is in Bilaspur, Korba, Ambikapur or anywhere else, it is a one-way drop: priced by distance, with the driver coming back by bus or train.',
+    a: 'Yes. If the showroom is in Raipur and home is in Bilaspur, Korba, Ambikapur or anywhere else, it is a one-way drop: priced by the driver’s time until he is back home by bus or train.',
   },
   {
     q: 'Who drives the car after that, until I learn?',

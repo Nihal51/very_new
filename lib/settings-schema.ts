@@ -36,34 +36,26 @@ export type SiteSettings = {
     oneHour: number;
     threeHours: number;
     fullDay: Range;
-    /** Per day of an outstation trip or one-way drop farther than the last nearby tier. */
+    /** Per 24 h of the driver's time on an outstation trip or one-way drop, farther than the last nearby tier. */
     outstation: Range;
-    /** Cheaper days for places closer by: one-way road km from the pickup city, nearest first. */
+    /** Cheaper days for places closer by: one-way road km from the pickup city, nearest first (the first: same-day drops). */
     outstationNear: readonly NearRate[];
     nightFrom: number;
   };
   /** Trip rules for the outstation estimate (lib/outstation.ts). */
   outstation: {
+    /** The day price rises with the distance: from the first tier's `from` at nearFromKm … */
+    nearFromKm: number;
+    /** … to prices.outstation.to at dayTopFromKm (lib/outstation.ts dayRateFor). */
+    dayTopFromKm: number;
     hoursPerDay: number;
     /** A round trip with up to this many hours of driving there and back is back within the 24 hours: one day. */
     sameDayMaxHours: number;
+    /** Per hour past the 24-hour blocks of a one-way drop; per driving hour beyond hoursPerDay on a round trip. */
     extraHour: number;
-    /** Driving hours left over after the full days: more than this count as a full day. */
+    /** Round trips: driving hours left over after the full days — more than this count as a full day. */
     extraFullDayAfterHours: number;
-    /** A one-way drive shorter than a day: extraHour an hour, but at least this much for the driving. */
-    shortDriveMinimum: number;
-    /** The hours of driving shortDriveMinimum covers; each hour after them is extraHour. */
-    shortDriveHours: number;
-    /** Longer one-way drops: away this many hours or more → the route price. */
-    routeAfterHours: number;
-    /** Route price: routeBase + routePerKm × km, at least routeMinBase + routeMinPerDay and at most routeMaxPerDay a day away. */
-    routeBase: number;
-    routePerKm: number;
-    routeMinBase: number;
-    routeMinPerDay: number;
-    /** Route price: at most this for each day (24 h) away. */
-    routeMaxPerDay: number;
-    /** Per hour the driver is still travelling home after the paid days. */
+    /** Quotes and bills from before 8 Nov 2026: per hour of his way home. */
     returnHour: number;
     /** The most return hours cost in any 24 hours. */
     returnMaxPerDay: number;
@@ -79,7 +71,11 @@ export type SiteSettings = {
     graceMinutes: number;
     localWithinKm: number;
     /** Used only by the /admin quote calculator; not published to the app. */
+    targetProfitPercent: number;
     minProfitPercent: number;
+    maxProfitPercent: number;
+    /** The build's profit guard (checkDriverCosts): no price may earn less than this on what drivers cost. */
+    guardProfitPercent: number;
   };
   monthly: {
     basic: Range;
@@ -110,7 +106,7 @@ export type SiteSettings = {
 /**
  * @param driverCosts optional, from the DRIVER_COSTS build secret (never in this
  *   public repo): what drivers cost, e.g. "outstation=1000-1100; fullDay=700".
- *   When set, a price that would earn less than outstation.minProfitPercent on
+ *   When set, a price that would earn less than outstation.guardProfitPercent on
  *   those costs fails the build — a typo like 1150 for 1450 never goes live.
  */
 export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettings {
@@ -216,20 +212,13 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   count('outstation.stationHours', o.stationHours, 6);
   count('outstation.graceMinutes', o.graceMinutes, 59);
   count('outstation.extraFullDayAfterHours', o.extraFullDayAfterHours, 23);
-  price('outstation.shortDriveMinimum', o.shortDriveMinimum);
-  count('outstation.shortDriveHours', o.shortDriveHours, 11);
-  if (o.shortDriveHours < 1) problems.push('outstation.shortDriveHours must be at least 1');
-  count('outstation.routeAfterHours', o.routeAfterHours, 72);
-  price('outstation.routeBase', o.routeBase);
-  if (!(typeof o.routePerKm === 'number' && o.routePerKm > 0 && o.routePerKm <= 100))
-    problems.push('outstation.routePerKm must be rupees a km, more than 0 and at most 100 (e.g. 4.5)');
-  count('outstation.routeMinBase', o.routeMinBase, 100000);
-  price('outstation.routeMinPerDay', o.routeMinPerDay);
-  price('outstation.routeMaxPerDay', o.routeMaxPerDay);
-  if (o.routeMaxPerDay < o.routeMinBase + o.routeMinPerDay)
-    problems.push('outstation.routeMaxPerDay must be at least routeMinBase + routeMinPerDay (the most a day cannot be below the least)');
-  if (o.shortDriveMinimum > s.prices.outstation.from)
-    problems.push('outstation.shortDriveMinimum should not cost more than an outstation day');
+  count('outstation.nearFromKm', o.nearFromKm, 1000);
+  count('outstation.dayTopFromKm', o.dayTopFromKm, 3000);
+  const firstTier = near[0]?.upToKm ?? 0;
+  if (near.length && o.nearFromKm >= firstTier)
+    problems.push(`outstation.nearFromKm (${o.nearFromKm}) must be closer than the first prices.outstationNear tier (${firstTier} km)`);
+  if (o.dayTopFromKm <= (near[near.length - 1]?.upToKm ?? 0))
+    problems.push('outstation.dayTopFromKm must be farther than the last prices.outstationNear tier');
   if (o.extraFullDayAfterHours >= o.hoursPerDay)
     problems.push('outstation.extraFullDayAfterHours must be less than hoursPerDay');
   const tr = s.trains;
@@ -243,7 +232,12 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   count('trains.maxOptions', tr.maxOptions, 10);
   if (tr.maxOptions < 1) problems.push('trains.maxOptions must be at least 1');
   count('outstation.localWithinKm', o.localWithinKm, 150);
+  count('outstation.targetProfitPercent', o.targetProfitPercent, 60);
   count('outstation.minProfitPercent', o.minProfitPercent, 60);
+  count('outstation.maxProfitPercent', o.maxProfitPercent, 60);
+  count('outstation.guardProfitPercent', o.guardProfitPercent, 60);
+  if (!(o.minProfitPercent <= o.targetProfitPercent && o.targetProfitPercent <= o.maxProfitPercent))
+    problems.push('outstation: minProfitPercent ≤ targetProfitPercent ≤ maxProfitPercent');
   if (o.extraHour * o.hoursPerDay > s.prices.outstation.to * 2)
     problems.push('outstation.extraHour looks too high for the day price — is a 0 too many?');
   if (o.returnMaxPerDay > s.prices.outstation.to)
@@ -281,9 +275,11 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
 
 /**
  * The optional profit guard (see checkSettings). Format, one price per part:
- *   outstation=1000-1100; fullDay=700-750; oneHour=200
+ *   outstation=1000-1100; outstationNear=700-800; fullDay=700-750; oneHour=200
  * A cost range checks both ends of a price range; a single cost checks the
- * lowest price. Unknown names and bad parts are reported, never ignored.
+ * lowest price. outstationNear checks each nearby tier (same-day drops pay
+ * the driver for the trip, 8 Nov 2026). Unknown names and bad parts are
+ * reported, never ignored.
  *
  * The repo is public and so are its build logs, so the messages never print a
  * cost — only which price is too low.
@@ -291,7 +287,7 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
 export function checkDriverCosts(s: SiteSettings, driverCosts?: string): string[] {
   if (!driverCosts?.trim()) return [];
   const problems: string[] = [];
-  const keep = 1 - s.outstation.minProfitPercent / 100;
+  const keep = 1 - s.outstation.guardProfitPercent / 100;
   const prices = s.prices as unknown as Record<string, number | Range>;
   const parts = driverCosts.split(/[;,\n]+/).map((p) => p.trim()).filter(Boolean);
   parts.forEach((part, i) => {
@@ -303,6 +299,18 @@ export function checkDriverCosts(s: SiteSettings, driverCosts?: string): string[
     const name = m[1] ?? '';
     const a = m[2] ?? '0';
     const b = m[3];
+    const low = (price: number, cost: number) => price * keep < cost;
+    const pct = `${s.outstation.guardProfitPercent}%`;
+    // The nearby tiers (same-day drops): each must earn the margin on what a driver costs for the trip.
+    if (name === 'outstationNear') {
+      s.prices.outstationNear.forEach((t, j) => {
+        if (low(t.from, Number(a)))
+          problems.push(`prices.outstationNear[${j + 1}].from (${t.from}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
+        if (b !== undefined && low(t.to, Number(b)))
+          problems.push(`prices.outstationNear[${j + 1}].to (${t.to}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
+      });
+      return;
+    }
     const sold = prices[name];
     if (sold === undefined || Array.isArray(sold)) {
       const names = Object.keys(prices).filter((k) => !Array.isArray(prices[k]));
@@ -310,20 +318,10 @@ export function checkDriverCosts(s: SiteSettings, driverCosts?: string): string[
       return;
     }
     const at = typeof sold === 'number' ? { from: sold, to: sold } : sold;
-    const low = (price: number, cost: number) => price * keep < cost;
-    const pct = `${s.outstation.minProfitPercent}%`;
     if (low(at.from, Number(a)))
       problems.push(`prices.${name}${typeof sold === 'number' ? '' : '.from'} (${at.from}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
     if (b !== undefined && low(at.to, Number(b)))
       problems.push(`prices.${name}.to (${at.to}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
-    // The nearby outstation days pay the same driver: each must earn the margin too.
-    if (name === 'outstation')
-      s.prices.outstationNear.forEach((t, j) => {
-        if (low(t.from, Number(a)))
-          problems.push(`prices.outstationNear[${j + 1}].from (${t.from}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
-        if (b !== undefined && low(t.to, Number(b)))
-          problems.push(`prices.outstationNear[${j + 1}].to (${t.to}) earns less than ${pct} on what drivers cost (the DRIVER_COSTS secret) — raise it`);
-      });
   });
   return problems;
 }

@@ -94,61 +94,55 @@ export const settings = {
     oneHour: 300,
     threeHours: 600,
     fullDay: { from: 1000, to: 1200 }, //     Local Full Day, 8 hours
-    outstation: { from: 1550, to: 1650 }, //  per DAY of an outstation trip or one-way drop, farther than the last nearby tier
-    /* Cheaper days for places closer by (one-way road km from the pickup city),
-       nearest first. Bilaspur (113 km) is a short day; Nagpur (284 km) a long one. */
+    /* Per 24 HOURS of the driver's time on an outstation trip or one-way drop
+       (decided 8 Nov 2026). It rises with the distance (one-way road km from
+       the pickup city) — see outstation.nearFromKm and dayTopFromKm:
+         up to 160 km (he is home the same day): ₹1,050 rising to ₹1,350, for
+           the trip — Bilaspur 113 km ₹1,200, Janjgir 160 km ₹1,350;
+         farther: ₹1,450 rising to ₹1,750 at 300 km and beyond, for each 24 h —
+           Korba ₹1,550, Nagpur ₹1,700, Mumbai ₹1,750. */
+    outstation: { from: 1450, to: 1750 }, //  farther than the last nearby tier
     outstationNear: [
-      { upToKm: 150, from: 1300, to: 1400 }, //  e.g. Bilaspur, Rajnandgaon, Dhamtari, Kanker
-      { upToKm: 300, from: 1450, to: 1550 }, //  e.g. Korba, Raigarh, Gondia, Nagpur, Jagdalpur
+      { upToKm: 160, from: 1050, to: 1350 }, //  same-day drops: Bilaspur, Kanker, Janjgir …
     ],
     nightFrom: 500, //                        Night driver, 8 PM – 6 AM, "from ₹500"
   },
 
   /* ------------------------------------- outstation trips & one-way drops --
-     How the trip estimate is worked out on the booking form and in the app.
-     The customer picks a destination and the start date and time. One-way:
-     each hoursPerDay of driving (about kmPerDay) is a day at
-     prices.outstation, each hour left over extraHour. A drive shorter than a
-     day: the first shortDriveHours for shortDriveMinimum, then extraHour an hour. From the start the site works out when he drops the car (12 h
-     driving and 12 of rest, or day and night if the customer asks), the
-     first regular train/bus home he can catch that day and when he is home;
-     that way home, the waiting included, is returnHour an hour, at most
-     returnMaxPerDay in any 24 h. Round trips: the days. The customer books
-     his ticket home; the final bill uses the real times. The team confirms
-     the exact price on the call (the quote calculator in /admin works it out
-     from the driver's cost). */
+     How the trip estimate is worked out on the booking form and in the app
+     (decided 8 Nov 2026 — one rule, the driver's TIME). One-way: from when he
+     leaves until he is home by train or bus — the drive, waiting for his
+     train and the ride home — each 24 hours at the day price for the distance
+     (prices.outstation…); the hours past those 24-hour blocks extraHour each,
+     never more than one more day. Up to 160 km he is home the same day: one
+     price for the trip. The waiting and the ride use the route's average from
+     the timetables until the customer picks a date and train; then that
+     train; the final bill the real times. Round trips: the days, and driving
+     beyond hoursPerDay a day extraHour an hour. The customer books his ticket
+     home and gives his meals. The team confirms the exact price on the call
+     (the quote calculator in /admin works it out from the driver's cost). */
   outstation: {
-    hoursPerDay: 12, //        driving hours in one outstation day
+    nearFromKm: 60, //         the day price starts rising from the first tier's `from` here …
+    dayTopFromKm: 300, //      … and reaches prices.outstation.to here (farther: the same)
+    hoursPerDay: 12, //        driving hours in one outstation day (about 600 km)
     sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
-    extraHour: 120, //         each driving hour beyond the full days (or of a drive shorter than a day)
-    extraFullDayAfterHours: 7, // driving hours left over after the full days: up to this many at extraHour; more = a full day
-    shortDriveMinimum: 600, //   a one-way drive shorter than a day: the first shortDriveHours of driving cost this (like the 3-hour package) …
-    shortDriveHours: 3, //       … and each hour after them extraHour (decided 7 Nov 2026: Bilaspur 3 h = ₹600, Korba 5 h = ₹600 + 2 × ₹120)
-    returnHour: 120, //        each hour of his way home after a one-way drop (from the drop, waiting included)
+    extraHour: 130, //         each hour past the 24-hour blocks of a one-way drop, and each driving hour beyond hoursPerDay on a round trip
+    extraFullDayAfterHours: 7, // round trips: driving hours left over after the full days: up to this many at extraHour; more = a full day
+    /* Quotes and bills from before 8 Nov 2026 only (by the hours): his way home. */
+    returnHour: 120, //        each hour of his way home after a one-way drop
     returnMaxPerDay: 1200, //  a full day of the way home (each 24 hours)
     returnFullDayAfterHours: 6, // the hours left over after the full days: up to this many by the hour; more = a full day
-    /* Longer one-way drops (decided 1 Nov 2026; days and waiting 7 Nov 2026): when he is
-       away (leaves → home) routeAfterHours or more, one price for the route instead of the
-       hours above, for the days the trip needs (the drive, the usual wait at the station and
-       his way home; each started 24 h is a day): routeBase + routePerKm × one-way km, but for
-       each day at least routeMinBase + routeMinPerDay and at most routeMaxPerDay, rounded to
-       ₹50. Nagpur ₹1,650, Mumbai ₹5,400, Delhi ₹5,550, Bengaluru ₹6,600. Waiting for his train
-       uses the time left in those days at no charge; the hours past them are returnHour each,
-       at most the trip's price per day for each 24 h. His ticket and meals are paid separately. */
-    routeAfterHours: 12,
-    routeBase: 350,
-    routePerKm: 4.5,
-    routeMinBase: 0,
-    routeMinPerDay: 1650,
-    routeMaxPerDay: 1850, //   for each day away, never more than this (a drop where he is home the same day stays cheap)
     mealAllowance: 300, //     per day, only if the customer does not give the driver his meals
     kmPerDay: 600, //          how far one driver drives in a day (about 12 h at averageKmh)
     averageKmh: 50, //         highway average with stops
     busKmh: 50, //             way home for a place not in the list: bus/train average, with stops
-    stationHours: 1, //        from the drop to the bus stand or station
+    stationHours: 1, //        from the drop to the bus stand or station (a place without an average wait)
     graceMinutes: 15, //       final bill: minutes of an hour not charged (4 h 15 m = 4 h, 4 h 16 m = 5 h)
     localWithinKm: 60, //      closer than this, the form suggests a local package instead
-    minProfitPercent: 15, //   the /admin quote calculator never quotes below this profit
+    targetProfitPercent: 25, // the /admin quote calculator works the price out with this profit …
+    minProfitPercent: 20, //   … and warns below this one …
+    maxProfitPercent: 30, //   … or above this one
+    guardProfitPercent: 15, // the build's profit guard (the DRIVER_COSTS secret): no price on the site may earn less than this
   },
 
   /* ---------------------------------------------------- monthly driver -----

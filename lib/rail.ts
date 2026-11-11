@@ -373,7 +373,7 @@ export function returnParts(o: ReturnOption): string[] {
 /**
  * Hours he waits for his train in all: from the drop to the first train
  * leaving (getting to the station included), and any change between trains.
- * The route price includes the first few (lib/outstation.ts routePrice).
+ * The estimate counts it in the driver's time (lib/outstation.ts timePrice).
  */
 export const waitHoursOf = (o: Pick<ReturnOption, 'waitMinutes' | 'transfer'>): number =>
   (o.waitMinutes + (o.transfer?.minutes ?? 0)) / 60;
@@ -385,6 +385,19 @@ export const waitNote = (o: Pick<ReturnOption, 'waitMinutes' | 'transfer'>): str
 /** The waiting hours from a booking's train note (waitNote), for the admin's price; undefined when none. */
 export function waitFromNotes(notes: string | undefined): number | undefined {
   const m = /Train home in the estimate:[\s\S]*?he waits (\d+) h in all/.exec(notes ?? '');
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * "he is away 35 h in all" — whole hours from the start until he is home with
+ * the train the estimate used (the plan's homeAt), in the booking's train
+ * note, so the team prices the same hours of his time.
+ */
+export const awayNote = (homeAt: number): string => `he is away ${Math.max(0, Math.ceil(homeAt - 1e-9))} h in all`;
+
+/** The hours away from a booking's train note (awayNote), for the admin's price; undefined when none. */
+export function awayFromNotes(notes: string | undefined): number | undefined {
+  const m = /Train home in the estimate:[\s\S]*?he is away (\d+) h in all/.exec(notes ?? '');
   return m ? Number(m[1]) : undefined;
 }
 

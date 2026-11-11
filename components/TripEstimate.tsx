@@ -54,7 +54,6 @@ export function TripEstimate({
   const dayRate = `${priceText.outstationSpan} a day, by distance`;
   // This trip's day price (nearer places cost less a day).
   const dayText = (({ from, to }) => rupeeRange(from, to))(dayRateFor(tripRules, view.plan?.km || view.km));
-  const returnRate = `his way home from the drop, ${priceText.outstationReturnRule}`;
 
   let body: ReactNode;
   if (!city) {
@@ -62,8 +61,15 @@ export function TripEstimate({
   } else if (elsewhere) {
     body = (
       <p className="text-fg-muted">
-        We work out the distance and call you with the price: {dayRate}
-        {oneWay ? <>, plus {returnRate}</> : null}.
+        We work out the distance and call you with the price:{' '}
+        {oneWay ? (
+          <>
+            up to {priceText.sameDayKm} {priceText.sameDayDrop} for the trip; farther, {priceText.timeRule}
+          </>
+        ) : (
+          dayRate
+        )}
+        .
       </p>
     );
   } else if (!view.dest) {
@@ -83,7 +89,8 @@ export function TripEstimate({
         <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">Estimated price</p>
         <p className="tabular font-display mt-1 text-2xl font-bold">{rupeeRange(view.est.from, view.est.to)}</p>
         <p className="text-fg-muted mt-1">
-          {city} → {view.dest.name} · about {kmText(view.km)} one way · {tripDays(view)}
+          {city} → {view.dest.name} · about {kmText(view.km)} one way ·{' '}
+          {view.est.time ? `the driver is away about ${view.est.time.hours} h` : tripDays(view)}
         </p>
         <ul className="border-border mt-3 flex flex-col gap-1.5 border-t pt-3">
           {lines.map((l) => (
@@ -119,8 +126,9 @@ export function TripEstimate({
         )}
         {view.plan.local && (
           <p className="bg-bg-subtle mt-3 rounded-lg p-3">
-            {view.dest.name} is only about {kmText(view.km)} away — a Local Full Day ({priceText.fullDay}{' '}
-            for 8 hours) usually costs less. <LocalButton onClick={onUseLocal} />
+            {view.dest.name} is only about {kmText(view.km)} away. If the driver stays with you and comes back in
+            your car, a local package can cost less: {priceText.threeHours} for 3 hours, or {priceText.fullDay} for a
+            full day of 8 hours. <LocalButton onClick={onUseLocal} />
           </p>
         )}
       </>
@@ -136,37 +144,26 @@ export function TripEstimate({
       {body}
       <div className="bg-bg-subtle text-fg-muted mt-3 rounded-lg p-3 text-[0.8125rem] leading-relaxed">
         <p className="text-fg font-semibold">How the time is counted, in simple words</p>
-        {oneWay && view.est?.route ? (
+        {oneWay ? (
           <ul className="mt-1 list-disc pl-5">
             <li>
-              A drop that keeps him away {priceText.routeAfter} or more — from when he leaves to when he is home —
-              is <strong>one price for the route</strong>: {priceText.routeRule}. His way home is included, with{' '}
-              {priceText.routeWait}.
+              One rule: the driver’s <strong>time</strong>, from when he leaves until he is home — the drive, waiting
+              for his train and the ride home.
             </li>
             <li>
-              The price is for the days the trip needs (each started 24 hours is a day). Waiting for his train, or a
-              late train, first uses the time left in those days — no charge. Only the hours past them are{' '}
-              {rupees(tripRules.returnHour)} each, never more than {rupees(tripRules.returnMaxPerDay)} for each 24 hours.
-            </li>
-            <li>His ticket home and his meals are paid separately, as listed above.</li>
-          </ul>
-        ) : oneWay ? (
-          <ul className="mt-1 list-disc pl-5">
-            <li>
-              Driving: every {priceText.outstationHours} of driving is one day ({dayText}). Hours left
-              over: up to {settings.outstation.extraFullDayAfterHours} are {rupees(tripRules.extraHour)} each; more than{' '}
-              {settings.outstation.extraFullDayAfterHours} count as one more full day. A drive shorter than a day:{' '}
-              {priceText.shortDrive}.
+              Up to {priceText.sameDayKm} he is home the same day: one price for the trip ({priceText.sameDayDrop}, by
+              distance). Farther: {view.est?.time ? rupees(view.est.time.dayRate) : dayText} for each 24 hours. If he
+              drops the car in 8 hours, the other 16 cover his waiting and his train home — no extra.
             </li>
             <li>
-              After he hands over the car, the time until he is home counts — <strong>waiting for his train
-              too</strong>: each 24 hours is {priceText.outstationReturnMax}; the hours left over are{' '}
-              {priceText.outstationReturnHour} each, and more than {settings.outstation.returnFullDayAfterHours} hours
-              count as a full day ({priceText.outstationReturnMax}). So 56 hours = 2 days + 8 hours = 3 days. For example: he drops the car on 2 Oct at 12 PM and his train leaves at 3 PM — that is 3 hours of
-              waiting, then the hours on the train until he reaches home. If he changes trains (Bengaluru →
-              Nagpur → Raipur), the wait at Nagpur for the second train counts too.
+              Past the 24-hour blocks, {priceText.outstationExtraHour} an hour — never more than one more day. So 30
+              hours away = 24 h + 6 h × {priceText.outstationExtraHour}; 44 hours = 2 × 24 h.
             </li>
-            <li>The final bill uses the real times; a late train adds hours, an early one saves them.</li>
+            <li>
+              Until you pick the date, the wait and the ride home are the route’s average from the timetables; with the
+              date and the train, yours. The final bill uses the real times: a late train adds hours, an early one
+              saves them.
+            </li>
           </ul>
         ) : (
           <ul className="mt-1 list-disc pl-5">

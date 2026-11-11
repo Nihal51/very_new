@@ -8,121 +8,151 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Field';
 import { saveQuote } from '@/lib/admin';
-import { formatDateTime, type Booking } from '@/lib/bookings';
+import { formatDateTime, isTripPackage, wantsNonstop, type Booking, type BookingQuote } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
-import { dayRateFor, planTrip, routePrice, routeQuote, quote as workOut } from '@/lib/outstation';
-import { waitFromNotes } from '@/lib/rail';
+import { dayRateFor, pricedByTime, quote as roundQuote, timeQuote } from '@/lib/outstation';
+import { awayFromNotes } from '@/lib/rail';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
-import { quoteBreakdown } from '@/lib/trip';
+import { quoteBreakdown, tripFor } from '@/lib/trip';
 
-const MIN_PROFIT = settings.outstation.minProfitPercent;
+const { targetProfitPercent: TARGET, minProfitPercent: MIN_PROFIT, maxProfitPercent: MAX_PROFIT } = settings.outstation;
 const PARTNER = settings.partners.commissionPercent;
-/** What a driver usually gets per return hour: the customer's rate less the minimum profit, to ₹10. */
-const DEFAULT_RETURN_PAY = Math.floor((tripRules.returnHour * (1 - MIN_PROFIT / 100)) / 10) * 10;
-/** The most hours of the way home paid in any 24: returnMaxPerDay ÷ returnHour (₹1,200 ÷ ₹120 = 10). */
-const RETURN_DAY_HOURS = Math.round(tripRules.returnMaxPerDay / tripRules.returnHour);
+/** What a driver usually gets for an hour past the 24-hour blocks: the customer's hourly rate less the profit, to ₹10. */
+const DEFAULT_HOUR_PAY = Math.round((tripRules.extraHour * (1 - TARGET / 100)) / 10) * 10;
+/** Up to this far (one way) he is home the same day: the driver's cost is for the trip. */
+const SAME_DAY_KM = tripRules.nearRates?.[0]?.upToKm ?? 0;
 
 const int = (v: string) => {
   const n = Math.round(Number(v));
   return Number.isFinite(n) && n > 0 ? n : 0;
 };
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
- * The price for an outstation trip or one-way drop, worked out on the call:
- * type what this driver costs, and it adds the minimum profit (and a
- * partner's commission, if a partner sent the customer), rounds up, and shows
- * what you keep. Saving puts the customer's price on the booking and the
- * driver's cost and the profit in the admin-only history.
+ * The price for an outstation trip or one-way drop, worked out on the call
+ * (decided with the owner on 8 Nov 2026): type what this driver costs, and it
+ * adds the profit (targetProfitPercent, and a partner's commission if a
+ * partner sent the customer), rounds, and shows what you keep — with a
+ * warning outside the profit band (minProfitPercent … maxProfitPercent).
+ *   One-way: the driver's time, from when he leaves until he is home, in
+ *   24-hour blocks (up to 160 km one price for the trip); the hours past the
+ *   blocks by the hour, never more than one more day (lib/outstation.ts
+ *   timeQuote). The hours: the train in the booking's note, else the route's
+ *   average (the estimate's plan).
+ *   Round trips: the days, and driving beyond the day by the hour (quote).
+ * Saving puts the customer's price on the booking; the driver's cost and the
+ * profit go in the admin-only history.
  */
 export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
   const oneWay = b.package === 'one-way-drop';
   const [open, setOpen] = useState(!b.quote);
   const [cost, setCost] = useState('');
-  // A one-way drop's full days and extra driving hours, from its distance (as the estimate).
-  const drive = oneWay && b.trip?.km ? planTrip(tripRules, b.trip.km, 'one-way', b.trip.days) : null;
-  const [days, setDays] = useState(String(b.quote?.days ?? drive?.fullDays ?? b.trip?.days ?? 1));
-  const [back, setBack] = useState(String(b.quote?.returnHours ?? (oneWay ? (b.trip?.returnHours ?? 0) : 0)));
-  const [returnPay, setReturnPay] = useState(String(DEFAULT_RETURN_PAY));
-  const [extraHours, setExtraHours] = useState(String(b.quote?.extraHours ?? drive?.extraHours ?? 0));
-  // A longer drop: the route price, for the hours the trip needs (leaves → home, the usual wait at the station included).
-  const [away, setAway] = useState(
-    String(b.quote?.awayHours ?? (drive?.homeAt !== undefined ? Math.ceil(drive.homeAt - 1e-9) : 0)),
-  );
-  // His waiting for the train (drop → boarding, and any change): the train note on the booking says it.
-  const [wait, setWait] = useState(String(waitFromNotes(b.notes) ?? tripRules.stationHours));
-  const extraWait = Math.max(0, int(wait) - tripRules.stationHours);
-  const route = oneWay && b.trip?.km ? routePrice(tripRules, b.trip.km, int(away) + extraWait, int(away)) : undefined;
-  const [routeTyped, setRouteTyped] = useState(b.quote?.awayHours ? String(b.quote.dayRate) : '');
-  const routeAmount = int(routeTyped) || route?.daysPrice || 0;
+  const [hourPay, setHourPay] = useState(String(DEFAULT_HOUR_PAY));
+
+  // One-way: the hours of his time — the train in the booking's note, else the plan with the route's average.
+  const plan =
+    oneWay && b.trip?.destId && isTripPackage(b.package)
+      ? tripFor(b.package, b.city, b.trip.destId, b.trip.days, b.preferredTime, wantsNonstop(b.notes)).plan
+      : undefined;
+  const noteHours = awayFromNotes(b.notes);
+  const planHours = plan?.homeAt !== undefined ? Math.ceil(plan.homeAt - 1e-9) : 0;
+  const savedHours = b.quote && pricedByTime(b.quote) ? b.quote.days * 24 + b.quote.extraHours : 0;
+  const hoursFrom = noteHours ? 'the train in the booking’s note' : planHours ? 'the route’s average wait and train' : '';
+  const [hours, setHours] = useState(String(noteHours || planHours || savedHours || ''));
+  const [km, setKm] = useState(String(b.quote?.km ?? b.trip?.km ?? ''));
+  const [dayTyped, setDayTyped] = useState('');
+
+  // Round trips: the days and the driving hours beyond the day.
+  const [days, setDays] = useState(String(b.quote?.days ?? b.trip?.days ?? 1));
+  const [extraHours, setExtraHours] = useState(String(b.quote?.extraHours ?? 0));
+
   const [ticket, setTicket] = useState(String(b.quote?.ticket ?? 0));
   const [partner, setPartner] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [saved, setSaved] = useState(false);
 
-  // The day price customers were shown for this distance.
-  const shownDay = (({ from, to }) => rupeeRange(from, to))(dayRateFor(tripRules, b.trip?.km));
-  const rq =
-    route && int(cost) > 0
-      ? routeQuote({
-          price: routeAmount,
-          awayHours: route.plannedHours,
+  const band = { targetProfitPercent: TARGET, minProfitPercent: MIN_PROFIT, maxProfitPercent: MAX_PROFIT };
+  const partnerPercent = partner ? PARTNER : 0;
+  const sameDay = int(km) > 0 && int(km) <= SAME_DAY_KM;
+
+  const tq =
+    oneWay && int(cost) > 0
+      ? timeQuote(tripRules, {
+          ...band,
+          km: int(km),
+          hours: int(hours),
           driverDayCost: int(cost),
+          driverHourPay: int(hourPay),
+          ...(int(dayTyped) > 0 && { dayRate: int(dayTyped) }),
           ticket: int(ticket),
-          partnerPercent: partner ? PARTNER : 0,
-          minProfitPercent: MIN_PROFIT,
-          extraHours: route.extraHours,
-          extraCharge: route.extraCharge,
-          driverHourPay: int(returnPay),
-          driverMaxPerDay: int(returnPay) * RETURN_DAY_HOURS,
+          partnerPercent,
         })
-      : null;
-  const q =
-    !route && int(cost) > 0
-      ? workOut(tripRules, {
+      : undefined;
+  const rq =
+    !oneWay && int(cost) > 0
+      ? roundQuote(tripRules, {
+          ...band,
           driverDayCost: int(cost),
-          driverReturnHourPay: int(returnPay),
           days: int(days),
-          returnHours: int(back),
           extraHours: int(extraHours),
-          ticket: int(ticket),
-          partnerPercent: partner ? PARTNER : 0,
-          minProfitPercent: MIN_PROFIT,
+          ticket: 0,
+          partnerPercent,
           ...(b.trip?.km ? { km: b.trip.km } : {}),
         })
-      : null;
+      : undefined;
 
-  // What the customer sees: a route price is one day at that price, nothing else but the ticket (firestore.rules isQuote).
-  const routeAgreed = rq &&
-    route && {
-      amount: rq.total,
-      dayRate: routeAmount,
-      days: 1,
-      returnHours: 0,
-      returnHourRate: tripRules.returnHour,
-      returnCharge: 0,
-      extraHours: 0,
-      extraHourRate: tripRules.extraHour,
-      ticket: int(ticket),
-      // The days paid; any hours past them come on the final bill, from the real times.
-      awayHours: route.plannedHours,
-      km: route.km,
-    };
-  const view = rq
-    ? { ...rq, aboveShownRange: routeAmount > route!.daysPrice }
-    : q && { ...q, total: q.total };
-  const agreed = routeAgreed || (q && {
-    amount: q.total,
-    dayRate: q.dayRate,
-    days: q?.days ?? 1,
-    returnHours: int(back),
-    returnHourRate: q.returnHourRate,
-    returnCharge: q.returnCharge,
-    extraHours: int(extraHours),
-    extraHourRate: q.extraHourRate,
-    extraCharge: q.extraCharge,
-    ticket: int(ticket),
-  });
+  // What the customer sees (firestore.rules isQuote). One-way: the 24-hour blocks at dayRate and the km — no
+  // route hours and no way-home charge, so bills know it is priced by the driver's time (pricedByTime).
+  const agreed: Omit<BookingQuote, 'at'> | undefined = tq
+    ? {
+        amount: tq.total,
+        dayRate: tq.time.dayRate,
+        days: tq.time.days,
+        returnHours: 0,
+        returnHourRate: 0,
+        returnCharge: 0,
+        extraHours: tq.time.extraHours,
+        extraHourRate: tq.time.extraHourRate,
+        extraCharge: tq.time.extraCharge,
+        km: tq.time.km,
+        ticket: int(ticket),
+      }
+    : rq
+      ? {
+          amount: rq.total,
+          dayRate: rq.dayRate,
+          days: rq.days,
+          returnHours: 0,
+          returnHourRate: 0,
+          returnCharge: 0,
+          extraHours: rq.extraHours,
+          extraHourRate: rq.extraHourRate,
+          extraCharge: rq.extraCharge,
+          ticket: 0,
+        }
+      : undefined;
+  const view = tq
+    ? { total: tq.total, driverPay: tq.driverPay, partnerPay: tq.partnerPay, profit: tq.profit, profitPercent: tq.profitPercent, low: tq.low, high: tq.high }
+    : rq
+      ? {
+          total: rq.total,
+          driverPay: rq.driverPay,
+          partnerPay: rq.partnerPay,
+          profit: rq.profit,
+          profitPercent: rq.profitPercent,
+          low: rq.profitPercent + 1e-9 < MIN_PROFIT,
+          high: rq.profitPercent - 1e-9 > MAX_PROFIT,
+        }
+      : undefined;
+  const ok = view ? !view.low && !view.high : false;
+
+  // The driver's pay in words (admin-only).
+  const driverWords = tq
+    ? `${tq.time.days} × 24 h × ${rupees(int(cost))}${tq.time.extraHours > 0 ? ` + ${tq.time.extraHours} h × ${rupees(int(hourPay))}` : ''} = ${rupees(tq.driverPay)}`
+    : rq
+      ? `${plural(rq.days, 'day')} × ${rupees(int(cost))}${rq.extraHours > 0 ? ` + ${rq.extraHours} h of driving at a ${tripRules.hoursPerDay}th of his day` : ''} = ${rupees(rq.driverPay)}`
+      : '';
 
   async function save() {
     if (!view || !agreed) return;
@@ -131,12 +161,8 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
     try {
       const note =
         `Price ${rupees(view.total)} (${quoteBreakdown(agreed)}). ` +
-        `Driver ${rupees(int(cost))} a day` +
-        (rq ? ` × ${rq.days} ${rq.days === 1 ? 'day' : 'days'} away` : '') +
-        (!rq && agreed.returnHours
-          ? `, ${rupees(int(returnPay))} an hour home (max ${rupees(int(returnPay) * RETURN_DAY_HOURS)} a day)`
-          : '') +
-        ` → driver gets ${rupees(view.driverPay)}` +
+        (tq ? `${int(hours)} h of his time (${hoursFrom || 'typed'}). ` : '') +
+        `Driver ${driverWords}` +
         (view.partnerPay ? `, partner ${rupees(view.partnerPay)}` : '') +
         `, profit ${rupees(view.profit)} (${view.profitPercent}%).`;
       await saveQuote(user, b.id, agreed, note);
@@ -149,7 +175,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
     }
   }
 
-  const num = (label: string, value: string, set: (v: string) => void, hint?: string) => (
+  const num = (label: string, value: string, set: (v: string) => void, hint?: string, placeholder?: string) => (
     <label className="flex flex-col gap-1 text-sm">
       <span className="font-medium">{label}</span>
       <Input
@@ -158,6 +184,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
         min={0}
         step={1}
         value={value}
+        placeholder={placeholder}
         onChange={(e) => {
           set(e.target.value);
           setSaved(false);
@@ -166,6 +193,9 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
       {hint && <span className="text-fg-subtle text-xs">{hint}</span>}
     </label>
   );
+
+  // The day price customers are shown for this distance.
+  const shownDay = (({ from, to }) => rupeeRange(from, to))(dayRateFor(tripRules, int(km) || b.trip?.km));
 
   return (
     <div className="border-border mt-5 border-t pt-5">
@@ -196,63 +226,49 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
       ) : (
         <div className="mt-3 flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-3">
-            {num('Driver’s cost a day', cost, setCost, 'What this driver asked for')}
-            {oneWay &&
-              num(
-                'Hours he is away, as planned',
-                away,
-                setAway,
-                `He leaves → he is home, with the usual ${tripRules.stationHours} h at the station. ${priceText.routeAfter} or more: the route price (${priceText.routeRule})`,
-              )}
-            {route &&
-              num(
-                'Hours waiting for his train',
-                wait,
-                setWait,
-                `From the drop until his train leaves, and any change (the train note says it). ${route.days} ${route.days === 1 ? 'day' : 'days'} paid leave ${route.freeHours} h for it at no charge; past them ${priceText.outstationReturnHour} an hour, at most ${rupees(route.extraMaxPerDay)} a day`,
-              )}
-            {route &&
-              num(
-                'Route price',
-                routeTyped || String(route.daysPrice),
-                setRouteTyped,
-                `${rupees(route.daysPrice)} for ${route.km} km, ${route.days} ${route.days === 1 ? 'day' : 'days'} paid. Change it only for a reason`,
-              )}
-            {route &&
-              route.extraHours > 0 &&
-              num(
-                'Driver’s pay an hour past the days',
-                returnPay,
-                setReturnPay,
-                `${route.extraHours} h past the days paid: the customer pays ${rupees(route.extraCharge)} on the final bill`,
-              )}
-            {!route &&
-              num(
-              oneWay ? 'Full days' : 'Days',
-              days,
-              setDays,
-              oneWay ? `Each ${priceText.outstationHours} of driving; 0 for a shorter drive` : undefined,
-            )}
-            {oneWay &&
-              !route &&
-              num(
-                'Hours from the drop until he is home',
-                back,
-                setBack,
-                `His way home, waiting included: ${priceText.outstationReturnRule}. For the final bill, use when he really got home`,
-              )}
-            {oneWay &&
-              !route &&
-              num('Driver’s pay an hour home', returnPay, setReturnPay, `At most ${RETURN_DAY_HOURS} of them in any 24 hours`)}
-            {!route &&
-              num(
-              'Extra driving hours',
-              extraHours,
-              setExtraHours,
+            {num(
+              oneWay ? (sameDay ? 'Driver’s cost for the trip' : 'Driver’s cost for each 24 h') : 'Driver’s cost a day',
+              cost,
+              setCost,
               oneWay
-                ? `Beyond the full days, ${priceText.outstationExtraHour} each. A drive shorter than a day (0 full days): ${priceText.shortDrive}`
-                : `Beyond ${priceText.outstationHours} a day`,
+                ? sameDay
+                  ? `Up to ${priceText.sameDayKm} he is home the same day: what this driver asked for the trip`
+                  : 'What this driver asked for each 24 hours of his time (leaves → home)'
+                : 'What this driver asked for',
             )}
+            {oneWay &&
+              num(
+                'Hours he is away',
+                hours,
+                setHours,
+                `From when he leaves until he is home: the drive, the wait and the train.${hoursFrom ? ` From ${hoursFrom}.` : ' Type it.'} On the final bill the real times count.`,
+              )}
+            {oneWay &&
+              !b.trip?.km &&
+              num('Km, one way', km, setKm, 'A place not in the list: by road, from the pickup city — sets the day price')}
+            {oneWay &&
+              num(
+                'His pay an hour past the 24-h blocks',
+                hourPay,
+                setHourPay,
+                `The customer pays ${priceText.outstationExtraHour} an hour past them, never more than one more day`,
+              )}
+            {oneWay &&
+              num(
+                sameDay ? 'Customer price for the trip' : 'Customer price for each 24 h',
+                dayTyped,
+                setDayTyped,
+                `Leave empty: the driver’s cost and ${TARGET}% profit, rounded. Shown for ${int(km) || b.trip?.km || '?'} km: ${shownDay}`,
+                tq ? String(tq.time.dayRate) : undefined,
+              )}
+            {!oneWay && num('Days', days, setDays)}
+            {!oneWay &&
+              num(
+                'Extra driving hours',
+                extraHours,
+                setExtraHours,
+                `Beyond ${priceText.outstationHours} a day, ${priceText.outstationExtraHour} each; more than ${tripRules.extraFullDayAfter} = one more day`,
+              )}
             {oneWay && num('Ticket, if we bought it', ticket, setTicket, 'Usually 0 — the customer books it. Passed on at cost')}
           </div>
           <label className="flex items-center gap-2 text-sm">
@@ -268,13 +284,24 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
             A partner sent this customer ({PARTNER}% commission)
           </label>
 
-          {!view ? (
-            <p className="text-fg-subtle text-sm">Type the driver’s cost a day to see the price.</p>
+          {!view || !agreed ? (
+            <p className="text-fg-subtle text-sm">
+              {oneWay && int(cost) > 0 && !int(km)
+                ? 'Type the km (one way) to price his time.'
+                : 'Type the driver’s cost to see the price.'}
+            </p>
           ) : (
-            <div className={cn('rounded-lg border p-3 text-sm', view.ok ? 'border-border bg-bg-subtle' : 'border-error-border bg-error-subtle')}>
+            <div className={cn('rounded-lg border p-3 text-sm', ok ? 'border-border bg-bg-subtle' : 'border-error-border bg-error-subtle')}>
               <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">Tell the customer</p>
               <p className="tabular font-display text-2xl font-bold">{rupees(view.total)}</p>
-              <p className="text-fg-muted">{agreed && quoteBreakdown(agreed)}</p>
+              <p className="text-fg-muted">{quoteBreakdown(agreed)}</p>
+              {tq && tq.shown.price !== tq.time.price && (
+                <p className="text-fg-muted mt-1">
+                  The {b.source === 'app' ? 'app' : 'website'} price for {plural(tq.shown.hours, 'hour')} at {int(km)} km:{' '}
+                  {rupees(tq.shown.price)}
+                  {tq.time.price > tq.shown.price ? ' — tell the customer why it is more before you confirm.' : '.'}
+                </p>
+              )}
               <dl className="border-border mt-2 grid grid-cols-3 gap-2 border-t pt-2">
                 <div>
                   <dt className="text-fg-subtle text-xs">Driver gets</dt>
@@ -288,42 +315,28 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
                 )}
                 <div>
                   <dt className="text-fg-subtle text-xs">Your profit</dt>
-                  <dd className={cn('tabular font-semibold', view.ok ? 'text-success' : 'text-error')}>
+                  <dd className={cn('tabular font-semibold', ok ? 'text-success' : 'text-error')}>
                     {rupees(view.profit)} · {view.profitPercent}%
                   </dd>
                 </div>
               </dl>
-              {rq && route && (
-                <div className="border-border mt-2 border-t pt-2">
-                  <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">The driver</p>
-                  <p className="text-fg-muted">
-                    {rq.days} {rq.days === 1 ? 'day' : 'days'} away × {rupees(int(cost))}
-                    {rq.driverExtraPay > 0
-                      ? ` + ${route.extraHours} h past the days × ${rupees(int(returnPay))} (at most ${rupees(Math.min(int(cost), int(returnPay) * RETURN_DAY_HOURS))} a day) = ${rupees(rq.driverPay)}`
-                      : ` = ${rupees(rq.driverPay)}`}
-                    . The customer also gives his meals (or {rupees(settings.outstation.mealAllowance)} a day) and books his
-                    ticket home.
-                  </p>
-                  {route.extraCharge > 0 && (
-                    <p className="text-fg-muted mt-1">
-                      Expected waiting past the days paid: {rupees(route.extraCharge)}, added on the final bill from the
-                      real times (the quote saves {rupees(routeAmount)} for the days).
-                    </p>
-                  )}
-                </div>
-              )}
-              {!view.ok && (
+              <div className="border-border mt-2 border-t pt-2">
+                <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">The driver (only admins see this)</p>
+                <p className="text-fg-muted">
+                  {driverWords}. The customer also gives his meals (or {priceText.mealAllowance} a day)
+                  {oneWay ? ' and books his ticket home' : ''}.
+                </p>
+              </div>
+              {view.low && (
                 <p className="text-error mt-2">
-                  Below the {MIN_PROFIT}% minimum. Check the driver’s return-hour pay, or find another
-                  driver.
+                  Below the {MIN_PROFIT}% minimum: this price leaves too little after the driver. Raise the price, or find
+                  another driver.
                 </p>
               )}
-              {view.aboveShownRange && (
-                <p className="text-fg-muted mt-2">
-                  {route
-                    ? `Above the route price customers are shown (${rupees(route.price)}).`
-                    : `Above the range customers are shown (${shownDay} a day, ${priceText.outstationReturnHour} a return hour).`}{' '}
-                  Tell the customer why before you confirm.
+              {view.high && (
+                <p className="text-error mt-2">
+                  Above the {MAX_PROFIT}% maximum: too much for the customer for what the driver gets. Lower the price, or
+                  pay the driver more.
                 </p>
               )}
             </div>
@@ -331,7 +344,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
 
           {err && <Alert tone="error">{err}</Alert>}
           <div className="flex gap-2">
-            <Button size="sm" disabled={!view || saved} loading={busy} onClick={save}>
+            <Button size="sm" disabled={!view || !agreed || saved} loading={busy} onClick={save}>
               Save this price
             </Button>
             {b.quote && (

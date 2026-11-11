@@ -302,7 +302,8 @@ if (missing.length) {
     if (typeof cfg.app?.minVersion !== 'string' || !/^\d+\.\d+\.\d+$/.test(cfg.app.minVersion)) issues.push('app.minVersion');
     // The trip estimate (lib/outstation.ts). Never the minimum profit or any cost.
     const o = cfg.outstation;
-    for (const k of ['hoursPerDay', 'extraHour', 'returnHour', 'returnMaxPerDay', 'mealAllowance', 'kmPerDay', 'localWithinKm'])
+    // The driver's time (8 Nov 2026): the day price rises from nearFromKm to dayTopFromKm; extraHour past the 24-h blocks.
+    for (const k of ['nearFromKm', 'dayTopFromKm', 'hoursPerDay', 'extraHour', 'returnHour', 'returnMaxPerDay', 'mealAllowance', 'kmPerDay', 'localWithinKm'])
       if (!money(o?.[k])) issues.push(`outstation.${k}`);
     if (o && ('minProfitPercent' in o || Object.keys(o).some((k) => /cost|profit|margin/i.test(k))))
       issues.push('outstation publishes profit or cost — those stay private');
@@ -311,7 +312,11 @@ if (missing.length) {
       r && typeof r.id === 'string' && typeof r.name === 'string' && typeof r.nameHi === 'string' && ['cg', 'india'].includes(r.region) &&
       cities.every((c) => {
         const t = r.from?.[c];
-        return t && Number.isInteger(t.km) && t.km >= 0 && t.oneWay?.days >= 1 && Number.isInteger(t.oneWay?.returnHours) && t.roundDays >= 1;
+        return (
+          t && Number.isInteger(t.km) && t.km >= 0 && t.oneWay?.days >= 1 && Number.isInteger(t.oneWay?.returnHours) && t.roundDays >= 1 &&
+          // The average wait for his train (getting to the station included), hours.
+          typeof t.oneWay?.wait === 'number' && t.oneWay.wait >= 0 && t.oneWay.wait <= 48
+        );
       });
     if (!Array.isArray(cfg.destinations) || cfg.destinations.length < 10) issues.push('destinations missing');
     else {

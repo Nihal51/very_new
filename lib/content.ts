@@ -361,11 +361,11 @@ export const services: Service[] = [
       'The driver arranges their own way back',
     ],
     quote: {
-      title: 'Priced by distance',
+      title: 'Priced by the driver’s time',
       body: `${priceText.oneWayRule} Pick the destination and the start date and time on the booking form: the estimate shows when he drops the car, the train he takes home and when he is home; we confirm the exact figure on the call, before the driver sets off.`,
       factors: [
-        'The distance (one-way km)',
-        'How long he is away, his way home included',
+        'The distance (one-way km): the price for each 24 hours of his time',
+        'How long he is away — leaves → home, his wait and train home included',
         'His bus or train ticket home — you book it',
       ],
       whatsapp:
@@ -379,7 +379,7 @@ export const services: Service[] = [
       },
       {
         q: 'Is the driver’s return journey included in the price?',
-        a: `Yes. On a longer drop (he is away ${priceText.routeAfter} or more) it is in the route price — ${priceText.routeRule}, with ${priceText.routeWait}. On a short drop it is by the hour: from the drop until he is home, waiting for his train included — ${priceText.outstationReturnRule}. You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
+        a: `Yes. The price is for his time, from when he leaves until he is home — the drive, waiting for his train and the ride home. Up to ${priceText.sameDayKm} he is home the same day: one price for the trip, ${priceText.sameDayDrop}. Farther: ${priceText.timeRule}. You book his ticket home. The booking form shows the estimate, and the call confirms one figure before he sets off.`,
       },
     ],
   },
@@ -458,7 +458,7 @@ export const plans: Plan[] = [
     id: 'outstation',
     eyebrow: 'Outstation',
     name: 'Outstation Trip',
-    blurb: 'Long-distance round trips, by the day. One-way drops are priced by distance.',
+    blurb: 'Long-distance round trips, by the day. One-way drops are priced by the driver’s time until he is home.',
     price: priceText.outstationSpan,
     min: Math.min(settings.prices.outstation.from, ...settings.prices.outstationNear.map((t) => t.from)),
     max: settings.prices.outstation.to,
@@ -493,13 +493,13 @@ export const extraRates = [
   },
   {
     label: 'Outstation extra hour',
-    detail: `Each hour beyond ${priceText.outstationHours} of driving in a day`,
+    detail: `One-way: each hour past the 24-hour blocks of his time (never more than a day). Round trips: each hour beyond ${priceText.outstationHours} of driving in a day`,
     price: priceText.outstationExtraHour,
   },
   {
-    label: 'Driver’s way home after a one-way drop',
-    detail: `Shorter drops: from the drop until he is home, waiting included; more than ${settings.outstation.returnFullDayAfterHours} h in a day = a full day (${priceText.outstationReturnMax}). Longer drops (${priceText.routeAfter} away or more): included in the route price, with ${priceText.routeWait}. You book his ticket`,
-    price: `${priceText.outstationReturnHour}/hour`,
+    label: 'One-way drop: the driver’s time until he is home',
+    detail: `The drive, waiting for his train and the ride home. Up to ${priceText.sameDayKm} (home the same day): one price, ${priceText.sameDayDrop}. Farther: each 24 hours ${priceText.outstation} by distance; past them ${priceText.outstationExtraHour} an hour. You book his ticket`,
+    price: `from ${priceText.sameDayDrop.split('–')[0]}`,
   },
   {
     label: 'Wedding & event drivers',
@@ -524,7 +524,7 @@ export const bookingPackages = [
   { value: 'monthly-basic', label: `Monthly Driver, Basic plan — ${priceText.basic} a month` },
   { value: 'monthly-premium', label: `Monthly Driver, Premium plan — ${priceText.premium} a month` },
   { value: 'wedding-event', label: 'Wedding / Event — drivers or cars with drivers, quoted on call' },
-  { value: 'one-way-drop', label: 'One-Way Car Drop — priced by distance, his way home included' },
+  { value: 'one-way-drop', label: 'One-Way Car Drop — the driver’s time, his way home included' },
 ] as const;
 
 /* ------------------------------------------------------------------ trust  */
@@ -786,7 +786,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'How much does it cost to hire a driver?',
-    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstationSpan} a day for outstation trips, by distance (${priceText.outstationByDistance}), with one-way car drops priced by distance (${priceText.routeRule}; short ones by the hour); the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
+    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstationSpan} a day for outstation trips, by distance (${priceText.outstationByDistance}), with one-way car drops priced by the driver’s time until he is home (${priceText.sameDayDrop} for a same-day drop up to ${priceText.sameDayKm}; farther, ${priceText.timeRule}); the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
   },
   {
     q: 'How quickly will a driver arrive?',

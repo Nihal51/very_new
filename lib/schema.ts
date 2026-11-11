@@ -513,7 +513,7 @@ export function newCarSchema({ from }: { from: number }) {
   };
 }
 
-/** The /one-way-drop/ page: the service, from its lowest price (short drops by the hour, longer ones by distance). */
+/** The /one-way-drop/ page: the service, from its lowest price (a same-day drop close by). */
 export function oneWayDropSchema({ from }: { from: number }) {
   return {
     '@context': 'https://schema.org',

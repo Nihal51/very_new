@@ -12,10 +12,9 @@ import type { Booking, BookingBill, BookingClock } from './bookings.ts';
 import {
   dayRateFor,
   finalBill,
-  routePrice,
+  pricedByTime,
   returnCost,
   returnWords,
-  shortDriveWords,
   type Bill,
   type TripKind,
   type TripRules,
@@ -149,17 +148,21 @@ export type BillRates = {
   extraHourRate: number;
   returnHourRate: number;
   ticket: number;
-  /** A route price and the hours away it was planned for (finalBill). */
+  /** One-way priced by the driver's time (finalBill): the km. */
+  time?: { km: number };
+  /** A route price (quotes from before 8 Nov 2026) and the hours away it was planned for (finalBill). */
   route?: { price: number; awayHours: number; km: number };
 };
 
 /**
- * The rates for the bill: the agreed price's, or the lowest rates customers
- * were shown for the distance (`km`, one way). A route price: the agreed one
- * (a quote with awayHours), or — no quote — the route price for the plan's
- * hours away (`plannedAway`, from the real start time), as the estimate.
+ * The rates for the bill: the agreed price's, or — no quote — the estimate's.
+ * One-way to a known place (`km`, one way) without a quote, or with a quote
+ * from 8 Nov 2026: the driver's time at the day price (the agreed one, or the
+ * estimate's for the distance) and extraHour. Quotes from before then keep
+ * their own way: a route price (awayHours), or by the hours. `oneWay`: false
+ * for a round trip (the days at the day price).
  */
-export function billRates(quote: Booking['quote'], rules: TripRules, km?: number, plannedAway?: number): BillRates {
+export function billRates(quote: Booking['quote'], rules: TripRules, km?: number, oneWay = true): BillRates {
   const base = {
     extraHourRate: quote?.extraHourRate ?? rules.extraHour,
     returnHourRate: quote?.returnHourRate ?? rules.returnHour,
@@ -167,9 +170,10 @@ export function billRates(quote: Booking['quote'], rules: TripRules, km?: number
   };
   if (quote?.awayHours)
     return { ...base, dayRate: quote.dayRate, route: { price: quote.dayRate, awayHours: quote.awayHours, km: quote.km ?? km ?? 0 } };
-  const route = !quote && km && plannedAway !== undefined ? routePrice(rules, km, plannedAway) : undefined;
-  if (route) return { ...base, dayRate: route.daysPrice, route: { price: route.daysPrice, awayHours: route.plannedHours, km: route.km } };
-  return { ...base, dayRate: quote?.dayRate ?? dayRateFor(rules, km).from };
+  if (quote && pricedByTime(quote)) return { ...base, dayRate: quote.dayRate, time: { km: quote.km ?? 0 } };
+  if (quote) return { ...base, dayRate: quote.dayRate };
+  const dayRate = dayRateFor(rules, km).from;
+  return oneWay && km ? { ...base, dayRate, time: { km } } : { ...base, dayRate };
 }
 
 export type BillNow = {
@@ -219,6 +223,8 @@ export function bookingBill(b: Bill, nonstop: boolean): Omit<BookingBill, 'at'> 
     returnHourRate: b.returnHourRate,
     returnCharge: b.returnCharge,
     ...(b.route && { awayHours: b.route.awayHours, km: b.route.km }),
+    // Priced by the driver's time: the km (with no route hours) says so.
+    ...(b.time && { km: b.time.km }),
     ticket: b.ticket,
     nonstop,
   };
@@ -242,11 +248,28 @@ export function billLines(
     | 'returnCharge'
     | 'ticket'
   > &
-    Partial<Pick<Bill, 'route'>>,
-  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'> &
-    Partial<Pick<TripRules, 'shortDrive' | 'route'>>,
+    Partial<Pick<Bill, 'route' | 'time'>>,
+  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): { label: string; amount: string }[] {
   const lines: { label: string; amount: string }[] = [];
+  // The driver's time (8 Nov 2026): leaves → home in 24-hour blocks, the hours past them by the hour.
+  if (b.time) {
+    const km = b.time.km ? `${inr.format(b.time.km)} km, ` : '';
+    lines.push({
+      label:
+        b.time.short && b.days === 1 && b.extraHours === 0
+          ? `Driver’s time: ${b.time.hours} h, leaves → home (${km}home the same day) — one price`
+          : `Driver’s time: ${b.time.hours} h, leaves → home (${km}his wait and train home included) = ${b.days} × 24 h × ${rupees(b.dayRate)}`,
+      amount: rupees(b.days * b.dayRate),
+    });
+    if (b.extraHours > 0)
+      lines.push({
+        label: `${plural(b.extraHours, 'hour')} past the ${b.days * 24} h × ${rupees(b.extraHourRate)} (never more than one more day)`,
+        amount: rupees(b.extraCharge),
+      });
+    if (b.ticket > 0) lines.push({ label: 'Ticket home (we bought it)', amount: rupees(b.ticket) });
+    return lines;
+  }
   // A route price: the price, then any hours he was home later than planned.
   if (b.route) {
     lines.push({
@@ -268,13 +291,7 @@ export function billLines(
       label: `${plural(b.days, 'day')} × ${rupees(b.dayRate)}`,
       amount: rupees(b.days * b.dayRate),
     });
-  if (b.extraHours > 0 && b.days === 0 && rules.shortDrive)
-    // A one-way drive shorter than a day: ₹600 for the first 3 h, then by the hour.
-    lines.push({
-      label: shortDriveWords({ extraHour: b.extraHourRate, shortDrive: rules.shortDrive }, b.extraHours, rupees),
-      amount: rupees(b.extraCharge),
-    });
-  else if (b.extraHours > 0)
+  if (b.extraHours > 0)
     lines.push({
       label:
         `${plural(b.extraHours, 'driving hour')} more × ${rupees(b.extraHourRate)}` +
@@ -296,11 +313,24 @@ export function billLines(
   return lines;
 }
 
-/** "₹1,600 × 2 days + ₹600 for 5 extra hours + ₹2,400 way home (38 h)" — for the customer's booking. */
+/** "₹1,750 × 2 × 24 h of the driver’s time + ₹390 for 3 h past them + ₹650 ticket" — for the customer's booking. */
 export function billBreakdown(
   b: Pick<Bill, 'days' | 'dayRate' | 'extraHours' | 'extraCharge' | 'returnHours' | 'returnCharge' | 'ticket'> &
-    Partial<Pick<Bill, 'route'>> & { awayHours?: number },
+    Partial<Pick<Bill, 'route' | 'time'>> & { awayHours?: number; km?: number },
 ): string {
+  // The driver's time (a bill from finalBill, or one saved on a booking from 8 Nov 2026).
+  if (b.time || pricedByTime(b)) {
+    const hours = b.time ? ` (${b.time.hours} h, leaves → home)` : '';
+    return [
+      b.days === 1 && b.extraHours === 0
+        ? `${rupees(b.dayRate)} for the driver’s time${hours || ' (up to 24 h, his way home included)'}`
+        : `${rupees(b.dayRate)} × ${b.days} × 24 h of the driver’s time${hours}`,
+      b.extraHours > 0 ? `${rupees(b.extraCharge)} for ${plural(b.extraHours, 'hour')} past them` : null,
+      b.ticket > 0 ? `${rupees(b.ticket)} ticket` : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+  }
   // A route price (a bill from finalBill, or one saved on a booking).
   const away = b.route?.awayHours ?? b.awayHours;
   if (away)
@@ -325,9 +355,11 @@ export function billBreakdown(
     .join(' + ');
 }
 
-/** "2 days + 5 h" — the driving as charged; a route price: "route price, 62 h away". */
-export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bill, 'route'>>) =>
-  b.route
+/** "2 days + 5 h" — the driving as charged; the driver's time: "56 h away: 2 × 24 h + 8 h"; a route price: "route price, 62 h away". */
+export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bill, 'route' | 'time'>>) =>
+  b.time
+    ? `${b.time.hours} h away: ${b.days} × 24 h${b.extraHours > 0 ? ` + ${b.extraHours} h` : ''}`
+    : b.route
     ? `route price, ${b.route.realAwayHours} h away`
     : [b.days > 0 ? plural(b.days, 'day') : null, b.extraHours > 0 || b.days === 0 ? `${b.extraHours} h` : null]
         .filter(Boolean)
@@ -335,16 +367,20 @@ export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bil
 
 /**
  * What the driver is paid for the trip, from his day cost and his hourly pay
- * home — the same way as the quote (lib/outstation.ts quote): his extra hours
- * at a twelfth of his day, at most one more day; his way home with the same
- * daily maximum in hours as the customer's. Admin-only: never saved on the booking.
+ * — the same way as the quote. The driver's time (8 Nov 2026): his cost for
+ * each 24-hour block and `hourPay` for each hour past them (at most his day
+ * cost). Round trips and older bills: his extra hours at a twelfth of his day,
+ * at most one more day; his way home (`hourPay` an hour) with the same daily
+ * maximum in hours as the customer's. Admin-only: never saved on the booking.
  */
 export function driverPay(
-  b: Pick<Bill, 'days' | 'extraHours' | 'returnHours'> & Partial<Pick<Bill, 'route'>>,
+  b: Pick<Bill, 'days' | 'extraHours' | 'returnHours'> & Partial<Pick<Bill, 'route' | 'time'>>,
   dayCost: number,
-  returnHourPay: number,
+  hourPay: number,
   rules: Pick<TripRules, 'hoursPerDay' | 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): number {
+  const returnHourPay = hourPay;
+  if (b.time) return b.days * dayCost + Math.min(b.extraHours * hourPay, dayCost);
   // A route price: his day cost for each day paid, and his hourly pay for the hours past them (at most a day for each 24 h).
   if (b.route) {
     const paid = b.route.paidDays ?? Math.max(1, Math.ceil(b.route.awayHours / 24));
@@ -383,8 +419,7 @@ export function billMessage(
   b: Pick<Booking, 'name' | 'ref' | 'city'>,
   l: Pick<TripLink, 'to' | 'kind' | 'startAt' | 'dropAt' | 'homeAt'>,
   bill: Bill,
-  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'> &
-    Partial<Pick<TripRules, 'shortDrive' | 'route'>>,
+  rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): string {
   const rows = [
     `Hi ${firstName(b.name)}, thank you for travelling with DriveBuddy.`,

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Field';
 import { formatDateTime, wantsNonstop, type Booking, type TripPackage } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
+import { pricedByTime } from '@/lib/outstation';
 import { rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import { asset } from '@/lib/site';
 import { tripFor } from '@/lib/trip';
@@ -38,9 +39,11 @@ import {
 import { createTripLink, fixTripLink, saveFinalBill, watchTripLinks } from '@/lib/tripclock-db';
 
 const GRACE = settings.outstation.graceMinutes;
-const MIN_PROFIT = settings.outstation.minProfitPercent;
-/** What a driver usually gets per hour home: the customer's rate less the minimum profit, to ₹10 (as the quote). */
+const { targetProfitPercent: TARGET, minProfitPercent: MIN_PROFIT, maxProfitPercent: MAX_PROFIT } = settings.outstation;
+/** Bills from before 8 Nov 2026: what a driver usually gets per hour home — the customer's rate less the minimum profit, to ₹10. */
 const DEFAULT_RETURN_PAY = Math.floor((tripRules.returnHour * (1 - MIN_PROFIT / 100)) / 10) * 10;
+/** By the driver's time: what he usually gets for an hour past the 24-hour blocks — the customer's hourly rate less the profit, to ₹10 (as the quote). */
+const DEFAULT_HOUR_PAY = Math.round((tripRules.extraHour * (1 - TARGET / 100)) / 10) * 10;
 /** Warn when driving or the way home took this many hours longer than the plan for the real start. */
 const LATE_DRIVE_HOURS = 4;
 const LATE_HOME_HOURS = 3;
@@ -320,12 +323,12 @@ function Steps({ b, link, user }: { b: Booking; link: TripLink; user: User }) {
 /* ------------------------------------------------------------------ bill */
 
 function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: User; now: number }) {
-  // The plan for the real start time: to spot a time that looks wrong, and the hours away a route price is for.
+  // The plan for the real start time: to spot a time that looks wrong.
   const plan =
     b.trip?.destId && link.startAt
       ? tripFor(b.package as TripPackage, b.city, b.trip.destId, b.trip.days, toLocalInput(link.startAt), link.nonstop).plan
       : undefined;
-  // A saved bill keeps its rates; otherwise the agreed price's (or the estimate's: a route price, or the lowest shown).
+  // A saved bill keeps its rates; otherwise the agreed price's (or the estimate's: the driver's time at the day price for the distance).
   const saved = b.bill;
   const rates = saved
     ? {
@@ -336,11 +339,13 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
         ...(saved.awayHours && {
           route: { price: saved.dayRate, awayHours: saved.awayHours, km: saved.km ?? b.trip?.km ?? 0 },
         }),
+        // Priced by the driver's time (from 8 Nov 2026): the km with no route hours.
+        ...(pricedByTime(saved) && { time: { km: saved.km ?? 0 } }),
       }
-    : billRates(b.quote, tripRules, b.trip?.km, link.kind === 'one-way' ? plan?.homeAt : undefined);
+    : billRates(b.quote, tripRules, b.trip?.km, link.kind === 'one-way');
   const [dayRate, setDayRate] = useState(String(rates.dayRate));
   const [cost, setCost] = useState('');
-  const [returnPay, setReturnPay] = useState(String(DEFAULT_RETURN_PAY));
+  const [returnPay, setReturnPay] = useState(String(rates.time ? DEFAULT_HOUR_PAY : DEFAULT_RETURN_PAY));
   const [editing, setEditing] = useState(!b.bill);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -397,7 +402,9 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
         `Final bill ${rupees(bill.amount)} (${billBreakdown(bill)}). ` +
         `Driving ${durationText(bill.driveMinutes)}${link.kind === 'one-way' ? `, way home ${durationText(bill.returnMinutes)}` : ''}${link.nonstop ? ', day and night' : ''}.` +
         (pay
-          ? ` Driver ${rupees(int(cost))} a day, ${rupees(int(returnPay))} an hour home → driver gets ${rupees(pay)}, profit ${rupees(profit)} (${profitPct}%).`
+          ? rates.time
+            ? ` Driver ${rupees(int(cost))} for each 24 h, ${rupees(int(returnPay))} an hour past them → driver gets ${rupees(pay)}, profit ${rupees(profit)} (${profitPct}%).`
+            : ` Driver ${rupees(int(cost))} a day, ${rupees(int(returnPay))} an hour home → driver gets ${rupees(pay)}, profit ${rupees(profit)} (${profitPct}%).`
           : '');
       await saveFinalBill(
         user,
@@ -487,7 +494,8 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
             ) : null}
           </p>
           <p className="text-fg-subtle mt-1 text-xs">
-            The first {GRACE} minutes of an hour are free. Rates from {b.quote ? 'the agreed price' : 'the lowest shown'}.
+            The first {GRACE} minutes of an hour are free. Rates from{' '}
+            {b.quote ? 'the agreed price' : rates.time ? 'the price customers are shown for the distance' : 'the lowest shown'}.
           </p>
 
           {warnings.map((w) => (
@@ -498,7 +506,9 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
 
           <div className="mt-3 grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1">
-              <span className="font-medium">{rates.route ? 'Route price' : 'Day rate'}</span>
+              <span className="font-medium">
+                {rates.route ? 'Route price' : rates.time ? 'Price for each 24 h' : 'Day rate'}
+              </span>
               <Input
                 type="number"
                 inputMode="numeric"
@@ -509,7 +519,7 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
               />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="font-medium">Driver’s cost a day</span>
+              <span className="font-medium">{rates.time ? 'Driver’s cost for each 24 h' : 'Driver’s cost a day'}</span>
               <Input
                 type="number"
                 inputMode="numeric"
@@ -522,7 +532,9 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
             </label>
             {link.kind === 'one-way' && (
               <label className="flex flex-col gap-1">
-                <span className="font-medium">Driver’s pay an hour home</span>
+                <span className="font-medium">
+                  {rates.time ? 'His pay an hour past the 24-h blocks' : 'Driver’s pay an hour home'}
+                </span>
                 <Input
                   type="number"
                   inputMode="numeric"
@@ -542,7 +554,12 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
               </div>
               <div>
                 <dt className="text-fg-subtle text-xs">Your profit</dt>
-                <dd className={cn('tabular font-semibold', profitPct + 1e-9 >= MIN_PROFIT ? 'text-success' : 'text-error')}>
+                <dd
+                  className={cn(
+                    'tabular font-semibold',
+                    profitPct + 1e-9 >= MIN_PROFIT && profitPct - 1e-9 <= MAX_PROFIT ? 'text-success' : 'text-error',
+                  )}
+                >
                   {rupees(profit)} · {profitPct}%
                 </dd>
               </div>

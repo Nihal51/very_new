@@ -11,6 +11,8 @@ import test from 'node:test';
 import { estimate, planTrip, returnCost, withReturn } from '../lib/outstation.ts';
 import {
   addDays,
+  awayFromNotes,
+  awayNote,
   directQueries,
   findReturn,
   hubQueries,
@@ -410,16 +412,8 @@ test('live status that cannot be had (busy) falls back to the timetable, so the 
 const rules = {
   dayRate: { ...settings.prices.outstation },
   nearRates: settings.prices.outstationNear,
-  shortDrive: { minimum: settings.outstation.shortDriveMinimum, hours: settings.outstation.shortDriveHours },
-  route: {
-    afterHours: settings.outstation.routeAfterHours,
-    base: settings.outstation.routeBase,
-    perKm: settings.outstation.routePerKm,
-    minBase: settings.outstation.routeMinBase,
-    minPerDay: settings.outstation.routeMinPerDay,
-    maxPerDay: settings.outstation.routeMaxPerDay,
-  },
-
+  nearFromKm: settings.outstation.nearFromKm,
+  dayTopFromKm: settings.outstation.dayTopFromKm,
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
   returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
@@ -434,59 +428,65 @@ const rules = {
   localWithinKm: settings.outstation.localWithinKm,
 };
 
-test('the way home from a train: whole hours from the drop, once, with the daily cap — never counted twice', () => {
-  const plan = planTrip(rules, 1370, 'one-way', 0, { hours: 28 }, 7, true); // Bengaluru, day and night
+test('the train sets the hours of his time: from the start until the train gets him home, counted once', () => {
+  const plan = planTrip(rules, 1370, 'one-way', 0, { hours: 26, wait: 8.75 }, 7, true); // Bengaluru, day and night
   assert.equal(plan.homeBasis, 'allowance');
   // The train: leaves 12 h after the drop, home 24 h 25 m later.
   const train = withReturn(plan, plan.dropAt + 12, plan.dropAt + 36.42);
   assert.equal(train.homeBasis, 'train');
   assert.equal(train.returnHours, 37);
+  assert.ok(Math.abs(train.waitHours - 12) < 1e-9);
   const est = estimate(rules, train);
-  assert.equal(est.returnCharge, returnCost(37, 120, 1200));
-  assert.equal(est.returnCharge, 1200 + 1200, '24 h capped at ₹1,200, 13 h more capped at ₹1,200');
+  // 27.4 h of driving + 36.42 h = 63.8 → 64 h: 2 × 24 h + 16 h — 16 × ₹130 is more than a day, so 3 × ₹1,750.
+  assert.deepEqual([est.time.hours, est.time.days, est.time.extraHours, est.from, est.to], [64, 3, 0, 5250, 5250]);
   // The driving is untouched by the train.
   assert.deepEqual([train.fullDays, train.extraHours], [plan.fullDays, plan.extraHours]);
-  assert.equal(est.driving.from + est.returnCharge, plan.fullDays * rules.dayRate.from + plan.extraHours * rules.extraHour + 2400);
-  // Bengaluru is a route price (1 Nov 2026): ₹350 + ₹4.5 × 1,370 km = ₹6,515 → ₹6,500 — but day and night the
-  // trip needs 53 h (3 days): at most 3 × ₹1,850 (7 Nov 2026). The 12 h wait fits in the 72 h paid: no charge.
-  assert.deepEqual([est.from, est.to, est.route.km, est.route.days, est.route.by, est.route.extraHours], [5550, 5550, 1370, 3, 'cap', 0]);
 });
 
-/* Decided with the owner, 3 Nov 2026: a longer drop's route price was the same
-   however long he waited for his train. Now it includes up to 6 h of waiting
-   (at the drop and at a change); every hour more is charged like his way
-   home — ₹120 an hour, more than 6 h in a day = ₹1,200 a day. */
+/* Decided with the owner, 8 Nov 2026: the price is his time from the start
+   until he is home. Waiting for his train inside the 24-hour blocks costs
+   nothing more; past them ₹130 an hour, never more than one more day. */
 
-test('waiting for his train: free inside the days paid; past them ₹120 an hour, at most ₹1,200 a day (7 Nov 2026)', () => {
-  const plan = planTrip(rules, 1370, 'one-way', 0, { hours: 28 }, 7); // Bengaluru, resting at night: drops on day 3
-  const route = (wait, ride = 24, change) => estimate(rules, withReturn(plan, plan.dropAt + wait, plan.dropAt + wait + ride, change)).route;
-  // As planned (drive, 1 h at the station, 24 h home): 77 h → 4 days paid (96 h): ₹6,500 by the km, at least 4 × ₹1,650.
-  assert.deepEqual([route(1).days, route(1).price, route(1).freeHours], [4, 6600, 19]);
-  // Waiting up to the end of the 4 days: no charge — the owner's rule.
-  for (const wait of [2, 6, 10, 13, 20]) assert.equal(route(wait).price, 6600, `${wait} h of waiting`);
-  // 28 h of waiting: 104 h away, 8 h past the 96 h paid × ₹120.
-  assert.deepEqual([route(28).extraHours, route(28).extraCharge, route(28).price], [8, 960, 7560]);
-  // 31 h: 11 h past — never more than ₹1,200 for each 24 h.
-  assert.deepEqual([route(31).extraHours, route(31).extraCharge, route(31).price], [11, 1200, 7800]);
-  assert.deepEqual([route(40).extraHours, route(40).extraCharge], [20, 1200]);
-  // A change of train counts as waiting: 3 h at the drop + 5 h at Nagpur, 19 h on the trains → the trip needs
-  // 72 h (3 days, ₹5,550); he is home after 79 h: 7 h past × ₹120.
-  assert.deepEqual([route(3, 24, 8).days, route(3, 24, 8).extraHours, route(3, 24, 8).price], [3, 7, 5550 + 840]);
-  // The typical time (no train picked): the days for it, nothing past them.
-  assert.deepEqual([estimate(rules, plan).from, estimate(rules, plan).route.extraHours], [6600, 0]);
+test('waiting for his train: free inside the 24-hour blocks; past them ₹130 an hour, never more than a day', () => {
+  const plan = planTrip(rules, 546, 'one-way', 0, { hours: 9.5, wait: 4.75 }, 7); // Visakhapatnam: drops after 10.9 h
+  const at = (wait, ride = 9.5, change) => estimate(rules, withReturn(plan, plan.dropAt + wait, plan.dropAt + wait + ride, change));
+  for (const wait of [1, 2, 3.5]) assert.equal(at(wait).from, 1750, `${wait} h of waiting: home inside the 24 h`);
+  assert.deepEqual([at(4).time.extraHours, at(4).from], [1, 1750 + 130]);
+  assert.deepEqual([at(12).time.extraHours, at(12).from], [9, 1750 + 9 * 130]);
+  assert.deepEqual([at(17).time.days, at(17).time.extraHours, at(17).from], [2, 0, 3500], '14 h past: one more day instead');
+  assert.deepEqual([at(28).time.days, at(28).time.extraHours, at(28).from], [2, 1, 3500 + 130]);
+  // A change of train counts in his time like any wait: 3 h at the drop, then 14.5 h to home with the change → 29 h.
+  assert.equal(at(3, 14.5, 8).from, 1750 + 5 * 130);
+  // No train picked: the route's average (4.75 h wait, 9.5 h ride) → 26 h.
+  assert.deepEqual([estimate(rules, plan).time.hours, estimate(rules, plan).from], [26, 2010]);
 });
 
-test('a route price stays within ₹1,650–1,850 for each day paid; the hours past them at most a day (7 Nov 2026)', () => {
+test('his time with any train stays within the day price for each started 24 h, and only rises with the hours', () => {
   for (const nonstop of [false, true]) {
-    const plan = planTrip(rules, 1370, 'one-way', 0, { hours: 28 }, 7, nonstop);
+    const plan = planTrip(rules, 1370, 'one-way', 0, { hours: 26, wait: 8.75 }, 7, nonstop);
+    let last = 0;
     for (const wait of [1, 4, 8, 14, 20, 30, 45]) {
-      const r = estimate(rules, withReturn(plan, plan.dropAt + wait, plan.dropAt + wait + 26)).route;
+      const t = estimate(rules, withReturn(plan, plan.dropAt + wait, plan.dropAt + wait + 26)).time;
       const label = `${nonstop ? 'day and night' : 'resting'}, ${wait} h wait`;
-      assert.ok(r.daysPrice >= 1650 * r.days && r.daysPrice <= 1850 * r.days, `${label}: ₹${r.daysPrice} for ${r.days} days`);
-      assert.ok(r.extraCharge <= 1200 * Math.ceil(r.extraHours / 24), `${label}: ₹${r.extraCharge} for ${r.extraHours} h`);
-      assert.equal(r.price, r.daysPrice + r.extraCharge);
+      assert.ok(t.price <= 1750 * Math.ceil(t.hours / 24), `${label}: ₹${t.price} for ${t.hours} h`);
+      assert.ok(t.extraCharge < 1750, `${label}: the hours past the blocks cost less than a day`);
+      assert.ok(t.price >= last, `${label}: ₹${t.price} after ₹${last}`);
+      last = t.price;
     }
   }
+});
+
+test('the booking’s train note: the wait and the hours away, for the price on the call', () => {
+  const note =
+    'Train home in the estimate: 12345 Some Express Fri, 31 Oct, 11:40 pm (timetable; not booked; he waits 3 h in all; he is away 35 h in all). Please call first.';
+  assert.equal(waitFromNotes(note), 3);
+  assert.equal(awayFromNotes(note), 35);
+  assert.equal(awayNote(34.2), 'he is away 35 h in all');
+  assert.equal(awayNote(35), 'he is away 35 h in all');
+  // Older notes had only the wait.
+  assert.equal(awayFromNotes('Train home in the estimate: 1 X (timetable; not booked; he waits 3 h in all).'), undefined);
+  assert.equal(awayFromNotes('he is away 35 h in all'), undefined, 'only inside the train note');
+  assert.equal(awayFromNotes(undefined), undefined);
 });
 
 test('a train that does not get him home after the drop is ignored', () => {

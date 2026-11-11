@@ -1,6 +1,10 @@
 /**
  * The trip clock (lib/tripclock.ts): the driver's steps, the bill so far and
- * the final bill from his taps, and the messages for WhatsApp.
+ * the final bill from his taps, and the messages for WhatsApp. One-way drops
+ * from 8 Nov 2026 are billed by the driver's time (start → home, 24-hour
+ * blocks); older quotes the way they were agreed.
+ *
+ * Driver costs here are made-up round numbers (the repository is public).
  */
 
 import assert from 'node:assert/strict';
@@ -28,15 +32,8 @@ import { settings } from '../site-settings.ts';
 const rules = {
   dayRate: { ...settings.prices.outstation },
   nearRates: settings.prices.outstationNear,
-  shortDrive: { minimum: settings.outstation.shortDriveMinimum, hours: settings.outstation.shortDriveHours },
-  route: {
-    afterHours: settings.outstation.routeAfterHours,
-    base: settings.outstation.routeBase,
-    perKm: settings.outstation.routePerKm,
-    minBase: settings.outstation.routeMinBase,
-    minPerDay: settings.outstation.routeMinPerDay,
-    maxPerDay: settings.outstation.routeMaxPerDay,
-  },
+  nearFromKm: settings.outstation.nearFromKm,
+  dayTopFromKm: settings.outstation.dayTopFromKm,
 
   returnHour: settings.outstation.returnHour,
   returnMaxPerDay: settings.outstation.returnMaxPerDay,
@@ -82,17 +79,80 @@ test('a tap that reached us late shows the phone time', () => {
   assert.equal(phoneGap(l, 'home'), undefined);
 });
 
-test('rates: the agreed price, or the lowest shown', () => {
-  assert.deepEqual(billRates(null, rules), { dayRate: rules.dayRate.from, extraHourRate: 120, returnHourRate: 120, ticket: 0 });
-  // No agreed price: the lowest day price shown for the distance (Bilaspur, 113 km).
-  assert.equal(billRates(null, rules, 113).dayRate, 1300);
-  assert.equal(billRates({ dayRate: 1350, extraHourRate: 120, returnHourRate: 120, ticket: 0 }, rules, 113).dayRate, 1350);
-  assert.deepEqual(billRates({ dayRate: 1600, extraHourRate: 130, returnHourRate: 120, ticket: 650 }, rules), {
+/** A quote saved from /admin from 8 Nov 2026: Mumbai, 2 × 24 h + 9 h at ₹1,750 and ₹130 (lib/outstation.ts pricedByTime). */
+const timeQuote = { amount: 4670, dayRate: 1750, days: 2, returnHours: 0, returnHourRate: 0, returnCharge: 0, extraHours: 9, extraHourRate: 130, extraCharge: 1170, km: 1118, ticket: 0 };
+
+test('rates: the agreed price, or the price shown for the distance — and which way to bill', () => {
+  // No km (a place not in the list) and no quote: the lowest day price, by the hours.
+  assert.deepEqual(billRates(null, rules), { dayRate: 1050, extraHourRate: 130, returnHourRate: 120, ticket: 0 });
+  // No quote, a one-way drop to a known place: the driver's time at the price shown for the distance.
+  assert.deepEqual(billRates(null, rules, 113), { dayRate: 1200, extraHourRate: 130, returnHourRate: 120, ticket: 0, time: { km: 113 } });
+  assert.deepEqual(billRates(null, rules, 1118).time, { km: 1118 });
+  // A round trip: the days at the day price, never the time.
+  assert.deepEqual(billRates(null, rules, 113, false), { dayRate: 1200, extraHourRate: 130, returnHourRate: 120, ticket: 0 });
+  // A quote from 8 Nov 2026: its rates and the km.
+  assert.deepEqual(billRates(timeQuote, rules, 1118), { dayRate: 1750, extraHourRate: 130, returnHourRate: 0, ticket: 0, time: { km: 1118 } });
+  // An older quote by the hours: its rates, by the hours.
+  assert.deepEqual(billRates({ dayRate: 1600, extraHourRate: 130, returnHourRate: 120, returnHours: 6, returnCharge: 720, ticket: 650 }, rules, 284), {
     dayRate: 1600, extraHourRate: 130, returnHourRate: 120, ticket: 650,
   });
 });
 
-test('the bill so far, then the final bill — Raipur → Bengaluru day and night', () => {
+test('the bill so far, then the final bill — by the driver’s time (Raipur → Mumbai)', () => {
+  const rates = billRates(timeQuote, rules, 1118);
+  const link = { kind: 'one-way', nonstop: false, to: 'Mumbai', startAt: ist('2026-11-05T07:45') };
+  // 22 h on the road: inside the first 24 h.
+  let now = billNow(link, rates, rules, GRACE, ist('2026-11-06T05:45').getTime());
+  assert.deepEqual([now.final, now.bill.days, now.bill.extraHours, now.bill.amount], [false, 1, 0, 1750]);
+  // Dropped; 48 h from the start, on his way home: 2 × 24 h.
+  const dropped = { ...link, dropAt: ist('2026-11-06T17:00') };
+  now = billNow(dropped, rates, rules, GRACE, ist('2026-11-07T07:45').getTime());
+  assert.deepEqual([now.final, now.bill.days, now.bill.extraHours, now.bill.amount], [false, 2, 0, 3500]);
+  // Home 57 h 10 m after the start: 2 × 24 h + 9 h.
+  const done = { ...dropped, homeAt: ist('2026-11-07T16:55') };
+  now = billNow(done, rates, rules, GRACE, Date.now());
+  assert.equal(now.final, true);
+  assert.equal(now.bill.amount, 4670);
+  assert.equal(daysText(now.bill), '57 h away: 2 × 24 h + 9 h');
+  assert.deepEqual(billLines(now.bill, rules), [
+    { label: 'Driver’s time: 57 h, leaves → home (1,118 km, his wait and train home included) = 2 × 24 h × ₹1,750', amount: '₹3,500' },
+    { label: '9 hours past the 48 h × ₹130 (never more than one more day)', amount: '₹1,170' },
+  ]);
+  assert.equal(billBreakdown(now.bill), '₹1,750 × 2 × 24 h of the driver’s time (57 h, leaves → home) + ₹1,170 for 9 hours past them');
+  // What is saved on the booking: the customer's numbers and the km — no route hours, no way-home charge.
+  const saved = bookingBill(now.bill, false);
+  assert.deepEqual(Object.keys(saved).sort(), [
+    'amount', 'dayRate', 'days', 'extraCharge', 'extraHourRate', 'extraHours', 'km', 'nonstop', 'returnCharge', 'returnHourRate', 'returnHours', 'ticket',
+  ]);
+  assert.deepEqual([saved.km, saved.days, saved.extraHours, saved.returnHours, saved.returnCharge, saved.amount], [1118, 2, 9, 0, 0, 4670]);
+  // A saved bill reads the same, without the hours.
+  assert.equal(billBreakdown(saved), '₹1,750 × 2 × 24 h of the driver’s time + ₹1,170 for 9 hours past them');
+  const msg = billMessage({ name: 'Ramesh Sahu', ref: 'DB-1042', city: 'Raipur' }, done, now.bill, rules);
+  assert.match(msg, /Hi Ramesh,/);
+  assert.match(msg, /Driver home: Sat, 7 Nov, 4:55 pm/);
+  assert.match(msg, /• Driver’s time: 57 h, leaves → home/);
+  assert.match(msg, /Total: ₹4,670$/);
+  // The driver (made-up costs): his cost for each 24 h, his hourly pay past them — at most his day.
+  assert.equal(driverPay(now.bill, 1500, 90, rules), 2 * 1500 + 9 * 90);
+  assert.equal(driverPay({ ...now.bill, extraHours: 20 }, 1500, 90, rules), 2 * 1500 + 1500);
+});
+
+test('a same-day drop without a quote: one price for the trip, at the price shown for the distance', () => {
+  const rates = billRates(null, rules, 113); // Raipur → Bilaspur
+  const l = { kind: 'one-way', nonstop: false, to: 'Bilaspur', startAt: ist('2026-11-02T07:00'), dropAt: ist('2026-11-02T09:40'), homeAt: ist('2026-11-02T13:10') };
+  const { bill } = billNow(l, rates, rules, GRACE, Date.now());
+  assert.deepEqual([bill.days, bill.extraHours, bill.amount, bill.time.hours, bill.time.short], [1, 0, 1200, 6, true]);
+  assert.deepEqual(billLines(bill, rules), [{ label: 'Driver’s time: 6 h, leaves → home (113 km, home the same day) — one price', amount: '₹1,200' }]);
+  assert.equal(billBreakdown(bill), '₹1,200 for the driver’s time (6 h, leaves → home)');
+  assert.equal(billBreakdown(bookingBill(bill, false)), '₹1,200 for the driver’s time (up to 24 h, his way home included)');
+  // Home only the next day (30 h): the hours past the 24, still less than a day.
+  const late = billNow({ ...l, homeAt: ist('2026-11-03T13:10') }, rates, rules, GRACE, Date.now()).bill;
+  assert.deepEqual([late.days, late.extraHours, late.amount], [1, 6, 1200 + 6 * 130]);
+});
+
+/* Quotes from before 8 Nov 2026 are billed the way they were agreed. */
+
+test('an older quote by the hours (before 8 Nov 2026): Raipur → Bengaluru day and night', () => {
   const rates = { dayRate: 1600, extraHourRate: 120, returnHourRate: 120, ticket: 0 };
   const link = { kind: 'one-way', nonstop: true, to: 'Bengaluru', startAt: ist('2026-10-29T07:45') };
   // Not started: nothing.
@@ -128,18 +188,6 @@ test('the bill so far, then the final bill — Raipur → Bengaluru day and nigh
   assert.match(msg, /Total: ₹6,200$/);
 });
 
-test('a short one-way drop: at least ₹600 for the driving, then his way home by the hour', () => {
-  const rates = billRates(null, rules, 113); // Raipur → Bilaspur, no agreed price yet
-  const l = { kind: 'one-way', nonstop: false, to: 'Bilaspur', startAt: ist('2026-11-02T07:00'), dropAt: ist('2026-11-02T09:40'), homeAt: ist('2026-11-02T12:40') };
-  const { bill } = billNow(l, rates, rules, GRACE, Date.now());
-  assert.deepEqual([bill.days, bill.extraHours, bill.extraCharge, bill.returnHours, bill.returnCharge, bill.amount], [0, 3, 600, 3, 360, 960]);
-  assert.deepEqual(billLines(bill, rules), [
-    { label: '3 h of driving: ₹600 for the first 3 h', amount: '₹600' },
-    { label: 'Driver’s way home: 3 h = 3 h × ₹120', amount: '₹360' },
-  ]);
-  assert.equal(billBreakdown(bill), '₹600 for 3 h of driving + ₹360 way home (3 h)');
-});
-
 test('a round trip: start → back, at least one day', () => {
   const rates = { dayRate: 1550, extraHourRate: 120, returnHourRate: 120, ticket: 0 };
   const l = { kind: 'round', nonstop: false, startAt: ist('2026-11-02T06:00'), homeAt: ist('2026-11-04T11:10') };
@@ -149,12 +197,12 @@ test('a round trip: start → back, at least one day', () => {
   assert.match(msg, /Back: Wed, 4 Nov, 11:10 am \(53 h 10 m\)/);
 });
 
-test("driver's pay: his day, a twelfth of it an hour, his way home with the same daily cap", () => {
+test("driver's pay on an older bill: his day, a twelfth of it an hour, his way home with the same daily cap", () => {
   const b = { days: 2, extraHours: 5, returnHours: 38 };
-  // Made-up costs (public repo): ₹1,200 a day, ₹100 an hour home.
-  // 2 days + 5/12 of a day + way home 38 h (24 h capped at ₹1,000, then 14 h capped at ₹1,000).
-  assert.equal(driverPay(b, 1200, 100, rules), 2400 + 500 + 2000);
-  assert.equal(driverPay({ days: 0, extraHours: 12, returnHours: 0 }, 1200, 100, rules), 1200);
+  // Made-up costs (public repo): ₹1,440 a day, ₹80 an hour home.
+  // 2 days + 5/12 of a day + way home 38 h (24 h capped at ₹800, then 14 h capped at ₹800).
+  assert.equal(driverPay(b, 1440, 80, rules), 2880 + 600 + 1600);
+  assert.equal(driverPay({ days: 0, extraHours: 12, returnHours: 0 }, 1440, 80, rules), 1440);
 });
 
 test('the WhatsApp message to the driver has his link, in Hindi and English', () => {
@@ -165,15 +213,14 @@ test('the WhatsApp message to the driver has his link, in Hindi and English', ()
   assert.match(driverMessage({ ref: '', to: 'Puri', kind: 'round', driverName: 'Raju' }, 'Durg', 'u'), /Back when the trip is over/);
 });
 
-test('a route price on the bill: the agreed one, or the estimate’s for the plan (1 Nov 2026)', () => {
+test('a route price on the bill (quotes from 1 Nov to 7 Nov 2026): the agreed one', () => {
   // An agreed route price (a quote with awayHours): Delhi, 3 days paid.
   const quote = { amount: 5550, dayRate: 5550, days: 1, returnHours: 0, returnHourRate: 120, returnCharge: 0, extraHours: 0, extraHourRate: 120, ticket: 0, awayHours: 60, km: 1214 };
   const agreed = billRates(quote, rules, 1214);
   assert.deepEqual(agreed.route, { price: 5550, awayHours: 60, km: 1214 });
-  // No quote: the route price for the plan's hours away, as the estimate.
-  assert.deepEqual(billRates(null, rules, 334, 15.2).route, { price: 1850, awayHours: 16, km: 334 });
-  assert.equal(billRates(null, rules, 113, 5).route, undefined, 'a short drop: by the hours');
-  assert.equal(billRates(null, rules, 113, 5).dayRate, 1300);
+  // A quote with the km but no route hours is the driver's time, not a route price.
+  assert.equal(billRates({ ...quote, awayHours: undefined }, rules, 1214).route, undefined);
+  assert.deepEqual(billRates({ ...quote, awayHours: undefined }, rules, 1214).time, { km: 1214 });
 
   // Home 65 h 30 m after the start (66 h): inside the 3 days paid (72 h) — the price, nothing more.
   const link = { kind: 'one-way', nonstop: false, to: 'Delhi', startAt: ist('2026-11-02T07:00'), dropAt: ist('2026-11-03T08:00'), homeAt: ist('2026-11-05T00:30') };
@@ -194,8 +241,8 @@ test('a route price on the bill: the agreed one, or the estimate’s for the pla
   assert.deepEqual([saved.awayHours, saved.km, saved.days, saved.dayRate, saved.amount], [60, 1214, 1, 5550, 6270]);
   // A saved route bill reads the same.
   assert.equal(billBreakdown(saved), '₹5,550 route price (about 60 h away, way home included) + ₹720 for 6 hours past the days paid');
-  // The driver: his day cost for the 3 days paid, and his hourly pay for the 6 h past them.
-  assert.equal(driverPay(bill, 1000, 100, rules), 3 * 1000 + 6 * 100);
-  assert.equal(driverPay(onTime.bill, 1000, 100, rules), 3 * 1000);
+  // The driver (made-up costs): his day cost for the 3 days paid, and his hourly pay for the 6 h past them.
+  assert.equal(driverPay(bill, 1440, 80, rules), 3 * 1440 + 6 * 80);
+  assert.equal(driverPay(onTime.bill, 1440, 80, rules), 3 * 1440);
   assert.match(billMessage({ name: 'Ravi Sahu', ref: 'DB-1', city: 'Raipur' }, lateLink, bill, rules), /Total: ₹6,270$/);
 });
