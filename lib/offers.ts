@@ -26,6 +26,8 @@ export type Offer = {
   paid: boolean;
   paidAt?: Date;
   createdAt?: Date;
+  /** Who posted it: an admin's uid, or 'robot' for an automatic offer (its cut drops 30 → 25 → 20% while nobody takes it). */
+  by?: string;
 };
 
 /**

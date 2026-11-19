@@ -54,8 +54,10 @@
  *   FIREBASE_SA_KEY      private_key: signs the driver's login (see "driver login")
  *   OTP_PER_PHONE        login codes per number in 24 hours, default 3
  *   OTP_DAILY_LIMIT      login codes a day in all, default 40
- *   AUTO_OFFERS          "off" stops automatic offers of confirmed 1-hour / 3-hour bookings
- *   AUTO_OFFER_CUT       DriveBuddy's cut on automatic offers, percent, default 25 (20–30)
+ *   AUTO_OFFERS          "off" stops automatic offers of confirmed bookings with a price
+ *   AUTO_OFFER_CUTS      DriveBuddy's cut on an automatic offer, step by step while
+ *                        nobody takes it, percent, default "30,25,20" (each 20–30)
+ *   AUTO_OFFER_STEP_MIN  minutes at each step before the driver pay goes up, default 2
  *   REVIEW_PHONE         optional: a number that logs in to the Driver app with
  *   REVIEW_CODE          this fixed code and no SMS (for the Google Play reviewer)
  *
@@ -1068,23 +1070,53 @@ function driverVerify_(body, now) {
 /* ========================================================== job dispatch
    Job offers (firestore.rules, offers/{bookingId}) reach the drivers' phones:
 
-   • Automatic offers: a booking for a fixed-price package (1 hour, 3 hours) is
-     offered to its city's drivers by itself the moment an admin confirms it
-     (status "confirmed", no driver yet), at the website's price
-     (SITE_URL/app-config.json) with DriveBuddy's usual cut (AUTO_OFFER_CUT,
-     default 25). AUTO_OFFERS = off switches this off. Other packages are
-     offered by hand from /admin, as before.
+   • Automatic offers: a booking with a known price is offered to its city's
+     drivers by itself the moment an admin confirms it (status "confirmed", no
+     driver yet): the price agreed on the call (quote) if there is one, else the
+     website's price for 1 hour / 3 hours (SITE_URL/app-config.json). Others
+     (no price yet) are offered by hand from /admin. AUTO_OFFERS = off stops it.
+   • Driver pay that rises: an automatic offer starts with DriveBuddy's cut at
+     30%; with no taker after AUTO_OFFER_STEP_MIN minutes it drops to 25%, then
+     to 20% (AUTO_OFFER_CUTS) — the driver earns more each time, and every
+     online driver hears "pay raised". An offer an admin posted by hand keeps
+     the cut he chose.
    • Nearest first: every open offer, automatic or by hand, is sent as a push
      notification to the 3 nearest drivers who are Online in the Driver app
      (availability/{driverId}, a spot from the last 10 minutes), then to every
      other online driver of the city a minute later. If nobody has taken it 4
-     minutes after that, Telegram hears about it once.
+     minutes after that (and, for an automatic offer, once its pay has reached
+     the top), Telegram hears about it once.
 
    Its own bookkeeping lives in offerAlerts/{bookingId} (no browser can read or
    write it), so the offer document keeps exactly the shape the rules check. */
 
 var DISPATCH = { firstWave: 3, wideAfterMs: 60 * 1000, alarmAfterMs: 4 * 60 * 1000, freshMs: 10 * 60 * 1000 };
 var AUTO_PACKAGES = { '1-hour-300': 'oneHour', '3-hours-600': 'threeHours' };
+var AUTO_CUTS = [30, 25, 20];
+var AUTO_STEP_MIN = 2;
+
+/** "30,25,20" → [30, 25, 20]: whole percents within 20–30, highest first; anything odd → the default. */
+function autoCuts(raw) {
+  var list = String(raw || '').split(',').map(function (x) { return Math.round(Number(x)); })
+    .filter(function (n) { return n >= 20 && n <= 30; });
+  if (!list.length) return AUTO_CUTS.slice();
+  return list.sort(function (a, b) { return b - a; }).filter(function (n, i, a) { return a.indexOf(n) === i; });
+}
+
+/** The cut an automatic offer should have `ageMs` after it went out: one step down every `stepMs`. */
+function autoCutAt(ageMs, cuts, stepMs) {
+  var i = Math.max(0, Math.floor(Math.max(0, ageMs) / Math.max(60000, stepMs)));
+  return cuts[Math.min(i, cuts.length - 1)];
+}
+
+/** The price an offer can go out at by itself: the price saved on the call, else the site's fixed price; 0 = none. */
+function autoPriceOf(b, prices) {
+  var quoted = b.quote && Number(b.quote.amount);
+  if (quoted >= 100 && quoted <= 500000) return Math.round(quoted);
+  var key = AUTO_PACKAGES[b.package];
+  var fixed = key && prices && Number(prices[key]);
+  return fixed >= 100 ? Math.round(fixed) : 0;
+}
 var CITY_CENTRES = {
   Raipur: { lat: 21.2514, lng: 81.6296 },
   Bhilai: { lat: 21.1938, lng: 81.3509 },
@@ -1147,11 +1179,10 @@ function driverPayOf(price, cutPercent) {
   return Math.floor(Math.round(price) * (100 - cut) / 100 / 10) * 10;
 }
 
-/** The automatic offer for a confirmed fixed-price booking, in the exact shape firestore.rules checks; null if not one. */
+/** The automatic offer for a confirmed booking with a price, in the exact shape firestore.rules checks; null if not one. */
 function autoOfferFor(id, b, prices, cut, now) {
-  var key = AUTO_PACKAGES[b.package];
-  var price = key && prices && Number(prices[key]);
-  if (!price || !(price >= 100) || b.status !== 'confirmed' || b.assignedDriver) return null;
+  var price = autoPriceOf(b, prices);
+  if (!price || b.status !== 'confirmed' || b.assignedDriver) return null;
   var area = offerAreaOf(b.pickup);
   if (area.length < 2) area = b.city;
   return {
@@ -1162,13 +1193,13 @@ function autoOfferFor(id, b, prices, cut, now) {
   };
 }
 
-/** The job alert on a driver's phone (English and Hindi, most drivers read Hindi first). */
-function offerPush(offer, token) {
+/** The job alert on a driver's phone (English and Hindi, most drivers read Hindi first). `raised`: the pay went up. */
+function offerPush(offer, token, raised) {
   var pay = '₹' + inr(offer.driverPay);
   var what = PACKAGE_NAMES[offer.package] || 'Driver job';
   return {
     to: token,
-    title: 'New job · नया काम: ' + what,
+    title: (raised ? 'Pay raised · कमाई बढ़ी: ' : 'New job · नया काम: ') + what,
     body: 'You earn ' + pay + ' · ' + offer.area + (offer.when ? ' · ' + formatWhen(offer.when) : ' · ASAP') + '. Open the app to accept.',
     data: { offerId: offer.bookingId },
     sound: 'default',
@@ -1193,12 +1224,13 @@ function autoOffers_() {
   if (prop_('AUTO_OFFERS') === 'off') return;
   changedSince_('bookings', 'autoOfferMs', function (rows) {
     var prices = null;
-    var cut = Number(prop_('AUTO_OFFER_CUT')) || 25;
+    var cut = autoCuts(prop_('AUTO_OFFER_CUTS'))[0];
     rows.forEach(function (row) {
       var b = row.data;
-      if (b.status !== 'confirmed' || b.assignedDriver || !AUTO_PACKAGES[b.package]) return;
+      if (b.status !== 'confirmed' || b.assignedDriver) return;
+      if (!AUTO_PACKAGES[b.package] && !(b.quote && Number(b.quote.amount) >= 100)) return; // no price yet
       if (fsGet_('offers/' + row.id)) return; // already offered (by hand or before)
-      prices = prices || sitePrices_();
+      prices = prices || (AUTO_PACKAGES[b.package] ? sitePrices_() : {});
       var offer = autoOfferFor(row.id, b, prices, cut, new Date());
       if (!offer) return;
       fsCommit_([{ update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } }]);
@@ -1212,18 +1244,41 @@ function dispatchOffers_() {
   if (!offers.length) return;
   var now = Date.now();
   var byCity = {};
+  var cuts = autoCuts(prop_('AUTO_OFFER_CUTS'));
+  var stepMs = (Number(prop_('AUTO_OFFER_STEP_MIN')) || AUTO_STEP_MIN) * 60000;
   offers.forEach(function (row) {
     var o = row.data;
     var alert = fsGet_('offerAlerts/' + row.id);
+    // An automatic offer nobody has taken: lower the cut a step (the driver earns more) and tell everyone again.
+    var raised = false;
+    if (o.by === 'robot' && o.createdAt) {
+      var want = autoCutAt(now - o.createdAt.getTime(), cuts, stepMs);
+      if (want < o.cutPercent) {
+        o.cutPercent = want;
+        o.driverPay = driverPayOf(o.price, want);
+        fsCommit_([{
+          update: { name: docName_('offers/' + row.id), fields: toFields({ cutPercent: o.cutPercent, driverPay: o.driverPay, updatedAt: new Date(now) }) },
+          updateMask: { fieldPaths: ['cutPercent', 'driverPay', 'updatedAt'] },
+          currentDocument: { exists: true },
+        }]);
+        raised = true;
+        if (alert) alert.alerted = []; // everyone hears about the new pay, the first wave included
+      }
+    }
     if (!byCity[o.city]) byCity[o.city] = fsQuery_('availability', fieldFilter_('city', 'EQUAL', o.city), 'ASCENDING', 100, 'city');
     var booking = fsGet_('bookings/' + row.id) || {};
     var spot = (booking.pickupGeo && typeof booking.pickupGeo.lat === 'number') ? booking.pickupGeo : (CITY_CENTRES[o.city] || CITY_CENTRES.Raipur);
-    var step = dispatchStep(alert, rankDrivers(byCity[o.city], spot, now), now);
+    var ranked = rankDrivers(byCity[o.city], spot, now);
+    var step = raised && alert && alert.stage >= 1
+      ? { stage: Math.max(2, alert.stage), send: ranked, alarm: false }
+      : dispatchStep(alert, ranked, now);
     if (!step) return;
-    if (step.send.length) sendPush_(step.send.map(function (d) { return offerPush(o, d.token); }));
+    // An automatic offer only rings Telegram once its pay has reached the top.
+    if (step.alarm && o.by === 'robot' && o.cutPercent > cuts[cuts.length - 1]) step = { stage: 2, send: step.send, alarm: false, keepTime: true };
+    if (step.send.length) sendPush_(step.send.map(function (d) { return offerPush(o, d.token, raised); }));
     if (step.alarm) {
       try {
-        sendTelegram_({ text: '⏰ No driver has taken ' + (o.ref || 'a job') + ' (' + (PACKAGE_NAMES[o.package] || o.package) + ', ' + o.city + ') yet. Call a driver, or raise the driver pay in /admin.' });
+        sendTelegram_({ text: '⏰ No driver has taken ' + (o.ref || 'a job') + ' (' + (PACKAGE_NAMES[o.package] || o.package) + ', ' + o.city + ') yet, at ₹' + inr(o.driverPay) + ' for the driver (' + o.cutPercent + '% cut). Call a driver, or change the offer in /admin.' });
       } catch (err) { console.warn('dispatch alarm: ' + err); }
     }
     var alerted = ((alert && alert.alerted) || []).concat(step.send.map(function (d) { return d.id; }));

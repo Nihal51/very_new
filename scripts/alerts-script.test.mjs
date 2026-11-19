@@ -1143,14 +1143,14 @@ describe('job dispatch', () => {
     assert.equal(offerAreaOf('12, Shankar Nagar, Raipur'), 'Shankar Nagar, Raipur');
   });
 
-  test('a confirmed 3-hour booking is offered by itself at the site price, 25% cut', () => {
+  test('a confirmed 3-hour booking is offered by itself at the site price, starting at a 30% cut', () => {
     confirm('b1');
     env.ctx.autoOffers_();
     const o = env.ctx.fromFields(env.store.docs.get('offers/b1'));
     assert.equal(o.status, 'open');
     assert.equal(o.price, 600);
-    assert.equal(o.cutPercent, 25);
-    assert.equal(o.driverPay, 450);
+    assert.equal(o.cutPercent, 30);
+    assert.equal(o.driverPay, 420);
     assert.equal(o.area, 'Shankar Nagar, Raipur');
     assert.equal(o.takenBy, null);
     assert.equal(o.by, 'robot');
@@ -1160,7 +1160,83 @@ describe('job dispatch', () => {
     assert.equal(env.store.docs.get('offers/b1').price.integerValue, '999');
   });
 
-  test('not for other packages, new or assigned bookings, or when switched off', () => {
+  test('any package with a price saved on the call goes out at that price', () => {
+    confirm('q1', 'one-way-drop', { quote: { mapValue: { fields: { amount: n(2400) } } } });
+    env.ctx.autoOffers_();
+    const o = env.ctx.fromFields(env.store.docs.get('offers/q1'));
+    assert.equal(o.price, 2400);
+    assert.equal(o.driverPay, 1680); // 70% of 2,400
+    // The quote wins over the site price for 1 hour / 3 hours too.
+    confirm('q2', '3-hours-600', { quote: { mapValue: { fields: { amount: n(700) } } } });
+    env.ctx.autoOffers_();
+    assert.equal(env.ctx.fromFields(env.store.docs.get('offers/q2')).price, 700);
+  });
+
+  test('pure: the cut steps and the automatic price', () => {
+    const { autoCuts, autoCutAt, autoPriceOf } = env.ctx;
+    assert.deepEqual([...autoCuts('')], [30, 25, 20]);
+    assert.deepEqual([...autoCuts('20, 30,25,99')], [30, 25, 20]);
+    assert.deepEqual([...autoCuts('nonsense')], [30, 25, 20]);
+    const m = 60_000;
+    assert.equal(autoCutAt(0, [30, 25, 20], 2 * m), 30);
+    assert.equal(autoCutAt(2 * m + 1, [30, 25, 20], 2 * m), 25);
+    assert.equal(autoCutAt(60 * m, [30, 25, 20], 2 * m), 20);
+    assert.equal(autoPriceOf({ package: '1-hour-300' }, { oneHour: 300 }), 300);
+    assert.equal(autoPriceOf({ package: 'local-full-day' }, { oneHour: 300 }), 0);
+    assert.equal(autoPriceOf({ package: 'local-full-day', quote: { amount: 1100 } }, {}), 1100);
+    assert.equal(autoPriceOf({ package: 'outstation', quote: { amount: 50 } }, {}), 0);
+  });
+
+  test('nobody takes it: the cut drops 30% → 25% → 20%, everyone hears the new pay, then Telegram', () => {
+    confirm('b1');
+    env.ctx.autoOffers_();
+    env.ctx.dispatchOffers_();
+    assert.equal(env.pushes.length, 3, 'first wave: the nearest 3');
+    assert.ok(env.pushes[0].body.includes('₹420'));
+    const created = (msAgo) => { env.store.docs.get('offers/b1').createdAt = ts(msAgo); };
+
+    created(2 * 60_000 + 5000);
+    env.ctx.dispatchOffers_();
+    let o = env.ctx.fromFields(env.store.docs.get('offers/b1'));
+    assert.equal(o.cutPercent, 25);
+    assert.equal(o.driverPay, 450);
+    const raised = env.pushes.slice(3);
+    assert.deepEqual(raised.map((p) => p.to), ['ExponentPushToken[d1]', 'ExponentPushToken[d2]', 'ExponentPushToken[d3]', 'ExponentPushToken[d4]']);
+    assert.ok(raised[0].title.startsWith('Pay raised'));
+    assert.ok(raised[0].body.includes('₹450'));
+
+    env.ctx.dispatchOffers_(); // nothing new yet
+    assert.equal(env.pushes.length, 7);
+
+    created(4 * 60_000 + 5000);
+    env.ctx.dispatchOffers_();
+    o = env.ctx.fromFields(env.store.docs.get('offers/b1'));
+    assert.equal(o.cutPercent, 20);
+    assert.equal(o.driverPay, 480);
+    assert.equal(env.pushes.length, 11);
+
+    // At the top pay and still nobody: Telegram, once.
+    const before = env.telegram.length;
+    age('b1', 5 * 60_000);
+    created(20 * 60_000);
+    env.ctx.dispatchOffers_();
+    assert.equal(env.telegram.length, before + 1);
+    assert.ok(env.telegram.at(-1).text.includes('₹480'));
+  });
+
+  test('an offer posted by hand keeps the cut the admin chose', () => {
+    confirm('h1');
+    env.ctx.autoOffers_();
+    const doc = env.store.docs.get('offers/h1');
+    doc.by = s('admin1');
+    doc.cutPercent = n(28);
+    doc.driverPay = n(430);
+    doc.createdAt = ts(30 * 60_000);
+    env.ctx.dispatchOffers_();
+    assert.equal(env.ctx.fromFields(env.store.docs.get('offers/h1')).cutPercent, 28);
+  });
+
+  test('not for packages without a price, new or assigned bookings, or when switched off', () => {
     confirm('b2', 'local-full-day');
     seedBooking(env.store, 'b3', { extra: { status: s('new'), updatedAt: ts(1000) } });
     confirm('b4', '1-hour-300', { assignedDriver: { mapValue: { fields: { id: s('d1'), name: s('X'), phone: s('9893302783') } } } });
@@ -1175,6 +1251,7 @@ describe('job dispatch', () => {
   });
 
   test('nearest 3 online drivers first, everyone else a minute later, Telegram after 4 more minutes', () => {
+    env.props.set('AUTO_OFFER_CUTS', '25'); // one step: the pay never changes here
     confirm('b1');
     env.ctx.autoOffers_();
     env.ctx.dispatchOffers_();

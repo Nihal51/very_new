@@ -79,6 +79,12 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
             <strong>{rupees(offer.driverPay)}</strong> · DriveBuddy keeps {offer.cutPercent}%. The nearest online drivers got an
             alert, the rest a minute later. Waiting for one to accept…
           </p>
+          {offer.by === 'robot' && (
+            <p className="text-fg-muted text-sm">
+              Automatic offer: if nobody takes it, the robot lowers DriveBuddy&apos;s cut every 2 minutes (30% → 25% → 20%),
+              so the driver earns more, and tells every online driver.
+            </p>
+          )}
           <div>
             <Button variant="ghost" loading={busy === 'withdraw'} onClick={() => act('withdraw', () => withdrawOffer(user, b.id))}>
               Withdraw offer
