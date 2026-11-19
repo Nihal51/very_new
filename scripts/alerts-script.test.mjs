@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, test } from 'node:test';
+import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 
 const CODE = readFileSync(new URL('../apps-script/Code.js', import.meta.url), 'utf8');
@@ -143,6 +144,25 @@ function load() {
   const warnings = [];
   const deadTokens = new Set(); // tokens Expo answers with DeviceNotRegistered
   const rail = { calls: [], answer: () => ({ code: 404, body: { success: false } }) }; // RailRadar stand-in
+  // Message Central stand-in: logs in, sends code 123456, accepts only that code.
+  const mc = {
+    calls: [],
+    sendCode: 200,
+    answer(url, method) {
+      if (url.includes('/auth/v1/authentication/token')) return { code: 200, body: { status: 200, token: 'mc-token-1' } };
+      if (url.includes('/verification/v3/send')) {
+        return this.sendCode === 200
+          ? { code: 200, body: { responseCode: 200, message: 'SUCCESS', data: { verificationId: '987654', timeout: '60' } } }
+          : { code: this.sendCode, body: { responseCode: this.sendCode, message: 'FAILED' } };
+      }
+      if (url.includes('/verification/v3/validateOtp')) {
+        return /[?&]code=123456(&|$)/.test(url)
+          ? { code: 200, body: { responseCode: 200, message: 'SUCCESS', data: { verificationStatus: 'VERIFICATION_COMPLETED' } } }
+          : { code: 400, body: { responseCode: 702, message: 'WRONG_OTP_PROVIDED', data: { responseCode: 702 } } };
+      }
+      return { code: 404, body: {} };
+    },
+  };
 
   const response = (code, body) => ({ getResponseCode: () => code, getContentText: () => JSON.stringify(body) });
   const ctx = {
@@ -176,7 +196,16 @@ function load() {
       createTextOutput: (t) => ({ text: t, setMimeType() { return this; } }),
       MimeType: { JSON: 'application/json' },
     },
-    Utilities: { getUuid: () => Math.random().toString(16).slice(2), sleep() {} },
+    Utilities: {
+      getUuid: () => crypto.randomUUID(),
+      sleep() {},
+      base64Encode: (t) => Buffer.from(String(t)).toString('base64'),
+      base64EncodeWebSafe: (v) => Buffer.from(typeof v === 'string' ? v : Uint8Array.from(v)).toString('base64url') + '==',
+      computeRsaSha256Signature: (input, key) => {
+        if (!String(key).includes('PRIVATE KEY')) throw new Error('bad key');
+        return [...createHash('sha256').update(input).digest()];
+      },
+    },
     Session: { getEffectiveUser: () => ({ getEmail: () => 'owner@example.com' }) },
     MailApp: { sendEmail: (m) => mail.push(m) },
     SpreadsheetApp: {
@@ -211,6 +240,11 @@ function load() {
             ),
           });
         }
+        if (url.startsWith('https://cpaas.messagecentral.com/')) {
+          mc.calls.push({ url, method: opts.method, auth: opts.headers?.authToken });
+          const { code, body } = mc.answer(url, opts.method);
+          return response(code, body);
+        }
         if (url.startsWith('https://graph.facebook.com/')) {
           whatsapps.push({ url, auth: opts.headers?.Authorization, body });
           return response(200, { messages: [{ id: 'wamid.1' }] });
@@ -235,7 +269,7 @@ function load() {
     const [head = [], ...rows] = g;
     return rows.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
   };
-  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, rail };
+  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, rail, mc };
 }
 
 const ts = (msAgo) => ({ timestampValue: new Date(Date.now() - msAgo).toISOString() });
@@ -933,5 +967,132 @@ describe('formatting', () => {
     assert.equal(back.z, null);
     assert.equal(back.arr[0], 'p');
     assert.equal(back.m.k, true);
+  });
+});
+
+/* --------------------------------------------- driver app login (OTP) */
+
+describe('driver login', () => {
+  let env;
+  const post = (body) => JSON.parse(env.ctx.doPost({ postData: { contents: JSON.stringify(body) } }).text);
+  const seedDriver = (id, phone, status, name = 'Suresh Verma') =>
+    env.store.docs.set(`drivers/${id}`, { name: s(name), phone: s(phone), status: s(status), createdAt: ts(1000) });
+  const claimsOf = (token) => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).claims;
+
+  beforeEach(() => {
+    env = load();
+    env.props.set('MC_CUSTOMER_ID', 'C-123');
+    env.props.set('MC_PASSWORD', 'secret');
+    env.props.set('FIREBASE_SA_EMAIL', 'firebase-adminsdk@drive-buddy-acc4c.iam.gserviceaccount.com');
+    env.props.set('FIREBASE_SA_KEY', '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n');
+    seedDriver('d1', '9893302783', 'active');
+  });
+
+  test('pure helpers: phone numbers, the 24-hour window, the driver record, the verdict', () => {
+    const { driverPhone, otpWindow, loginDriver, mcVerdict } = env.ctx;
+    assert.equal(driverPhone('+91 98933-02783'), '9893302783');
+    assert.equal(driverPhone('09893302783'), '9893302783');
+    assert.equal(driverPhone('5893302783'), '');
+    assert.equal(driverPhone(null), '');
+    const h = 3600e3;
+    const now = 100 * 24 * h;
+    assert.equal(otpWindow([now - 25 * h, now - 2 * h], now, 3).allowed, true);
+    const full = otpWindow([now - 3 * h, now - 2 * h, now - h], now, 3);
+    assert.equal(full.allowed, false);
+    assert.equal(full.retryAt, now - 3 * h + 24 * h);
+    assert.equal(loginDriver([{ id: 'a', data: { status: 'verified', name: 'A' } }, { id: 'b', data: { status: 'active', name: 'B' } }]).id, 'b');
+    assert.equal(loginDriver([{ id: 'a', data: { status: 'rejected' } }, { id: 'c', data: { status: 'inactive' } }]), null);
+    assert.equal(mcVerdict(200, { data: { verificationStatus: 'VERIFICATION_COMPLETED' } }), 'ok');
+    assert.equal(mcVerdict(400, { data: { responseCode: 702 } }), 'wrong-code');
+    assert.equal(mcVerdict(400, { responseCode: 705 }), 'expired');
+    assert.equal(mcVerdict(500, {}), 'failed');
+  });
+
+  test('an active driver gets a code, logs in with it, and the token carries his number', () => {
+    const sent = post({ action: 'driver-otp', phone: '+91 98933 02783' });
+    assert.equal(sent.ok, true);
+    assert.equal(sent.left, 2);
+    assert.ok(env.mc.calls.some((c) => c.url.includes('/verification/v3/send') && c.url.includes('mobileNumber=9893302783') && c.auth === 'mc-token-1'));
+    assert.ok(!JSON.stringify(sent).includes('987654'), 'the verification id stays on the server');
+
+    const wrong = post({ action: 'driver-verify', session: sent.session, code: '111111' });
+    assert.deepEqual({ ...wrong }, { ok: false, error: 'wrong-code', triesLeft: 4 });
+
+    const ok = post({ action: 'driver-verify', session: sent.session, code: '123456' });
+    assert.equal(ok.ok, true);
+    assert.equal(ok.name, 'Suresh Verma');
+    const parts = ok.token.split('.');
+    assert.equal(parts.length, 3);
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+    assert.equal(payload.uid, 'driver-9893302783');
+    assert.equal(payload.aud, 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit');
+    assert.equal(payload.exp - payload.iat, 3600);
+    assert.deepEqual({ ...claimsOf(ok.token) }, { role: 'driver', driverPhone: '9893302783', driverId: 'd1' });
+
+    // The session is spent.
+    assert.equal(post({ action: 'driver-verify', session: sent.session, code: '123456' }).error, 'expired');
+  });
+
+  test('no code for numbers that are not Verified or Active drivers', () => {
+    seedDriver('d2', '9111473929', 'rejected');
+    assert.equal(post({ action: 'driver-otp', phone: '9111473929' }).error, 'not-a-driver');
+    assert.equal(post({ action: 'driver-otp', phone: '9000000000' }).error, 'not-a-driver');
+    assert.equal(post({ action: 'driver-otp', phone: '12345' }).error, 'bad-phone');
+    assert.equal(env.mc.calls.length, 0, 'no SMS credit spent');
+  });
+
+  test('at most 3 codes per number in 24 hours, and a daily cap for all numbers', () => {
+    for (let i = 0; i < 3; i++) assert.equal(post({ action: 'driver-otp', phone: '9893302783' }).ok, true);
+    const fourth = post({ action: 'driver-otp', phone: '9893302783' });
+    assert.equal(fourth.error, 'limit');
+    assert.ok(fourth.retryAt > Date.now());
+
+    env.props.set('OTP_DAILY_LIMIT', '4');
+    seedDriver('d3', '9425212345', 'verified');
+    assert.equal(post({ action: 'driver-otp', phone: '9425212345' }).ok, true);
+    assert.equal(post({ action: 'driver-otp', phone: '9425212345' }).error, 'busy');
+    assert.equal(env.telegram.length, 1, 'Telegram hears about the cap once');
+    post({ action: 'driver-otp', phone: '9425212345' });
+    assert.equal(env.telegram.length, 1);
+  });
+
+  test('five wrong tries and the session is closed', () => {
+    const { session } = post({ action: 'driver-otp', phone: '9893302783' });
+    for (let i = 0; i < 5; i++) assert.equal(post({ action: 'driver-verify', session, code: '000000' }).error, 'wrong-code');
+    assert.equal(post({ action: 'driver-verify', session, code: '123456' }).error, 'too-many-tries');
+  });
+
+  test('the Play reviewer number logs in with its fixed code, no SMS, no limit', () => {
+    env.props.set('REVIEW_PHONE', '9999900001');
+    env.props.set('REVIEW_CODE', '246810');
+    for (let i = 0; i < 4; i++) {
+      const { session, ok } = post({ action: 'driver-otp', phone: '9999900001' });
+      assert.equal(ok, true);
+      if (i === 3) {
+        const res = post({ action: 'driver-verify', session, code: '246810' });
+        assert.equal(res.ok, true);
+        assert.equal(claimsOf(res.token).driverPhone, '9999900001');
+      }
+    }
+    assert.equal(env.mc.calls.length, 0);
+  });
+
+  test('off until Message Central is set up; failures never leak an error page', () => {
+    env.props.delete('MC_PASSWORD');
+    assert.equal(post({ action: 'driver-otp', phone: '9893302783' }).error, 'not-configured');
+    env.props.set('MC_PASSWORD', 'secret');
+    env.mc.sendCode = 500;
+    assert.equal(post({ action: 'driver-otp', phone: '9893302783' }).error, 'sms-failed');
+    assert.equal(post({ action: 'driver-verify', session: 'nope', code: '123456' }).error, 'bad-request');
+    // No service account: the code is right but no token can be signed → 'unavailable', not a crash.
+    env.mc.sendCode = 200;
+    env.props.delete('FIREBASE_SA_KEY');
+    const { session } = post({ action: 'driver-otp', phone: '9893302783' });
+    assert.equal(post({ action: 'driver-verify', session, code: '123456' }).error, 'unavailable');
+  });
+
+  test('the website doorbell still works: a POST without JSON just pings', () => {
+    assert.equal(env.ctx.doPost({}).text, 'ok');
+    assert.equal(env.ctx.doPost({ postData: { contents: 'not json' } }).text, 'ok');
   });
 });

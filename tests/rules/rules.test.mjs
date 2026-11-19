@@ -8,6 +8,7 @@
  * hole fails here before it can be deployed.
  */
 
+import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { after, before, beforeEach, describe, test } from 'node:test';
 
@@ -579,5 +580,77 @@ describe('users and customers', () => {
   test('counters and unknown collections are closed to everyone', async () => {
     await assertFails(getDoc(doc(admin(), 'meta', 'counters')));
     await assertFails(setDoc(doc(admin(), 'anything', 'x'), { a: 1 }));
+  });
+});
+
+describe('driver app — jobs and live tracking', () => {
+  const RAJU = '9893302783';
+  const driver = (phone = RAJU, extra = {}) =>
+    env.authenticatedContext(`driver-${phone}`, { role: 'driver', driverPhone: phone, driverId: 'd1', ...extra }).firestore();
+  const assigned = (phone = RAJU) => ({ status: 'assigned', assignedDriver: { id: 'd1', name: 'Raju Sahu', phone }, customerUid: 'cust1' });
+  const point = (extra = {}) => ({
+    lat: 21.25, lng: 81.63, acc: 12, heading: 90, speed: 8.5, active: true,
+    at: serverTimestamp(), phoneAt: new Date(), driverPhone: RAJU, driverName: 'Raju Sahu', ...extra,
+  });
+
+  test('a driver reads and lists only the bookings assigned to his number right now', async () => {
+    await seedBooking('mine', assigned());
+    await seedBooking('other', assigned('9111111111'));
+    await seedBooking('done', { ...assigned(), status: 'completed' });
+    await seedBooking('free', { status: 'confirmed' });
+
+    await assertSucceeds(getDoc(doc(driver(), 'bookings', 'mine')));
+    await assertFails(getDoc(doc(driver(), 'bookings', 'other')));
+    await assertFails(getDoc(doc(driver(), 'bookings', 'done')));
+    await assertFails(getDoc(doc(driver(), 'bookings', 'free')));
+
+    const q = query(collection(driver(), 'bookings'), where('assignedDriver.phone', '==', RAJU), where('status', '==', 'assigned'));
+    const snap = await assertSucceeds(getDocs(q));
+    assert.deepEqual(snap.docs.map((d) => d.id), ['mine']);
+    await assertFails(getDocs(query(collection(driver(), 'bookings'), where('status', '==', 'assigned'))));
+    await assertFails(getDocs(collection(driver(), 'bookings')));
+  });
+
+  test('a driver cannot change a booking, and a customer token with a phone number is not a driver', async () => {
+    await seedBooking('mine', assigned());
+    await assertFails(updateDoc(doc(driver(), 'bookings', 'mine'), { status: 'completed' }));
+    const fake = env.authenticatedContext('cust9', { phone_number: `+91${RAJU}` }).firestore();
+    await assertFails(getDoc(doc(fake, 'bookings', 'mine')));
+    const noRole = env.authenticatedContext('x', { driverPhone: RAJU }).firestore();
+    await assertFails(getDoc(doc(noRole, 'bookings', 'mine')));
+  });
+
+  test('the assigned driver shares his location; the customer and admin see it; nobody else', async () => {
+    await seedBooking('mine', assigned());
+    const t = doc(driver(), 'tracking', 'mine');
+    await assertSucceeds(setDoc(t, point()));
+    await assertSucceeds(setDoc(t, point({ lat: 21.26, active: false })));
+
+    await assertSucceeds(getDoc(doc(customer('cust1'), 'tracking', 'mine')));
+    await assertSucceeds(getDoc(doc(admin(), 'tracking', 'mine')));
+    await assertSucceeds(getDoc(doc(driver(), 'tracking', 'mine')));
+    await assertFails(getDoc(doc(customer('cust2'), 'tracking', 'mine')));
+    await assertFails(getDoc(doc(guest(), 'tracking', 'mine')));
+    await assertFails(getDoc(doc(driver('9111111111'), 'tracking', 'mine')));
+    await assertFails(deleteDoc(t));
+  });
+
+  test('tracking: only on his own current job, in the exact shape, with the server time', async () => {
+    await seedBooking('other', assigned('9111111111'));
+    await seedBooking('done', { ...assigned(), status: 'completed' });
+    await seedBooking('mine', assigned());
+    await assertFails(setDoc(doc(driver(), 'tracking', 'other'), point()));
+    await assertFails(setDoc(doc(driver(), 'tracking', 'done'), point()));
+    await assertFails(setDoc(doc(driver(), 'tracking', 'nobooking'), point()));
+    await assertFails(setDoc(doc(customer('cust1'), 'tracking', 'mine'), point()));
+    const t = doc(driver(), 'tracking', 'mine');
+    await assertFails(setDoc(t, point({ at: new Date() })));
+    await assertFails(setDoc(t, point({ driverPhone: '9111111111' })));
+    await assertFails(setDoc(t, point({ lat: 51.5, lng: -0.12 }))); // outside India
+    await assertFails(setDoc(t, point({ phoneAt: new Date(Date.now() + 3600e3) })));
+    await assertFails(setDoc(t, point({ extra: 1 })));
+    await assertFails(setDoc(t, point({ active: 'yes' })));
+    const { heading, speed, driverName, ...bare } = point();
+    await assertSucceeds(setDoc(t, bare));
   });
 });

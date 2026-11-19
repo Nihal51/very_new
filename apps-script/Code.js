@@ -48,6 +48,14 @@
  *                        allows 30; free sandbox: set 8)
  *   RAIL_DAILY_LIMIT     calls to RailRadar a day, default 900 (Developer plan:
  *                        30,000 a month; free sandbox: set 3)
+ *   MC_CUSTOMER_ID       optional: Message Central VerifyNow login — the SMS codes
+ *   MC_PASSWORD          for the Driver app. Driver login stays off until set.
+ *   FIREBASE_SA_EMAIL    the Firebase service account's client_email and
+ *   FIREBASE_SA_KEY      private_key: signs the driver's login (see "driver login")
+ *   OTP_PER_PHONE        login codes per number in 24 hours, default 3
+ *   OTP_DAILY_LIMIT      login codes a day in all, default 40
+ *   REVIEW_PHONE         optional: a number that logs in to the Driver app with
+ *   REVIEW_CODE          this fixed code and no SMS (for the Google Play reviewer)
  *
  * Your own columns are safe: the robot finds its columns by their heading, only
  * ever writes those, and leaves any column you add (e.g. "Paid?") alone.
@@ -807,7 +815,21 @@ function runSteps_(steps, waitMs) {
  * nothing private: a call only makes the robot look now. Calls closer than
  * 3 seconds apart are merged (a burst of bookings is handled in one run).
  */
-function doPost() {
+function doPost(e) {
+  var body = null;
+  try {
+    body = e && e.postData && e.postData.contents ? JSON.parse(e.postData.contents) : null;
+  } catch (err) {
+    body = null; // the website's doorbell sends no JSON
+  }
+  if (body && (body.action === 'driver-otp' || body.action === 'driver-verify')) {
+    try {
+      return jsonOut_(body.action === 'driver-otp' ? driverOtp_(body, Date.now()) : driverVerify_(body, Date.now()));
+    } catch (err) {
+      console.warn('driver login: ' + (err && err.stack || err));
+      return jsonOut_({ ok: false, error: 'unavailable' });
+    }
+  }
   return ping_();
 }
 
@@ -828,6 +850,217 @@ function doGet(e) {
 
 function jsonOut_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ============================================================ driver login
+   The DriveBuddy Driver app logs a driver in with his mobile number and a
+   one-time code by SMS (Nihal51/drivebuddy-mobile, apps/driver).
+
+     POST { action: 'driver-otp', phone }            → { ok, session }
+     POST { action: 'driver-verify', session, code } → { ok, token, name }
+
+   Only a number on a driver record that is Verified or Active in /admin gets a
+   code, so nobody else can spend the SMS credit. Message Central VerifyNow
+   sends and checks the code; its login stays in the Script Properties
+   (MC_CUSTOMER_ID, MC_PASSWORD), never in the app or in GitHub. Limits:
+   OTP_PER_PHONE codes per number in 24 hours (default 3) and OTP_DAILY_LIMIT
+   codes a day in all (default 40; Telegram hears once when it is reached).
+   A wrong code can be tried 5 times.
+
+   Once the code is right, the robot signs a Firebase custom token for
+   uid "driver-<number>" with the claims { role: 'driver', driverPhone,
+   driverId }. firestore.rules lets that login read only the bookings assigned
+   to his number and share his location on them. Signing needs the Firebase
+   service account (Firebase console → Project settings → Service accounts →
+   Generate new private key): paste its client_email into FIREBASE_SA_EMAIL
+   and its private_key into FIREBASE_SA_KEY. Nobody else needs to see it.
+
+   REVIEW_PHONE and REVIEW_CODE (optional): a number that logs in with a fixed
+   code and sends no SMS, for the Google Play reviewer. */
+
+var OTP_DEFAULTS = { perPhone: 3, daily: 40, tries: 5, sessionSeconds: 600 };
+var MC_API = 'https://cpaas.messagecentral.com';
+var DRIVER_LOGIN_STATUSES = ['active', 'verified'];
+
+/** "+91 98765-43210", "098765 43210" → "9876543210"; anything else → ''. */
+function driverPhone(raw) {
+  var d = String(raw == null ? '' : raw).replace(/\D/g, '');
+  if (d.length === 12 && d.slice(0, 2) === '91') d = d.slice(2);
+  if (d.length === 11 && d.charAt(0) === '0') d = d.slice(1);
+  return /^[6-9][0-9]{9}$/.test(d) ? d : '';
+}
+
+/**
+ * The codes sent to one number in the last 24 hours (epoch ms) → may one more
+ * go now? { allowed, times (pruned, plus now when allowed), retryAt }.
+ */
+function otpWindow(times, now, perPhone) {
+  var day = 24 * 3600 * 1000;
+  var kept = (times || []).filter(function (t) { return typeof t === 'number' && t > now - day && t <= now; }).sort(function (a, b) { return a - b; });
+  if (kept.length >= perPhone) return { allowed: false, times: kept, retryAt: kept[kept.length - perPhone] + day };
+  return { allowed: true, times: kept.concat([now]), retryAt: 0 };
+}
+
+/** The driver record a code may go to: Active first, then Verified; null when none. */
+function loginDriver(rows) {
+  var best = null;
+  (rows || []).forEach(function (r) {
+    var rank = DRIVER_LOGIN_STATUSES.indexOf(r.data && r.data.status);
+    if (rank < 0) return;
+    if (!best || rank < best.rank) best = { rank: rank, id: r.id, name: r.data.name || '' };
+  });
+  return best && { id: best.id, name: best.name };
+}
+
+/** The header and payload of a Firebase custom token (signed by customToken_). */
+function customTokenParts(saEmail, phone, driverId, nowMs) {
+  var iat = Math.floor(nowMs / 1000);
+  return {
+    header: { alg: 'RS256', typ: 'JWT' },
+    payload: {
+      iss: saEmail,
+      sub: saEmail,
+      aud: 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit',
+      iat: iat,
+      exp: iat + 3600,
+      uid: 'driver-' + phone,
+      claims: { role: 'driver', driverPhone: phone, driverId: driverId },
+    },
+  };
+}
+
+/** Message Central's answer to validateOtp → 'ok' | 'wrong-code' | 'expired' | 'failed'. */
+function mcVerdict(code, body) {
+  var data = (body && body.data) || {};
+  if (code === 200 && data.verificationStatus === 'VERIFICATION_COMPLETED') return 'ok';
+  var rc = Number(data.responseCode || (body && body.responseCode));
+  if (rc === 702) return 'wrong-code';
+  if (rc === 705 || rc === 703) return 'expired';
+  return 'failed';
+}
+
+function otpSetting_(key, fallback) {
+  var n = Number(prop_(key));
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+function base64Url_(bytesOrText) {
+  return Utilities.base64EncodeWebSafe(bytesOrText).replace(/=+$/, '');
+}
+
+function customToken_(phone, driverId, nowMs) {
+  var email = prop_('FIREBASE_SA_EMAIL');
+  var key = prop_('FIREBASE_SA_KEY').replace(/\\n/g, '\n');
+  if (!email || key.indexOf('PRIVATE KEY') < 0) throw new Error('FIREBASE_SA_EMAIL / FIREBASE_SA_KEY not set');
+  var parts = customTokenParts(email, phone, driverId, nowMs);
+  var unsigned = base64Url_(JSON.stringify(parts.header)) + '.' + base64Url_(JSON.stringify(parts.payload));
+  return unsigned + '.' + base64Url_(Utilities.computeRsaSha256Signature(unsigned, key));
+}
+
+/** Message Central's login, kept for an hour. */
+function mcToken_(fresh) {
+  var cache = CacheService.getScriptCache();
+  var had = !fresh && cache.get('mc-token');
+  if (had) return had;
+  var res = UrlFetchApp.fetch(MC_API + '/auth/v1/authentication/token?customerId=' + encodeURIComponent(prop_('MC_CUSTOMER_ID')) +
+    '&key=' + encodeURIComponent(Utilities.base64Encode(prop_('MC_PASSWORD'))) + '&scope=NEW&country=91', {
+    method: 'get', headers: { accept: '*/*' }, muteHttpExceptions: true,
+  });
+  var body = JSON.parse(res.getContentText() || '{}');
+  if (res.getResponseCode() !== 200 || !body.token) throw new Error('Message Central login ' + res.getResponseCode());
+  cache.put('mc-token', body.token, 3600);
+  return body.token;
+}
+
+/** A call to Message Central with its login; logs in again once if it has run out. */
+function mcFetch_(method, path) {
+  for (var attempt = 0; attempt < 2; attempt++) {
+    var res = UrlFetchApp.fetch(MC_API + path, { method: method, headers: { authToken: mcToken_(attempt > 0) }, muteHttpExceptions: true });
+    var code = res.getResponseCode();
+    if ((code === 401 || code === 403) && attempt === 0) continue;
+    var body = {};
+    try { body = JSON.parse(res.getContentText() || '{}'); } catch (err) { body = {}; }
+    return { code: code, body: body };
+  }
+}
+
+function otpAlert_(html) {
+  var props = PropertiesService.getScriptProperties();
+  var day = istDay(Date.now());
+  if (props.getProperty('otpAlert') === day) return;
+  props.setProperty('otpAlert', day);
+  try { sendTelegram_({ text: html }); } catch (err) { console.warn('otpAlert: ' + err); }
+}
+
+function driverOtp_(body, now) {
+  var phone = driverPhone(body.phone);
+  if (!phone) return { ok: false, error: 'bad-phone' };
+  var review = prop_('REVIEW_PHONE') && driverPhone(prop_('REVIEW_PHONE')) === phone && prop_('REVIEW_CODE');
+  var driver = review ? { id: 'review', name: 'Play reviewer' }
+    : loginDriver(fsQuery_('drivers', fieldFilter_('phone', 'EQUAL', phone), 'ASCENDING', 10, 'phone'));
+  if (!driver) return { ok: false, error: 'not-a-driver' };
+  if (!review && !(prop_('MC_CUSTOMER_ID') && prop_('MC_PASSWORD'))) return { ok: false, error: 'not-configured' };
+
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return { ok: false, error: 'busy' };
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var keyName = 'otp:' + phone;
+    var win = otpWindow(JSON.parse(props.getProperty(keyName) || '[]'), now, otpSetting_('OTP_PER_PHONE', OTP_DEFAULTS.perPhone));
+    if (!win.allowed && !review) return { ok: false, error: 'limit', retryAt: win.retryAt };
+    var dayKey = 'otpDay:' + istDay(now);
+    var today = Number(props.getProperty(dayKey) || 0);
+    var daily = otpSetting_('OTP_DAILY_LIMIT', OTP_DEFAULTS.daily);
+    if (!review && today >= daily) {
+      otpAlert_('⚠️ Driver app: ' + daily + ' login codes sent today — the daily limit (OTP_DAILY_LIMIT). No more codes until midnight.');
+      return { ok: false, error: 'busy' };
+    }
+
+    var verificationId = 'review';
+    if (!review) {
+      var sent = mcFetch_('post', '/verification/v3/send?countryCode=91&flowType=SMS&otpLength=6&mobileNumber=' + phone);
+      verificationId = sent.body && sent.body.data && sent.body.data.verificationId;
+      if (sent.code !== 200 || !verificationId) {
+        console.warn('Message Central send ' + sent.code + ': ' + JSON.stringify(sent.body).slice(0, 200));
+        return { ok: false, error: 'sms-failed' };
+      }
+      props.setProperty(dayKey, String(today + 1));
+    }
+    if (!review) props.setProperty(keyName, JSON.stringify(win.times));
+
+    var session = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    CacheService.getScriptCache().put('otps:' + session, JSON.stringify({
+      phone: phone, vid: String(verificationId), driverId: driver.id, name: driver.name, tries: 0, review: !!review,
+    }), OTP_DEFAULTS.sessionSeconds);
+    return { ok: true, session: session, left: Math.max(0, otpSetting_('OTP_PER_PHONE', OTP_DEFAULTS.perPhone) - win.times.length) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function driverVerify_(body, now) {
+  var session = String(body.session || '');
+  var code = String(body.code || '').replace(/\D/g, '');
+  if (!/^[0-9a-f]{32,64}$/.test(session) || code.length < 4 || code.length > 8) return { ok: false, error: 'bad-request' };
+  var cache = CacheService.getScriptCache();
+  var raw = cache.get('otps:' + session);
+  if (!raw) return { ok: false, error: 'expired' };
+  var s = JSON.parse(raw);
+  if (s.tries >= OTP_DEFAULTS.tries) return { ok: false, error: 'too-many-tries' };
+  s.tries++;
+  cache.put('otps:' + session, JSON.stringify(s), OTP_DEFAULTS.sessionSeconds);
+
+  var verdict;
+  if (s.review) {
+    verdict = code === prop_('REVIEW_CODE') ? 'ok' : 'wrong-code';
+  } else {
+    var res = mcFetch_('get', '/verification/v3/validateOtp?flowType=SMS&verificationId=' + encodeURIComponent(s.vid) + '&code=' + code);
+    verdict = mcVerdict(res.code, res.body);
+  }
+  if (verdict !== 'ok') return { ok: false, error: verdict, triesLeft: OTP_DEFAULTS.tries - s.tries };
+
+  cache.remove ? cache.remove('otps:' + session) : cache.put('otps:' + session, '', 1);
+  return { ok: true, token: customToken_(s.phone, s.driverId, now), name: s.name, phone: s.phone };
 }
 
 /* ============================================================ train lookup

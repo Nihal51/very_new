@@ -16,6 +16,11 @@ rules_version = '2';
 //                         (users/{uid}), register their phones for booking
 //                         notifications (users/{uid}/devices), and read the
 //                         bookings they made while logged in. Never anyone else's.
+//    A driver             logged in to the DriveBuddy Driver app (a code by SMS;
+//                         the alerts robot signs his login with role 'driver' and
+//                         his number): read the bookings assigned to his number
+//                         while they are "assigned", and share his live location
+//                         on them (tracking/{bookingId}). Nothing else.
 //    An admin             read everything; move bookings and drivers through
 //                         their statuses; assign drivers; add notes; save the
 //                         price agreed on the call. An admin is
@@ -47,6 +52,25 @@ service cloud.firestore {
         // .get() with defaults: phone-login customers have no email at all.
         && request.auth.token.get('email_verified', false) == true
         && exists(/databases/$(database)/documents/admins/$(request.auth.token.get('email', '').lower()));
+    }
+
+    // The Driver app's login: a custom token from the alerts robot
+    // (apps-script/Code.js, "driver login"), only after an SMS code to a
+    // number on a Verified or Active driver record.
+    function isDriver() {
+      return isSignedIn()
+        && request.auth.token.get('role', '') == 'driver'
+        && isMobile(request.auth.token.get('driverPhone', ''));
+    }
+
+    // A booking this driver is on right now: assigned to his number, and still
+    // "assigned" (once it is completed or cancelled he no longer sees it).
+    // Plain comparisons, so the app's query (assignedDriver.phone == his number,
+    // status == 'assigned') can be checked against it; a booking without a
+    // driver errors here, which counts as no.
+    function isMyJob(b) {
+      return b.status == 'assigned'
+        && b.assignedDriver.phone == request.auth.token.driverPhone;
     }
 
     function isText(value, minLen, maxLen) {
@@ -229,9 +253,11 @@ service cloud.firestore {
     }
 
     match /bookings/{bookingId} {
-      // Admins see everything; a customer sees only bookings tied to their login.
+      // Admins see everything; a customer sees only bookings tied to their login;
+      // a driver only the jobs assigned to him right now.
       allow read: if isAdmin()
-        || (isSignedIn() && resource.data.get('customerUid', '') == request.auth.uid);
+        || (isSignedIn() && resource.data.get('customerUid', '') == request.auth.uid)
+        || (isDriver() && isMyJob(resource.data));
 
       allow create: if
         request.resource.data.keys().hasOnly([
@@ -436,6 +462,41 @@ service cloud.firestore {
         && isOptionalText(request.resource.data.get('adminNote', ''), 1000)
         && isAdminStamped(request.resource.data);
 
+      allow delete: if false;
+    }
+
+    /* ---------------------------------------------------------- tracking -- */
+    //  Live tracking: one document per booking, written by the Driver app every
+    //  few seconds between Start and Arrived (active false), only by the driver
+    //  the booking is assigned to and only while it is "assigned". The customer
+    //  who booked while logged in sees it on a map in the DriveBuddy app.
+
+    function isTrack(d) {
+      return d.keys().hasOnly(['lat', 'lng', 'acc', 'heading', 'speed', 'active', 'at', 'phoneAt', 'driverPhone', 'driverName'])
+        && d.keys().hasAll(['lat', 'lng', 'acc', 'active', 'at', 'phoneAt', 'driverPhone'])
+        && d.lat is number && d.lat >= 6 && d.lat <= 37
+        && d.lng is number && d.lng >= 68 && d.lng <= 98
+        && d.acc is number && d.acc >= 0 && d.acc <= 100000
+        && (!('heading' in d) || (d.heading is number && d.heading >= -1 && d.heading <= 360))
+        && (!('speed' in d) || (d.speed is number && d.speed >= -1 && d.speed <= 100))
+        && d.active is bool
+        && d.at == request.time
+        && d.phoneAt is timestamp
+        && d.phoneAt > request.time - duration.value(24, 'h')
+        && d.phoneAt < request.time + duration.value(10, 'm')
+        && d.driverPhone == request.auth.token.driverPhone
+        && (!('driverName' in d) || isText(d.driverName, 2, 60));
+    }
+
+    match /tracking/{bookingId} {
+      function job() {
+        return get(/databases/$(database)/documents/bookings/$(bookingId)).data;
+      }
+
+      allow read: if isAdmin()
+        || (isSignedIn() && job().get('customerUid', '') == request.auth.uid)
+        || (isDriver() && isMyJob(job()));
+      allow create, update: if isDriver() && isMyJob(job()) && isTrack(request.resource.data);
       allow delete: if false;
     }
 
