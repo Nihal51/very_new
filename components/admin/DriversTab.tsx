@@ -1,7 +1,7 @@
 'use client';
 
 import type { User } from 'firebase/auth';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   Chips,
@@ -25,7 +25,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
-import { addDriver, changeDriverStatus, type NewDriver } from '@/lib/admin';
+import { addDriver, changeDriverStatus, type NewDriver, watchOnline } from '@/lib/admin';
 import { DRIVER_STATUS, formatDateTime, prettyPhone, type Driver, type DriverStatus } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
 import { cities } from '@/lib/content';
@@ -75,6 +75,17 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
   const [sort, setSort] = useState<Sort<SortKey>>({ key: 'applied', dir: 'desc' });
   const [openId, setOpenId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [online, setOnline] = useState<Map<string, Date>>(new Map());
+
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let alive = true;
+    void watchOnline(setOnline).then((u) => (alive ? (off = u) : u()));
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, []);
 
   const base = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -136,6 +147,9 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
       <div className="flex flex-wrap items-center gap-2">
         <SearchBox value={search} onChange={setSearch} placeholder="Search name, phone, city, note…" />
         <div className="ml-auto flex items-center gap-3">
+          <span className="text-sm font-semibold text-emerald-700 dark:text-emerald-400" title="Online in the Driver app now">
+            ● {online.size} online
+          </span>
           <span className="text-fg-subtle text-sm tabular">
             {visible.length} of {all.length}
           </span>
@@ -163,7 +177,10 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
                   className={cn('flex w-full flex-col gap-1 px-4 py-3 text-left', d.status === 'new' && 'bg-accent-subtle/60')}
                 >
                   <span className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{d.name}</span>
+                    <span className="font-medium">
+                      {d.name}
+                      {online.has(d.id) && <span className="ml-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">● Online</span>}
+                    </span>
                     <DriverPill status={d.status} />
                   </span>
                   <span className="text-fg-muted text-sm">
@@ -195,7 +212,12 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
                     onClick={() => setOpenId(d.id)}
                     className={cn('hover:bg-surface cursor-pointer', d.status === 'new' && 'bg-accent-subtle/50', d.id === openId && 'bg-surface')}
                   >
-                    <td className="px-3 py-2.5 font-medium">{d.name}</td>
+                    <td className="px-3 py-2.5 font-medium">
+                      {d.name}
+                      {online.has(d.id) && (
+                        <span className="ml-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">● Online</span>
+                      )}
+                    </td>
                     <td className="px-3 py-2.5 whitespace-nowrap tabular">
                       <a href={`tel:+91${d.phone}`} onClick={(e) => e.stopPropagation()} className="hover:text-accent-text">
                         {prettyPhone(d.phone)}

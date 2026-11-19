@@ -8,6 +8,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { markOfferPaid, postOffer, withdrawOffer } from '@/lib/admin';
+import { pingAlerts } from '@/lib/firebase';
 import { type Booking, formatDateTime, prettyPhone } from '@/lib/bookings';
 import { CUT, type Offer, driverPayFor, offerArea } from '@/lib/offers';
 import { rupees } from '@/lib/settings';
@@ -64,7 +65,7 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
           cutPercent: cut,
         },
         offer,
-      ),
+      ).then(() => pingAlerts()),
     );
 
   return (
@@ -75,7 +76,8 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
         <div className="flex flex-col gap-2">
           <p>
             Offered to {b.city} drivers at <strong>{rupees(offer.price)}</strong> · driver earns{' '}
-            <strong>{rupees(offer.driverPay)}</strong> · DriveBuddy keeps {offer.cutPercent}%. Waiting for a driver to accept…
+            <strong>{rupees(offer.driverPay)}</strong> · DriveBuddy keeps {offer.cutPercent}%. The nearest online drivers got an
+            alert, the rest a minute later. Waiting for one to accept…
           </p>
           <div>
             <Button variant="ghost" loading={busy === 'withdraw'} onClick={() => act('withdraw', () => withdrawOffer(user, b.id))}>
@@ -119,6 +121,13 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
 
       {canOffer && (!offer || offer.status === 'withdrawn') && (
         <div className="flex flex-col gap-3">
+          {!offer && (b.package === '1-hour-300' || b.package === '3-hours-600') && (
+            <p className="text-fg-muted text-sm">
+              {b.status === 'new'
+                ? 'This one goes to drivers by itself when you confirm it (the usual price, 25% cut). Or offer it now:'
+                : 'Going to drivers by itself in a moment (the usual price, 25% cut)…'}
+            </p>
+          )}
           {offer?.status === 'withdrawn' && <p className="text-fg-muted text-sm">The last offer was withdrawn. Offer it again:</p>}
           <div className="grid grid-cols-2 gap-2">
             <label className="flex flex-col gap-1 text-sm">

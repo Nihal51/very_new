@@ -66,7 +66,7 @@ import {
 import { cn } from '@/lib/cn';
 import { accuracyText, mapsLink, type PickupGeo } from '@/lib/geo';
 import { downloadCsv, exportName, sheetPhone } from '@/lib/export';
-import { getFirebaseApp } from '@/lib/firebase';
+import { getFirebaseApp, pingAlerts } from '@/lib/firebase';
 
 export type StatusFilter = 'open' | BookingStatus | 'all';
 export type BookingView = { status: StatusFilter; range: DateRange };
@@ -601,6 +601,8 @@ function BookingDetail({
     setErr('');
     try {
       await changeBookingStatus(user, b.id, b.status, to, opts);
+      // Confirmed: the robot offers fixed-price jobs to drivers — now, not at its next minute.
+      if (to === 'confirmed') pingAlerts();
       // Keep the job offer in step: assigned by hand or cancelled → no longer
       // open to drivers; completed → the driver who took it can be paid.
       const otherDriver = opts.driver && offer?.takenBy && opts.driver.phone !== offer.takenBy.phone;

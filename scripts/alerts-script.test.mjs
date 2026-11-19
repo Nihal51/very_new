@@ -240,6 +240,7 @@ function load() {
             ),
           });
         }
+        if (url.endsWith('/app-config.json')) return response(200, { prices: { oneHour: 300, threeHours: 600 } });
         if (url.startsWith('https://cpaas.messagecentral.com/')) {
           mc.calls.push({ url, method: opts.method, auth: opts.headers?.authToken });
           const { code, body } = mc.answer(url, opts.method);
@@ -1094,5 +1095,119 @@ describe('driver login', () => {
   test('the website doorbell still works: a POST without JSON just pings', () => {
     assert.equal(env.ctx.doPost({}).text, 'ok');
     assert.equal(env.ctx.doPost({ postData: { contents: 'not json' } }).text, 'ok');
+  });
+});
+
+/* --------------------------------------- job dispatch (automatic offers) */
+
+describe('job dispatch', () => {
+  let env;
+  const n = (v) => ({ integerValue: String(v) });
+  const d = (v) => ({ doubleValue: v });
+  const b = (v) => ({ booleanValue: v });
+  const at = (msAgo) => ts(msAgo);
+  const online = (id, name, lat, lng, extra = {}) =>
+    env.store.docs.set(`availability/${id}`, {
+      online: b(true), city: s('Raipur'), name: s(name), phone: s('9' + String(id).padStart(9, '0')),
+      lat: d(lat), lng: d(lng), pushToken: s(`ExponentPushToken[${id}]`), at: at(60_000), ...extra,
+    });
+  const confirm = (id, pkg = '3-hours-600', extra = {}) =>
+    seedBooking(env.store, id, { extra: { ref: s('DB-1042'), status: s('confirmed'), package: s(pkg), pickup: s('12, Shankar Nagar, Raipur'), updatedAt: ts(1000), ...extra } });
+  const pushedTo = () => env.pushes.map((p) => p.to);
+  const alertDoc = (id) => env.store.docs.get(`offerAlerts/${id}`);
+  const age = (id, ms) => { alertDoc(id).stageAt = ts(ms); };
+
+  beforeEach(() => {
+    env = load();
+    // Spot of the pickup: Shankar Nagar. Drivers at increasing distances.
+    online('d1', 'Near One', 21.252, 81.630);
+    online('d2', 'Near Two', 21.26, 81.64);
+    online('d3', 'Near Three', 21.28, 81.66);
+    online('d4', 'Far Four', 21.35, 81.75);
+    online('d5', 'Stale', 21.251, 81.629, { at: at(30 * 60_000) }); // last seen 30 min ago
+    online('d6', 'Offline', 21.251, 81.629, { online: b(false) });
+  });
+
+  test('pure: distance, ranking, the steps', () => {
+    const { distanceKm, rankDrivers, dispatchStep, driverPayOf, offerAreaOf } = env.ctx;
+    assert.ok(Math.abs(distanceKm({ lat: 21.2514, lng: 81.6296 }, { lat: 21.1938, lng: 81.3509 }) - 29.6) < 1, 'Raipur–Bhilai ≈ 30 km');
+    const now = Date.now();
+    const rows = [...env.store.docs.entries()].filter(([k]) => k.startsWith('availability/')).map(([k, f]) => ({ id: k.split('/')[1], data: env.ctx.fromFields(f) }));
+    assert.deepEqual(rankDrivers(rows, { lat: 21.2514, lng: 81.6296 }, now).map((x) => x.id), ['d1', 'd2', 'd3', 'd4']);
+    assert.equal(dispatchStep(null, [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'e' }], now).send.length, 3);
+    assert.equal(dispatchStep({ stage: 1, stageAt: new Date(now - 30_000), alerted: ['a'] }, [{ id: 'a' }, { id: 'b' }], now), null);
+    assert.deepEqual(dispatchStep({ stage: 1, stageAt: new Date(now - 61_000), alerted: ['a'] }, [{ id: 'a' }, { id: 'b' }], now).send, [{ id: 'b' }]);
+    assert.equal(dispatchStep({ stage: 2, stageAt: new Date(now - 5 * 60_000), alerted: ['a'] }, [{ id: 'a' }], now).alarm, true);
+    assert.equal(driverPayOf(600, 25), 450);
+    assert.equal(driverPayOf(1350, 30), 940);
+    assert.equal(offerAreaOf('12, Shankar Nagar, Raipur'), 'Shankar Nagar, Raipur');
+  });
+
+  test('a confirmed 3-hour booking is offered by itself at the site price, 25% cut', () => {
+    confirm('b1');
+    env.ctx.autoOffers_();
+    const o = env.ctx.fromFields(env.store.docs.get('offers/b1'));
+    assert.equal(o.status, 'open');
+    assert.equal(o.price, 600);
+    assert.equal(o.cutPercent, 25);
+    assert.equal(o.driverPay, 450);
+    assert.equal(o.area, 'Shankar Nagar, Raipur');
+    assert.equal(o.takenBy, null);
+    assert.equal(o.by, 'robot');
+    // Once only.
+    env.store.docs.get('offers/b1').price = n(999);
+    env.ctx.autoOffers_();
+    assert.equal(env.store.docs.get('offers/b1').price.integerValue, '999');
+  });
+
+  test('not for other packages, new or assigned bookings, or when switched off', () => {
+    confirm('b2', 'local-full-day');
+    seedBooking(env.store, 'b3', { extra: { status: s('new'), updatedAt: ts(1000) } });
+    confirm('b4', '1-hour-300', { assignedDriver: { mapValue: { fields: { id: s('d1'), name: s('X'), phone: s('9893302783') } } } });
+    env.ctx.autoOffers_();
+    assert.equal(env.store.docs.has('offers/b2'), false);
+    assert.equal(env.store.docs.has('offers/b3'), false);
+    assert.equal(env.store.docs.has('offers/b4'), false);
+    env.props.set('AUTO_OFFERS', 'off');
+    confirm('b5', '1-hour-300');
+    env.ctx.autoOffers_();
+    assert.equal(env.store.docs.has('offers/b5'), false);
+  });
+
+  test('nearest 3 online drivers first, everyone else a minute later, Telegram after 4 more minutes', () => {
+    confirm('b1');
+    env.ctx.autoOffers_();
+    env.ctx.dispatchOffers_();
+    assert.deepEqual(pushedTo(), ['ExponentPushToken[d1]', 'ExponentPushToken[d2]', 'ExponentPushToken[d3]']);
+    assert.ok(env.pushes[0].body.includes('₹450'));
+    assert.equal(env.pushes[0].channelId, 'jobs');
+
+    env.ctx.dispatchOffers_(); // too early for the second wave
+    assert.equal(env.pushes.length, 3);
+
+    age('b1', 61_000);
+    env.ctx.dispatchOffers_();
+    assert.deepEqual(pushedTo().slice(3), ['ExponentPushToken[d4]'], 'stale and offline drivers are not alerted');
+
+    age('b1', 5 * 60_000);
+    const before = env.telegram.length;
+    env.ctx.dispatchOffers_();
+    assert.equal(env.telegram.length, before + 1);
+    assert.ok(env.telegram.at(-1).text.includes('DB-1042'));
+    env.ctx.dispatchOffers_();
+    assert.equal(env.telegram.length, before + 1, 'Telegram hears once');
+
+    // A driver who goes online later still hears about it.
+    online('d7', 'Late', 21.25, 81.63);
+    env.ctx.dispatchOffers_();
+    assert.equal(pushedTo().at(-1), 'ExponentPushToken[d7]');
+  });
+
+  test('a taken offer alerts nobody', () => {
+    confirm('b1');
+    env.ctx.autoOffers_();
+    env.store.docs.get('offers/b1').status = s('taken');
+    env.ctx.dispatchOffers_();
+    assert.equal(env.pushes.length, 0);
   });
 });

@@ -54,6 +54,8 @@
  *   FIREBASE_SA_KEY      private_key: signs the driver's login (see "driver login")
  *   OTP_PER_PHONE        login codes per number in 24 hours, default 3
  *   OTP_DAILY_LIMIT      login codes a day in all, default 40
+ *   AUTO_OFFERS          "off" stops automatic offers of confirmed 1-hour / 3-hour bookings
+ *   AUTO_OFFER_CUT       DriveBuddy's cut on automatic offers, percent, default 25 (20–30)
  *   REVIEW_PHONE         optional: a number that logs in to the Driver app with
  *   REVIEW_CODE          this fixed code and no SMS (for the Google Play reviewer)
  *
@@ -784,7 +786,7 @@ function driversTable_() {
 
 /** Runs every minute (set up by setup()): the safety net behind the instant ping below. */
 function tick() {
-  var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_];
+  var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_, autoOffers_, dispatchOffers_];
   if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_);
   steps.push(ensureRailTrigger_);
   runSteps_(steps, 5000);
@@ -1061,6 +1063,177 @@ function driverVerify_(body, now) {
 
   cache.remove ? cache.remove('otps:' + session) : cache.put('otps:' + session, '', 1);
   return { ok: true, token: customToken_(s.phone, s.driverId, now), name: s.name, phone: s.phone };
+}
+
+/* ========================================================== job dispatch
+   Job offers (firestore.rules, offers/{bookingId}) reach the drivers' phones:
+
+   • Automatic offers: a booking for a fixed-price package (1 hour, 3 hours) is
+     offered to its city's drivers by itself the moment an admin confirms it
+     (status "confirmed", no driver yet), at the website's price
+     (SITE_URL/app-config.json) with DriveBuddy's usual cut (AUTO_OFFER_CUT,
+     default 25). AUTO_OFFERS = off switches this off. Other packages are
+     offered by hand from /admin, as before.
+   • Nearest first: every open offer, automatic or by hand, is sent as a push
+     notification to the 3 nearest drivers who are Online in the Driver app
+     (availability/{driverId}, a spot from the last 10 minutes), then to every
+     other online driver of the city a minute later. If nobody has taken it 4
+     minutes after that, Telegram hears about it once.
+
+   Its own bookkeeping lives in offerAlerts/{bookingId} (no browser can read or
+   write it), so the offer document keeps exactly the shape the rules check. */
+
+var DISPATCH = { firstWave: 3, wideAfterMs: 60 * 1000, alarmAfterMs: 4 * 60 * 1000, freshMs: 10 * 60 * 1000 };
+var AUTO_PACKAGES = { '1-hour-300': 'oneHour', '3-hours-600': 'threeHours' };
+var CITY_CENTRES = {
+  Raipur: { lat: 21.2514, lng: 81.6296 },
+  Bhilai: { lat: 21.1938, lng: 81.3509 },
+  Durg: { lat: 21.1904, lng: 81.2849 },
+  Bilaspur: { lat: 22.0797, lng: 82.1391 },
+};
+
+/** Straight-line km between two spots (good enough to rank drivers in one city). */
+function distanceKm(a, b) {
+  var R = 6371;
+  var rad = function (d) { return d * Math.PI / 180; };
+  var dLat = rad(b.lat - a.lat);
+  var dLng = rad(b.lng - a.lng);
+  var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Online drivers who can be told about a job at `spot`, nearest first:
+ * online, seen in the last 10 minutes, with a push token. Drivers whose
+ * phone sent no spot go last.
+ */
+function rankDrivers(rows, spot, now) {
+  return (rows || [])
+    .filter(function (r) {
+      var a = r.data || {};
+      return a.online === true && a.pushToken && a.at && now - a.at.getTime() <= DISPATCH.freshMs;
+    })
+    .map(function (r) {
+      var a = r.data;
+      var km = typeof a.lat === 'number' && typeof a.lng === 'number' ? distanceKm(spot, { lat: a.lat, lng: a.lng }) : Infinity;
+      return { id: r.id, name: a.name || '', token: a.pushToken, km: km };
+    })
+    .sort(function (x, y) { return x.km - y.km; });
+}
+
+/** Who to alert now, given what was sent: { stage, send: [drivers], alarm }. */
+function dispatchStep(alert, ranked, now) {
+  var stage = (alert && alert.stage) || 0;
+  var sent = (alert && alert.alerted) || [];
+  var since = alert && alert.stageAt ? now - alert.stageAt.getTime() : 0;
+  var fresh = ranked.filter(function (d) { return sent.indexOf(d.id) < 0; });
+  if (stage === 0) return { stage: 1, send: fresh.slice(0, DISPATCH.firstWave), alarm: false };
+  if (stage === 1 && since >= DISPATCH.wideAfterMs) return { stage: 2, send: fresh, alarm: false };
+  if (stage === 2 && since >= DISPATCH.alarmAfterMs) return { stage: 3, send: fresh, alarm: true };
+  // Meanwhile a driver who just went online hears about it too (after the first wave).
+  if (stage >= 2 && fresh.length) return { stage: stage, send: fresh, alarm: false, keepTime: true };
+  return null;
+}
+
+/** The website's area for drivers: the pickup without its first part ("12, Shankar Nagar" → "Shankar Nagar"). */
+function offerAreaOf(pickup) {
+  var parts = String(pickup || '').split(',').map(function (s) { return s.trim(); }).filter(String);
+  return (parts.length > 1 ? parts.slice(1) : parts).join(', ').slice(0, 120);
+}
+
+/** What the driver earns: the price minus the cut, rounded down to ₹10 (lib/offers.ts driverPayFor). */
+function driverPayOf(price, cutPercent) {
+  var cut = Math.min(30, Math.max(20, Math.round(cutPercent)));
+  return Math.floor(Math.round(price) * (100 - cut) / 100 / 10) * 10;
+}
+
+/** The automatic offer for a confirmed fixed-price booking, in the exact shape firestore.rules checks; null if not one. */
+function autoOfferFor(id, b, prices, cut, now) {
+  var key = AUTO_PACKAGES[b.package];
+  var price = key && prices && Number(prices[key]);
+  if (!price || !(price >= 100) || b.status !== 'confirmed' || b.assignedDriver) return null;
+  var area = offerAreaOf(b.pickup);
+  if (area.length < 2) area = b.city;
+  return {
+    bookingId: id, ref: b.ref || '', city: b.city, package: b.package, when: b.preferredTime || '', area: area,
+    to: (b.trip && b.trip.to) || '', price: Math.round(price), cutPercent: Math.min(30, Math.max(20, Math.round(cut))),
+    driverPay: driverPayOf(price, cut), status: 'open', takenBy: null, takenAt: null, done: false, paid: false,
+    paidAt: null, createdAt: now, updatedAt: now, by: 'robot',
+  };
+}
+
+/** The job alert on a driver's phone (English and Hindi, most drivers read Hindi first). */
+function offerPush(offer, token) {
+  var pay = '₹' + inr(offer.driverPay);
+  var what = PACKAGE_NAMES[offer.package] || 'Driver job';
+  return {
+    to: token,
+    title: 'New job · नया काम: ' + what,
+    body: 'You earn ' + pay + ' · ' + offer.area + (offer.when ? ' · ' + formatWhen(offer.when) : ' · ASAP') + '. Open the app to accept.',
+    data: { offerId: offer.bookingId },
+    sound: 'default',
+    priority: 'high',
+    channelId: 'jobs',
+  };
+}
+
+function sitePrices_() {
+  var cache = CacheService.getScriptCache();
+  var had = cache.get('sitePrices');
+  if (had) return JSON.parse(had);
+  var res = UrlFetchApp.fetch(prop_('SITE_URL') + '/app-config.json', { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return null;
+  var prices = (JSON.parse(res.getContentText()) || {}).prices || null;
+  if (prices) cache.put('sitePrices', JSON.stringify(prices), 3600);
+  return prices;
+}
+
+/** Confirmed fixed-price bookings → an open offer, once. */
+function autoOffers_() {
+  if (prop_('AUTO_OFFERS') === 'off') return;
+  changedSince_('bookings', 'autoOfferMs', function (rows) {
+    var prices = null;
+    var cut = Number(prop_('AUTO_OFFER_CUT')) || 25;
+    rows.forEach(function (row) {
+      var b = row.data;
+      if (b.status !== 'confirmed' || b.assignedDriver || !AUTO_PACKAGES[b.package]) return;
+      if (fsGet_('offers/' + row.id)) return; // already offered (by hand or before)
+      prices = prices || sitePrices_();
+      var offer = autoOfferFor(row.id, b, prices, cut, new Date());
+      if (!offer) return;
+      fsCommit_([{ update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } }]);
+    });
+  });
+}
+
+/** Every open offer: push to the nearest online drivers, then the rest, then Telegram. */
+function dispatchOffers_() {
+  var offers = fsQuery_('offers', fieldFilter_('status', 'EQUAL', 'open'), 'ASCENDING', 20, 'status');
+  if (!offers.length) return;
+  var now = Date.now();
+  var byCity = {};
+  offers.forEach(function (row) {
+    var o = row.data;
+    var alert = fsGet_('offerAlerts/' + row.id);
+    if (!byCity[o.city]) byCity[o.city] = fsQuery_('availability', fieldFilter_('city', 'EQUAL', o.city), 'ASCENDING', 100, 'city');
+    var booking = fsGet_('bookings/' + row.id) || {};
+    var spot = (booking.pickupGeo && typeof booking.pickupGeo.lat === 'number') ? booking.pickupGeo : (CITY_CENTRES[o.city] || CITY_CENTRES.Raipur);
+    var step = dispatchStep(alert, rankDrivers(byCity[o.city], spot, now), now);
+    if (!step) return;
+    if (step.send.length) sendPush_(step.send.map(function (d) { return offerPush(o, d.token); }));
+    if (step.alarm) {
+      try {
+        sendTelegram_({ text: '⏰ No driver has taken ' + (o.ref || 'a job') + ' (' + (PACKAGE_NAMES[o.package] || o.package) + ', ' + o.city + ') yet. Call a driver, or raise the driver pay in /admin.' });
+      } catch (err) { console.warn('dispatch alarm: ' + err); }
+    }
+    var alerted = ((alert && alert.alerted) || []).concat(step.send.map(function (d) { return d.id; }));
+    fsCommit_([{
+      update: {
+        name: docName_('offerAlerts/' + row.id),
+        fields: toFields({ stage: step.stage, stageAt: step.keepTime && alert && alert.stageAt ? alert.stageAt : new Date(now), alerted: alerted }),
+      },
+    }]);
+  });
 }
 
 /* ============================================================ train lookup
@@ -1452,7 +1625,7 @@ function ping_() {
   var cache = CacheService.getScriptCache();
   if (!cache.get('ping')) {
     cache.put('ping', '1', 3);
-    runSteps_([processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_], 25000);
+    runSteps_([processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_, autoOffers_, dispatchOffers_], 25000);
   }
   return ContentService.createTextOutput('ok');
 }

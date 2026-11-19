@@ -220,6 +220,26 @@ export async function markOfferPaid(user: User, bookingId: string, paid = true) 
   await patchOffer(user, bookingId, { paid, paidAt: paid ? serverTimestamp() : null });
 }
 
+/* ------------------------------------------------------------- online drivers */
+
+/** Drivers Online in the Driver app right now (seen in the last 10 minutes), by driver id. */
+export async function watchOnline(onChange: (online: Map<string, Date>) => void): Promise<() => void> {
+  const { db, collection, onSnapshot, query, where } = await fs();
+  return onSnapshot(
+    query(collection(db, 'availability'), where('online', '==', true)),
+    (snap) => {
+      const fresh = Date.now() - 10 * 60 * 1000;
+      const m = new Map<string, Date>();
+      snap.docs.forEach((d) => {
+        const at: Date | undefined = d.data().at?.toDate?.();
+        if (at && at.getTime() >= fresh) m.set(d.id, at);
+      });
+      onChange(m);
+    },
+    () => onChange(new Map()),
+  );
+}
+
 /* ------------------------------------------------------------- blocked list */
 
 /** Whether this number is blocked from booking and applying (admins only can read the list). */

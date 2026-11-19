@@ -772,3 +772,34 @@ describe('job offers — admin posts, an Active driver in that city takes it', (
     await assertFails(deleteDoc(doc(admin(), 'offers', 'b1')));
   });
 });
+
+describe('availability — Online in the Driver app', () => {
+  const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+  const drv = (d) => env.authenticatedContext(`driver-${d.phone}`, { role: 'driver', driverPhone: d.phone, driverId: d.id }).firestore();
+  const on = (extra = {}) => ({ online: true, city: 'Raipur', name: 'Raju Sahu', phone: '9893302783', lat: 21.25, lng: 81.63, acc: 20, pushToken: 'ExponentPushToken[abc]', at: serverTimestamp(), ...extra });
+
+  beforeEach(() =>
+    env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'drivers', 'd1'), { ...RAJU, city: 'Raipur', status: 'active' });
+      await setDoc(doc(ctx.firestore(), 'drivers', 'd3'), { name: 'Old Driver', phone: '9111111111', city: 'Raipur', status: 'inactive' });
+    }),
+  );
+
+  test('an Active driver goes online and offline on his own document', async () => {
+    await assertSucceeds(setDoc(doc(drv(RAJU), 'availability', 'd1'), on()));
+    const { lat, lng, acc, ...bare } = on({ online: false });
+    await assertSucceeds(setDoc(doc(drv(RAJU), 'availability', 'd1'), bare));
+    await assertSucceeds(getDoc(doc(drv(RAJU), 'availability', 'd1')));
+    await assertSucceeds(getDoc(doc(admin(), 'availability', 'd1')));
+  });
+
+  test('not for someone else, another city, an inactive driver, or a customer', async () => {
+    await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd3'), on()));
+    await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd1'), on({ city: 'Bhilai' })));
+    await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd1'), on({ at: new Date() })));
+    await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd1'), on({ lat: 51.5 })));
+    await assertFails(setDoc(doc(drv({ id: 'd3', name: 'Old Driver', phone: '9111111111' }), 'availability', 'd3'), on({ city: 'Raipur', name: 'Old Driver', phone: '9111111111' })));
+    await assertFails(getDoc(doc(customer(), 'availability', 'd1')));
+    await assertFails(setDoc(doc(customer(), 'availability', 'd1'), on()));
+  });
+});

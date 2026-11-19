@@ -563,6 +563,31 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    /* ------------------------------------------------------ availability -- */
+    //  "Online" in the Driver app: while it is on, the app writes where the
+    //  driver is about every 2 minutes, with the phone's push token, so the
+    //  alerts robot can send a new job offer to the nearest online drivers
+    //  first. Only an Active driver, only his own document, only his city.
+    //  Admins see who is online. Offline = online false (the spot is dropped).
+
+    match /availability/{driverId} {
+      allow read: if isAdmin() || (isDriver() && request.auth.token.get('driverId', '') == driverId);
+      allow create, update: if isActiveDriver()
+        && request.auth.token.driverId == driverId
+        && request.resource.data.keys().hasOnly(['online', 'city', 'name', 'phone', 'lat', 'lng', 'acc', 'pushToken', 'at'])
+        && request.resource.data.keys().hasAll(['online', 'city', 'name', 'phone', 'at'])
+        && request.resource.data.online is bool
+        && request.resource.data.city == myDriver().city
+        && request.resource.data.name == myDriver().name
+        && request.resource.data.phone == request.auth.token.driverPhone
+        && request.resource.data.at == request.time
+        && (!('lat' in request.resource.data) || (request.resource.data.lat is number && request.resource.data.lat >= 6 && request.resource.data.lat <= 37))
+        && (!('lng' in request.resource.data) || (request.resource.data.lng is number && request.resource.data.lng >= 68 && request.resource.data.lng <= 98))
+        && (!('acc' in request.resource.data) || (request.resource.data.acc is number && request.resource.data.acc >= 0 && request.resource.data.acc <= 100000))
+        && (!('pushToken' in request.resource.data) || isOptionalText(request.resource.data.pushToken, 200));
+      allow delete: if false;
+    }
+
     /* ------------------------------------------------------------ offers -- */
     //  Job offers: an admin offers a booking to the drivers of its city, with what
     //  the driver earns (the price minus DriveBuddy's cut, 20–30%). Active drivers
