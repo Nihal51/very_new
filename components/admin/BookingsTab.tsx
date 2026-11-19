@@ -27,10 +27,21 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
+import { OfferPanel } from '@/components/admin/OfferPanel';
 import { QuoteCalculator } from '@/components/admin/QuoteCalculator';
 import { TripClock } from '@/components/admin/TripClock';
 import { WhatsappIcon } from '@/components/icons';
-import { addBookingNote, blockPhone, changeBookingStatus, isPhoneBlocked, unblockPhone } from '@/lib/admin';
+import {
+  addBookingNote,
+  blockPhone,
+  changeBookingStatus,
+  isPhoneBlocked,
+  markOfferDone,
+  unblockPhone,
+  watchOffer,
+  withdrawOffer,
+} from '@/lib/admin';
+import type { Offer } from '@/lib/offers';
 import { driverAssignedMessage, type MessageLanguage } from '@/lib/customer-messages';
 import { site } from '@/lib/site';
 import { tripSummary } from '@/lib/trip';
@@ -573,12 +584,30 @@ function BookingDetail({
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [offer, setOffer] = useState<Offer | null | undefined>(undefined);
+
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let alive = true;
+    void watchOffer(b.id, setOffer).then((u) => (alive ? (off = u) : u()));
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, [b.id]);
 
   async function run(to: BookingStatus, opts: Parameters<typeof changeBookingStatus>[4] = {}) {
     setBusy(true);
     setErr('');
     try {
       await changeBookingStatus(user, b.id, b.status, to, opts);
+      // Keep the job offer in step: assigned by hand or cancelled → no longer
+      // open to drivers; completed → the driver who took it can be paid.
+      const otherDriver = opts.driver && offer?.takenBy && opts.driver.phone !== offer.takenBy.phone;
+      if (offer?.status === 'open' && (to === 'cancelled' || opts.driver)) await withdrawOffer(user, b.id).catch(() => {});
+      else if (offer?.status === 'taken' && (to === 'cancelled' || otherDriver)) await withdrawOffer(user, b.id).catch(() => {});
+      else if (offer?.status === 'taken' && (to === 'completed' || to === 'confirmed'))
+        await markOfferDone(user, b.id, to === 'completed').catch(() => {});
       setMode(null);
       setReason('');
     } catch {
@@ -745,6 +774,8 @@ function BookingDetail({
             </div>
           )}
         </div>
+
+        <OfferPanel key={`offer-${b.id}-${offer?.status ?? 'none'}`} b={b} offer={offer} user={user} />
 
         {isTripPackage(b.package) && <QuoteCalculator key={b.id} b={b} user={user} />}
         {isTripPackage(b.package) && b.status !== 'cancelled' && <TripClock key={`clock-${b.id}`} b={b} user={user} />}

@@ -8,6 +8,7 @@ import type { User } from 'firebase/auth';
 
 import type { BookingQuote, BookingStatus, DriverRef, DriverStatus } from './bookings';
 import { getFirebaseApp } from './firebase';
+import { type Offer, clampCut, driverPayFor } from './offers';
 
 async function fs() {
   const [app, mod] = await Promise.all([getFirebaseApp(), import('firebase/firestore')]);
@@ -139,6 +140,84 @@ export async function addDriver(user: User, d: NewDriver): Promise<string> {
     updatedBy: user.uid,
   });
   return ref.id;
+}
+
+/* ------------------------------------------------------------- job offers */
+
+/** Live offer for one booking (null = none yet). */
+export async function watchOffer(bookingId: string, onChange: (o: Offer | null) => void): Promise<() => void> {
+  const { db, doc, onSnapshot } = await fs();
+  return onSnapshot(
+    doc(db, 'offers', bookingId),
+    (snap) => {
+      if (!snap.exists()) return onChange(null);
+      const d = snap.data();
+      onChange({
+        ...(d as Offer),
+        takenAt: d.takenAt?.toDate?.(),
+        paidAt: d.paidAt?.toDate?.(),
+        createdAt: d.createdAt?.toDate?.(),
+      });
+    },
+    () => onChange(null),
+  );
+}
+
+export type OfferInput = {
+  bookingId: string;
+  ref: string;
+  city: string;
+  package: string;
+  when: string;
+  area: string;
+  to: string;
+  price: number;
+  cutPercent: number;
+};
+
+/** Offer a booking to the drivers of its city (again, if it was withdrawn). */
+export async function postOffer(user: User, o: OfferInput, existing: Offer | null) {
+  const { db, doc, setDoc, updateDoc, serverTimestamp } = await fs();
+  const cutPercent = clampCut(o.cutPercent);
+  const price = Math.round(o.price);
+  const fields = {
+    bookingId: o.bookingId,
+    ref: o.ref.slice(0, 20),
+    city: o.city,
+    package: o.package,
+    when: o.when.slice(0, 40),
+    area: o.area.trim().slice(0, 120),
+    to: o.to.slice(0, 60),
+    price,
+    cutPercent,
+    driverPay: driverPayFor(price, cutPercent),
+    status: 'open',
+    takenBy: null,
+    takenAt: null,
+    done: false,
+    paid: false,
+    paidAt: null,
+    updatedAt: serverTimestamp(),
+    by: user.uid,
+  };
+  const ref = doc(db, 'offers', o.bookingId);
+  // Offering again keeps the first post time (the rules check it does not change).
+  if (existing) await updateDoc(ref, fields);
+  else await setDoc(ref, { ...fields, createdAt: serverTimestamp() });
+}
+
+async function patchOffer(user: User, bookingId: string, fields: Record<string, unknown>) {
+  const { db, doc, updateDoc, serverTimestamp } = await fs();
+  await updateDoc(doc(db, 'offers', bookingId), { ...fields, updatedAt: serverTimestamp(), by: user.uid });
+}
+
+export const withdrawOffer = (user: User, bookingId: string) => patchOffer(user, bookingId, { status: 'withdrawn' });
+
+export const markOfferDone = (user: User, bookingId: string, done = true) => patchOffer(user, bookingId, { done });
+
+export async function markOfferPaid(user: User, bookingId: string, paid = true) {
+  const { serverTimestamp } = await fs();
+  await patchOffer(user, bookingId, { paid, paidAt: paid ? serverTimestamp() : null });
 }
 
 /* ------------------------------------------------------------- blocked list */

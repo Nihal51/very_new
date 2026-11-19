@@ -20,7 +20,10 @@ rules_version = '2';
 //                         the alerts robot signs his login with role 'driver' and
 //                         his number): read the bookings assigned to his number
 //                         while they are "assigned", and share his live location
-//                         on them (tracking/{bookingId}). Nothing else.
+//                         on them (tracking/{bookingId}); an Active driver also
+//                         sees the open job offers in his city, takes one (the
+//                         booking is assigned to him), and sees his earnings.
+//                         Nothing else.
 //    An admin             read everything; move bookings and drivers through
 //                         their statuses; assign drivers; add notes; save the
 //                         price agreed on the call. An admin is
@@ -61,6 +64,25 @@ service cloud.firestore {
       return isSignedIn()
         && request.auth.token.get('role', '') == 'driver'
         && isMobile(request.auth.token.get('driverPhone', ''));
+    }
+
+    // The logged-in driver's own record in drivers/ (his login carries its id).
+    function myDriver() {
+      return get(/databases/$(database)/documents/drivers/$(request.auth.token.driverId)).data;
+    }
+
+    // An Active driver whose record really has the number his login says.
+    function isActiveDriver() {
+      return isDriver()
+        && request.auth.token.get('driverId', '') is string
+        && exists(/databases/$(database)/documents/drivers/$(request.auth.token.driverId))
+        && myDriver().status == 'active'
+        && myDriver().phone == request.auth.token.driverPhone;
+    }
+
+    // How he appears on a booking he takes: exactly his record.
+    function meAsDriverRef() {
+      return { 'id': request.auth.token.driverId, 'name': myDriver().name, 'phone': request.auth.token.driverPhone };
     }
 
     // A booking this driver is on right now: assigned to his number, and still
@@ -320,6 +342,20 @@ service cloud.firestore {
         && isOptionalText(request.resource.data.get('cancelReason', ''), 200)
         && isAdminStamped(request.resource.data);
 
+      // A driver taking a job offer (offers/{bookingId}) in the Driver app: in the
+      // same transaction the offer becomes "taken" by him. Only while it was open,
+      // only for an Active driver in its city, only to himself.
+      allow update: if isActiveDriver()
+        && changedOnly(['status', 'assignedDriver', 'updatedAt', 'updatedBy'])
+        && resource.data.status in ['new', 'confirmed']
+        && request.resource.data.status == 'assigned'
+        && request.resource.data.assignedDriver == meAsDriverRef()
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && get(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'open'
+        && getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'taken'
+        && getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.takenBy == meAsDriverRef();
+
       allow delete: if false;
 
       // The timeline: one entry per change or note, append-only, admins only.
@@ -433,7 +469,8 @@ service cloud.firestore {
     //  Applications from components/DriverForm.tsx; vetted in /admin.
 
     match /drivers/{driverId} {
-      allow read: if isAdmin();
+      // Admins see all; a driver logged in to the Driver app sees his own (city, name).
+      allow read: if isAdmin() || (isDriver() && request.auth.token.get('driverId', '') == driverId);
 
       // An admin adding a driver he has already met and checked ("+ Add driver"
       // in /admin, lib/admin.ts addDriver): straight in as Verified or Active.
@@ -523,6 +560,78 @@ service cloud.firestore {
         || (isSignedIn() && job().get('customerUid', '') == request.auth.uid)
         || (isDriver() && isMyJob(job()));
       allow create, update: if isDriver() && isMyJob(job()) && isTrack(request.resource.data);
+      allow delete: if false;
+    }
+
+    /* ------------------------------------------------------------ offers -- */
+    //  Job offers: an admin offers a booking to the drivers of its city, with what
+    //  the driver earns (the price minus DriveBuddy's cut, 20–30%). Active drivers
+    //  of that city see open offers in the Driver app — no customer name, number
+    //  or address, only the area — and the first to tap Accept takes it (the
+    //  booking is assigned to him in the same transaction, see bookings). He then
+    //  sees his taken offers as his earnings: what DriveBuddy owes him, and what
+    //  it has paid. The customer never sees this document (the cut is private).
+
+    function offerKeys() {
+      return ['bookingId', 'ref', 'city', 'package', 'when', 'area', 'to', 'price', 'cutPercent', 'driverPay',
+              'status', 'takenBy', 'takenAt', 'done', 'paid', 'paidAt', 'createdAt', 'updatedAt', 'by'];
+    }
+
+    function isOfferShape(o, bookingId) {
+      return o.keys().hasOnly(offerKeys()) && o.keys().hasAll(offerKeys())
+        && o.bookingId == bookingId
+        && isOptionalText(o.ref, 20)
+        && isServedCity(o.city)
+        && isText(o.package, 1, 40)
+        && isOptionalText(o.when, 40)
+        && isText(o.area, 2, 120)
+        && isOptionalText(o.to, 60)
+        && o.price is int && o.price >= 100 && o.price <= 500000
+        && o.cutPercent is int && o.cutPercent >= 20 && o.cutPercent <= 30
+        && o.driverPay is int && o.driverPay > 0 && o.driverPay < o.price
+        && o.status in ['open', 'taken', 'withdrawn']
+        && (o.takenBy == null || isDriverRef(o.takenBy))
+        && (o.takenAt == null || o.takenAt is timestamp)
+        && o.done is bool && o.paid is bool
+        && (o.paidAt == null || o.paidAt is timestamp)
+        && o.createdAt is timestamp && o.updatedAt == request.time;
+    }
+
+    match /offers/{bookingId} {
+      allow read: if isAdmin()
+        || (isActiveDriver() && resource.data.status == 'open' && resource.data.city == myDriver().city)
+        || (isDriver() && resource.data.takenBy.phone == request.auth.token.driverPhone);
+
+      // An admin posts an offer (open, nobody yet) for a booking that exists.
+      allow create: if isAdmin()
+        && isOfferShape(request.resource.data, bookingId)
+        && exists(/databases/$(database)/documents/bookings/$(bookingId))
+        && request.resource.data.status == 'open'
+        && request.resource.data.takenBy == null && request.resource.data.takenAt == null
+        && request.resource.data.done == false && request.resource.data.paid == false
+        && request.resource.data.paidAt == null
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.by == request.auth.uid;
+
+      // An admin changes it: the price or cut while it is open, withdraws it,
+      // offers it again, marks the job done or the driver paid.
+      allow update: if isAdmin()
+        && isOfferShape(request.resource.data, bookingId)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.by == request.auth.uid;
+
+      // A driver accepts an open offer in his city: it becomes his, now, and the
+      // booking is assigned to him in the same transaction.
+      allow update: if isActiveDriver()
+        && resource.data.status == 'open'
+        && resource.data.city == myDriver().city
+        && changedOnly(['status', 'takenBy', 'takenAt', 'updatedAt'])
+        && request.resource.data.status == 'taken'
+        && request.resource.data.takenBy == meAsDriverRef()
+        && request.resource.data.takenAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.assignedDriver == meAsDriverRef();
+
       allow delete: if false;
     }
 

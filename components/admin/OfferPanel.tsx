@@ -1,0 +1,167 @@
+'use client';
+
+import type { User } from 'firebase/auth';
+import { useState } from 'react';
+
+import { SectionTitle } from '@/components/admin/kit';
+import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
+import { Input, Select } from '@/components/ui/Field';
+import { markOfferPaid, postOffer, withdrawOffer } from '@/lib/admin';
+import { type Booking, formatDateTime, prettyPhone } from '@/lib/bookings';
+import { CUT, type Offer, driverPayFor, offerArea } from '@/lib/offers';
+import { rupees } from '@/lib/settings';
+
+const CUTS = Array.from({ length: CUT.max - CUT.min + 1 }, (_, i) => CUT.min + i);
+
+/**
+ * "Offer to drivers": the booking goes to the DriveBuddy Driver app of every
+ * Active driver in its city, with what he earns (the price minus DriveBuddy's
+ * cut). The first to tap Accept gets it — the booking is assigned to him at
+ * once and the customer hears about it as usual. Drivers see only the area,
+ * never the customer's name, number or address, until they have accepted.
+ */
+export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null | undefined; user: User }) {
+  const [price, setPrice] = useState(String(b.quote?.amount ?? offer?.price ?? ''));
+  const [cut, setCut] = useState(offer?.cutPercent ?? CUT.default);
+  const [area, setArea] = useState(offer?.area ?? offerArea(b.pickup));
+  const [busy, setBusy] = useState<'post' | 'withdraw' | 'paid' | null>(null);
+  const [err, setErr] = useState('');
+
+  if (offer === undefined) return null; // still loading
+  const canOffer = b.status === 'new' || b.status === 'confirmed';
+  if (!offer && !canOffer) return null;
+
+  const priceNum = Math.round(Number(price));
+  const priceOk = Number.isFinite(priceNum) && priceNum >= 100 && priceNum <= 500000;
+  const pay = priceOk ? driverPayFor(priceNum, cut) : 0;
+
+  async function act(kind: 'post' | 'withdraw' | 'paid', fn: () => Promise<void>) {
+    setBusy(kind);
+    setErr('');
+    try {
+      await fn();
+    } catch {
+      setErr('Could not save. Check your internet and try again.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const post = () =>
+    act('post', () =>
+      postOffer(
+        user,
+        {
+          bookingId: b.id,
+          ref: b.ref ?? '',
+          city: b.city,
+          package: b.package,
+          when: b.preferredTime,
+          area,
+          to: b.trip?.to ?? '',
+          price: priceNum,
+          cutPercent: cut,
+        },
+        offer,
+      ),
+    );
+
+  return (
+    <div className="border-border mt-5 border-t pt-5">
+      <SectionTitle>Offer to drivers</SectionTitle>
+
+      {offer?.status === 'open' && (
+        <div className="flex flex-col gap-2">
+          <p>
+            Offered to {b.city} drivers at <strong>{rupees(offer.price)}</strong> · driver earns{' '}
+            <strong>{rupees(offer.driverPay)}</strong> · DriveBuddy keeps {offer.cutPercent}%. Waiting for a driver to accept…
+          </p>
+          <div>
+            <Button variant="ghost" loading={busy === 'withdraw'} onClick={() => act('withdraw', () => withdrawOffer(user, b.id))}>
+              Withdraw offer
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {offer?.status === 'taken' && offer.takenBy && (
+        <div className="flex flex-col gap-2">
+          <p>
+            Taken by <strong>{offer.takenBy.name}</strong> ({prettyPhone(offer.takenBy.phone)})
+            {offer.takenAt ? ` · ${formatDateTime(offer.takenAt)}` : ''}.
+          </p>
+          <p className="text-fg-muted text-sm">
+            Price {rupees(offer.price)} · driver earns {rupees(offer.driverPay)} · DriveBuddy keeps {offer.cutPercent}% (
+            {rupees(offer.price - offer.driverPay)}).
+          </p>
+          {offer.paid ? (
+            <p className="text-sm">
+              ✓ Paid to the driver{offer.paidAt ? ` on ${formatDateTime(offer.paidAt)}` : ''}.{' '}
+              <button type="button" className="underline" onClick={() => act('paid', () => markOfferPaid(user, b.id, false))}>
+                Undo
+              </button>
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant={offer.done ? 'primary' : 'outline'}
+                loading={busy === 'paid'}
+                onClick={() => act('paid', () => markOfferPaid(user, b.id))}
+              >
+                Mark {rupees(offer.driverPay)} paid to {offer.takenBy.name.split(' ')[0]}
+              </Button>
+              {!offer.done && <span className="text-fg-subtle text-sm">The job is not marked completed yet.</span>}
+            </div>
+          )}
+        </div>
+      )}
+
+      {canOffer && (!offer || offer.status === 'withdrawn') && (
+        <div className="flex flex-col gap-3">
+          {offer?.status === 'withdrawn' && <p className="text-fg-muted text-sm">The last offer was withdrawn. Offer it again:</p>}
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 text-sm">
+              Price to the customer (₹)
+              <Input type="number" inputMode="numeric" min={100} value={price} onChange={(e) => setPrice(e.target.value)} />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              DriveBuddy&apos;s cut
+              <Select value={String(cut)} onChange={(e) => setCut(Number(e.target.value))}>
+                {CUTS.map((c) => (
+                  <option key={c} value={c}>
+                    {c}%{c === CUT.default ? ' (usual)' : ''}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          </div>
+          <label className="flex flex-col gap-1 text-sm">
+            Area drivers see (not the full address)
+            <Input value={area} maxLength={120} onChange={(e) => setArea(e.target.value)} />
+          </label>
+          <p className="text-sm">
+            {priceOk ? (
+              <>
+                Driver earns <strong>{rupees(pay)}</strong> · DriveBuddy keeps <strong>{rupees(priceNum - pay)}</strong>
+              </>
+            ) : (
+              'Enter the price the customer pays.'
+            )}
+          </p>
+          <div>
+            <Button loading={busy === 'post'} disabled={!priceOk || area.trim().length < 2} onClick={post}>
+              Offer to {b.city} drivers
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {err && (
+        <Alert tone="error" className="mt-3">
+          {err}
+        </Alert>
+      )}
+    </div>
+  );
+}

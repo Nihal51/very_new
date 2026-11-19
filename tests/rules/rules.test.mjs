@@ -31,6 +31,7 @@ import {
   where,
   writeBatch,
   deleteDoc,
+  runTransaction,
 } from 'firebase/firestore';
 
 let env;
@@ -679,5 +680,95 @@ describe('drivers — an admin adding one directly', () => {
     // A guest can still apply as before, only as "new".
     await assertFails(addDoc(collection(guest(), 'drivers'), { ...driverApp(), status: 'active' }));
     await assertSucceeds(addDoc(collection(guest(), 'drivers'), driverApp()));
+  });
+});
+
+describe('job offers — admin posts, an Active driver in that city takes it', () => {
+  const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+  const SONU = { id: 'd2', name: 'Sonu Verma', phone: '9425212345' };
+  const drv = (d) => env.authenticatedContext(`driver-${d.phone}`, { role: 'driver', driverPhone: d.phone, driverId: d.id }).firestore();
+  const offer = (extra = {}) => ({
+    bookingId: 'b1', ref: 'DB-1042', city: 'Raipur', package: '3-hours-600', when: '', area: 'Shankar Nagar',
+    to: '', price: 600, cutPercent: 25, driverPay: 450, status: 'open', takenBy: null, takenAt: null,
+    done: false, paid: false, paidAt: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), by: 'admin1', ...extra,
+  });
+  const seedDrivers = () =>
+    env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'drivers', 'd1'), { ...RAJU, city: 'Raipur', status: 'active' });
+      await setDoc(doc(db, 'drivers', 'd2'), { ...SONU, city: 'Bhilai', status: 'active' });
+      await setDoc(doc(db, 'drivers', 'd3'), { name: 'Old Driver', phone: '9111111111', city: 'Raipur', status: 'inactive' });
+    });
+  const take = (db, who) =>
+    runTransaction(db, async (tx) => {
+      const ref = doc(db, 'offers', 'b1');
+      const snap = await tx.get(ref);
+      if (snap.data()?.status !== 'open') throw new Error('gone');
+      tx.update(ref, { status: 'taken', takenBy: who, takenAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      tx.update(doc(db, 'bookings', 'b1'), { status: 'assigned', assignedDriver: who, updatedAt: serverTimestamp(), updatedBy: `driver-${who.phone}` });
+    });
+
+  beforeEach(async () => {
+    await seedDrivers();
+    await seedBooking('b1', { status: 'confirmed', customerUid: 'cust1' });
+  });
+
+  test('an admin posts an offer; customers and guests cannot see it', async () => {
+    await assertSucceeds(setDoc(doc(admin(), 'offers', 'b1'), offer()));
+    await assertFails(getDoc(doc(customer('cust1'), 'offers', 'b1')));
+    await assertFails(getDoc(doc(guest(), 'offers', 'b1')));
+    await assertFails(setDoc(doc(admin(), 'offers', 'nobooking'), offer({ bookingId: 'nobooking' })));
+    await assertFails(setDoc(doc(admin(), 'offers', 'b1'), offer({ cutPercent: 10 })));
+    await assertFails(setDoc(doc(admin(), 'offers', 'b1'), offer({ status: 'taken', takenBy: RAJU })));
+    await assertFails(setDoc(doc(drv(RAJU), 'offers', 'b1'), offer()));
+  });
+
+  test('Active drivers of that city see open offers; others do not', async () => {
+    await setDoc(doc(admin(), 'offers', 'b1'), offer());
+    const open = (db, city) => getDocs(query(collection(db, 'offers'), where('status', '==', 'open'), where('city', '==', city)));
+    await assertSucceeds(open(drv(RAJU), 'Raipur'));
+    await assertSucceeds(getDoc(doc(drv(RAJU), 'offers', 'b1')));
+    await assertFails(open(drv(SONU), 'Raipur')); // Bhilai driver
+    await assertFails(getDoc(doc(drv({ id: 'd3', name: 'Old Driver', phone: '9111111111' }), 'offers', 'b1'))); // inactive
+    await assertFails(getDoc(doc(drv({ id: 'd1', name: 'Raju Sahu', phone: '9000000000' }), 'offers', 'b1'))); // wrong number for d1
+    await assertSucceeds(getDoc(doc(drv(RAJU), 'drivers', 'd1')));
+    await assertFails(getDoc(doc(drv(RAJU), 'drivers', 'd2')));
+  });
+
+  test('the first driver to accept gets the job and the booking; the second cannot', async () => {
+    await setDoc(doc(admin(), 'offers', 'b1'), offer());
+    await assertSucceeds(take(drv(RAJU), RAJU));
+    const b = await env.withSecurityRulesDisabled(async (ctx) => (await getDoc(doc(ctx.firestore(), 'bookings', 'b1'))).data());
+    assert.equal(b.status, 'assigned');
+    assert.deepEqual(b.assignedDriver, RAJU);
+    // He now sees the job, and his offer as earnings.
+    await assertSucceeds(getDoc(doc(drv(RAJU), 'bookings', 'b1')));
+    await assertSucceeds(getDocs(query(collection(drv(RAJU), 'offers'), where('takenBy.phone', '==', RAJU.phone))));
+    // A second Raipur driver is too late.
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'drivers', 'd4'), { name: 'Vijay', phone: '9300000000', city: 'Raipur', status: 'active' }));
+    const VIJAY = { id: 'd4', name: 'Vijay', phone: '9300000000' };
+    await assertFails(take(drv(VIJAY), VIJAY));
+  });
+
+  test('a driver can only take it for himself, only in his city, and only with the offer', async () => {
+    await setDoc(doc(admin(), 'offers', 'b1'), offer());
+    // Booking alone, without the offer: refused.
+    await assertFails(updateDoc(doc(drv(RAJU), 'bookings', 'b1'), { status: 'assigned', assignedDriver: RAJU, updatedAt: serverTimestamp(), updatedBy: `driver-${RAJU.phone}` }));
+    // For someone else: refused.
+    await assertFails(take(drv(RAJU), SONU));
+    // Another city: refused.
+    await assertFails(take(drv(SONU), SONU));
+    // A withdrawn offer: refused.
+    await updateDoc(doc(admin(), 'offers', 'b1'), { status: 'withdrawn', updatedAt: serverTimestamp(), by: 'admin1' });
+    await assertFails(take(drv(RAJU), RAJU));
+  });
+
+  test('an admin marks the job done and the driver paid; a driver cannot', async () => {
+    await setDoc(doc(admin(), 'offers', 'b1'), offer());
+    await take(drv(RAJU), RAJU);
+    await assertFails(updateDoc(doc(drv(RAJU), 'offers', 'b1'), { paid: true, updatedAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(doc(admin(), 'offers', 'b1'), { done: true, updatedAt: serverTimestamp(), by: 'admin1' }));
+    await assertSucceeds(updateDoc(doc(admin(), 'offers', 'b1'), { paid: true, paidAt: serverTimestamp(), updatedAt: serverTimestamp(), by: 'admin1' }));
+    await assertFails(deleteDoc(doc(admin(), 'offers', 'b1')));
   });
 });
