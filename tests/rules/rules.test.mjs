@@ -654,3 +654,30 @@ describe('driver app — jobs and live tracking', () => {
     await assertSucceeds(setDoc(t, bare));
   });
 });
+
+describe('drivers — an admin adding one directly', () => {
+  const added = (extra = {}) => ({
+    name: 'Raju Sahu', phone: '9893302783', city: 'Raipur', experienceYears: 8, licence: 'lmv',
+    about: '', adminNote: 'Licence and police check seen', status: 'active', source: 'admin',
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(), updatedBy: 'admin1', ...extra,
+  });
+
+  test('an admin can add a driver as Active or Verified', async () => {
+    await assertSucceeds(addDoc(collection(admin(), 'drivers'), added()));
+    await assertSucceeds(addDoc(collection(admin(), 'drivers'), added({ status: 'verified' })));
+  });
+
+  test('nobody else can, and not in any other shape', async () => {
+    await assertFails(addDoc(collection(guest(), 'drivers'), added()));
+    await assertFails(addDoc(collection(notAdmin(), 'drivers'), added({ updatedBy: 'google1' })));
+    await assertFails(addDoc(collection(admin(), 'drivers'), added({ status: 'rejected' })));
+    await assertFails(addDoc(collection(admin(), 'drivers'), added({ source: 'website' })));
+    await assertFails(addDoc(collection(admin(), 'drivers'), added({ experienceYears: 3 })));
+    await assertFails(addDoc(collection(admin(), 'drivers'), added({ updatedBy: 'someone-else' })));
+    await assertFails(addDoc(collection(admin(), 'drivers'), added({ createdAt: new Date() })));
+    await assertFails(addDoc(collection(admin(), 'drivers'), added({ extra: 1 })));
+    // A guest can still apply as before, only as "new".
+    await assertFails(addDoc(collection(guest(), 'drivers'), { ...driverApp(), status: 'active' }));
+    await assertSucceeds(addDoc(collection(guest(), 'drivers'), driverApp()));
+  });
+});

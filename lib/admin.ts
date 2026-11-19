@@ -106,6 +106,41 @@ export async function changeDriverStatus(user: User, driverId: string, status: D
   });
 }
 
+export type NewDriver = {
+  name: string;
+  phone: string;
+  city: string;
+  experienceYears: number;
+  licence: 'commercial' | 'lmv' | 'both';
+  about: string;
+  adminNote: string;
+  status: 'active' | 'verified';
+};
+
+/**
+ * A driver the office adds itself (one already met and checked), straight in as
+ * Active or Verified — no application form. He can log in to the Driver app with
+ * this number at once. firestore.rules: drivers, "an admin adding a driver".
+ */
+export async function addDriver(user: User, d: NewDriver): Promise<string> {
+  const { db, collection, addDoc, serverTimestamp } = await fs();
+  const ref = await addDoc(collection(db, 'drivers'), {
+    name: d.name.trim().replace(/\s+/g, ' ').slice(0, 60),
+    phone: d.phone,
+    city: d.city,
+    experienceYears: d.experienceYears,
+    licence: d.licence,
+    about: d.about.trim().slice(0, 500),
+    adminNote: d.adminNote.trim().slice(0, 1000),
+    status: d.status,
+    source: 'admin',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+    updatedBy: user.uid,
+  });
+  return ref.id;
+}
+
 /* ------------------------------------------------------------- blocked list */
 
 /** Whether this number is blocked from booking and applying (admins only can read the list). */

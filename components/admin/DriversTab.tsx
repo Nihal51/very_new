@@ -23,12 +23,14 @@ import {
 } from '@/components/admin/kit';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
-import { Textarea } from '@/components/ui/Field';
+import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
-import { changeDriverStatus } from '@/lib/admin';
+import { addDriver, changeDriverStatus, type NewDriver } from '@/lib/admin';
 import { DRIVER_STATUS, formatDateTime, prettyPhone, type Driver, type DriverStatus } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
+import { cities } from '@/lib/content';
 import { downloadCsv, exportName, sheetPhone } from '@/lib/export';
+import { normalisePhone, validateExperience, validateName, validatePhone } from '@/lib/validate';
 
 const LICENCE: Record<string, string> = {
   commercial: 'Commercial',
@@ -72,6 +74,7 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<Sort<SortKey>>({ key: 'applied', dir: 'desc' });
   const [openId, setOpenId] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const base = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -139,6 +142,9 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
           <ToolButton onClick={exportRows} title="Download these rows as a file for Excel or Google Sheets">
             <DownloadIcon className="size-4" /> Excel
           </ToolButton>
+          <Button size="sm" onClick={() => setAdding(true)}>
+            + Add driver
+          </Button>
         </div>
       </div>
 
@@ -214,6 +220,24 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
           </div>
         </>
       )}
+
+      <Drawer open={adding} onClose={() => setAdding(false)} label="Add a driver">
+        {adding && (
+          <AddDriver
+            user={user}
+            drivers={all}
+            onClose={() => setAdding(false)}
+            onAdded={(status) => {
+              setAdding(false);
+              setFilter(status);
+            }}
+            onOpen={(id) => {
+              setAdding(false);
+              setOpenId(id);
+            }}
+          />
+        )}
+      </Drawer>
 
       <Drawer open={Boolean(open)} onClose={() => setOpenId(null)} label={open ? `Driver ${open.name}` : 'Driver'}>
         {open && <DriverDetail key={open.id} d={open} user={user} onClose={() => setOpenId(null)} />}
@@ -309,6 +333,169 @@ function DriverDetail({ d, user, onClose }: { d: Driver; user: User; onClose: ()
           </Button>
         </div>
       </div>
+    </>
+  );
+}
+
+const EMPTY = { name: '', phone: '', city: '', experience: '', licence: '', about: '', note: '', status: 'active' as NewDriver['status'] };
+
+/**
+ * "+ Add driver": a driver the office has already met and checked goes straight
+ * in as Active (or Verified), with no application form. He can log in to the
+ * DriveBuddy Driver app with this number at once.
+ */
+function AddDriver({
+  user,
+  drivers,
+  onClose,
+  onAdded,
+  onOpen,
+}: {
+  user: User;
+  drivers: Driver[];
+  onClose: () => void;
+  onAdded: (status: NewDriver['status']) => void;
+  onOpen: (id: string) => void;
+}) {
+  const [v, setV] = useState(EMPTY);
+  const [errors, setErrors] = useState<Partial<Record<keyof typeof EMPTY, string>>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const set = (k: keyof typeof EMPTY) => (value: string) => setV((x) => ({ ...x, [k]: value }));
+
+  const phone = normalisePhone(v.phone);
+  const already = /^[6-9]\d{9}$/.test(phone) ? drivers.find((d) => d.phone === phone) : undefined;
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    const next = {
+      name: validateName(v.name),
+      phone: validatePhone(v.phone),
+      city: v.city ? undefined : 'Choose the city.',
+      experience: validateExperience(v.experience),
+      licence: v.licence ? undefined : 'Choose the licence.',
+    };
+    setErrors(next);
+    if (Object.values(next).some(Boolean) || already) return;
+    setBusy(true);
+    setErr('');
+    try {
+      await addDriver(user, {
+        name: v.name,
+        phone,
+        city: v.city,
+        experienceYears: Number(v.experience),
+        licence: v.licence as NewDriver['licence'],
+        about: v.about,
+        adminNote: v.note,
+        status: v.status,
+      });
+      onAdded(v.status);
+    } catch {
+      setErr('Could not save. Check your internet and try again.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <DrawerHeader onClose={onClose}>
+        <h2 className="font-display text-xl font-bold">Add a driver</h2>
+        <p className="text-fg-subtle mt-1 text-sm">
+          For a driver you have met and checked. He can log in to the Driver app with this number straight away.
+        </p>
+      </DrawerHeader>
+      <form onSubmit={save} noValidate className="flex-1 overflow-y-auto px-5 py-5">
+        <fieldset disabled={busy} className="m-0 grid min-w-0 gap-4 border-0 p-0">
+          <Field label="Full name" name="name" required error={errors.name}>
+            {(p) => <Input {...p} type="text" value={v.name} onChange={(e) => set('name')(e.target.value)} />}
+          </Field>
+          <Field label="Mobile number" name="phone" required error={errors.phone}>
+            {(p) => (
+              <Input
+                {...p}
+                type="tel"
+                inputMode="numeric"
+                maxLength={14}
+                placeholder="10-digit mobile"
+                value={v.phone}
+                onChange={(e) => set('phone')(e.target.value)}
+              />
+            )}
+          </Field>
+          {already && (
+            <Alert tone="error">
+              {already.name} already has this number ({DRIVER_STATUS[already.status]?.label ?? already.status}).{' '}
+              <button type="button" className="underline" onClick={() => onOpen(already.id)}>
+                Open his record
+              </button>{' '}
+              to change his status instead.
+            </Alert>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="City" name="city" required error={errors.city}>
+              {(p) => (
+                <Select {...p} value={v.city} onChange={(e) => set('city')(e.target.value)}>
+                  <option value="">Select a city</option>
+                  {cities.map((c) => (
+                    <option key={c.slug} value={c.name}>
+                      {c.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </Field>
+            <Field label="Years of experience" name="experience" required error={errors.experience} hint="At least 5.">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  inputMode="numeric"
+                  min={5}
+                  max={60}
+                  value={v.experience}
+                  onChange={(e) => set('experience')(e.target.value)}
+                />
+              )}
+            </Field>
+          </div>
+          <Field label="Licence" name="licence" required error={errors.licence}>
+            {(p) => (
+              <Select {...p} value={v.licence} onChange={(e) => set('licence')(e.target.value)}>
+                <option value="">Select the licence</option>
+                {Object.entries(LICENCE).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Status" name="status" required>
+            {(p) => (
+              <Select {...p} value={v.status} onChange={(e) => set('status')(e.target.value)}>
+                <option value="active">Active – can take bookings now</option>
+                <option value="verified">Verified – checked, not taking bookings yet</option>
+              </Select>
+            )}
+          </Field>
+          <Field label="About him" name="about" optionalLabel>
+            {(p) => <Textarea {...p} rows={2} maxLength={500} value={v.about} onChange={(e) => set('about')(e.target.value)} />}
+          </Field>
+          <Field label="Internal note" name="note" optionalLabel hint="Documents seen, police check date, references…">
+            {(p) => <Textarea {...p} rows={2} maxLength={1000} value={v.note} onChange={(e) => set('note')(e.target.value)} />}
+          </Field>
+          {err && <Alert tone="error">{err}</Alert>}
+          <div className="flex gap-2">
+            <Button type="submit" loading={busy} disabled={Boolean(already)}>
+              Add driver
+            </Button>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+          </div>
+        </fieldset>
+      </form>
     </>
   );
 }

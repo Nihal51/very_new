@@ -435,6 +435,32 @@ service cloud.firestore {
     match /drivers/{driverId} {
       allow read: if isAdmin();
 
+      // An admin adding a driver he has already met and checked ("+ Add driver"
+      // in /admin, lib/admin.ts addDriver): straight in as Verified or Active.
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'name', 'phone', 'city', 'experienceYears', 'licence', 'about',
+          'adminNote', 'createdAt', 'status', 'source', 'updatedAt', 'updatedBy'
+        ])
+        && request.resource.data.keys().hasAll([
+          'name', 'phone', 'city', 'experienceYears', 'licence', 'about',
+          'adminNote', 'createdAt', 'status', 'source', 'updatedAt', 'updatedBy'
+        ])
+        && isText(request.resource.data.name, 2, 60)
+        && isMobile(request.resource.data.phone)
+        && isServedCity(request.resource.data.city)
+        && request.resource.data.experienceYears is int
+        && request.resource.data.experienceYears >= 5
+        && request.resource.data.experienceYears <= 60
+        && request.resource.data.licence in ['commercial', 'lmv', 'both']
+        && isOptionalText(request.resource.data.about, 500)
+        && isOptionalText(request.resource.data.adminNote, 1000)
+        && request.resource.data.status in ['verified', 'active']
+        && request.resource.data.source == 'admin'
+        && request.resource.data.createdAt == request.time
+        && isAdminStamped(request.resource.data);
+
+      // An application from the website or the app's form.
       allow create: if
         request.resource.data.keys().hasOnly([
           'name', 'phone', 'city', 'experienceYears',
