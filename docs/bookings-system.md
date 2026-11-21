@@ -37,6 +37,10 @@ How a booking travels from a customer's phone to a driver, and how to set it up.
 | `users/{uid}/devices/{id}` | phone with the DriveBuddy app and notifications on | the app (push token + language) | that customer; the robot |
 | `admins/{email}` | admin Google account | robot's `setup` (or the Firebase console) | that admin, to check their own access |
 | `meta/counters` | — | robot only | nobody from a browser |
+| `offers/{bookingId}` | job offered to drivers | admin, robot; the driver who takes it or gives it back | admin; Active drivers of the cities in `cities` (open offers); the driver who took it |
+| `tripTaps/{bookingId}` | job a driver is on | the assigned driver (Start, Arrived, Job done, Reached home) | admin, that driver |
+| `ratings/{bookingId}` | completed job the customer rated | that customer (once) | admin, that customer |
+| `reminders/{bookingId}`, `offerAlerts/{bookingId}` | the robot's own notes (reminders, payment, rating request; who was alerted) | robot only | nobody from a browser |
 
 **Booking lifecycle:** `new → confirmed → assigned → completed`, or `cancelled` from any open state. Completed and cancelled bookings can be reopened.
 **Driver lifecycle:** `new (applied) → verified → active ⇄ inactive`, or `rejected`. Only `active` drivers can be assigned.
@@ -93,6 +97,22 @@ Each booking remembers what the customer was last told (`pushedKey`, `whatsappKe
 **After changing `apps-script/Code.js`** (as in this update), paste the new file into the Sheet's Apps Script editor (Extensions → Apps Script → select all in `Code.js` → paste → Save). The every-minute trigger keeps running.
 
 If the change is in the web address part (the doorbell or the train lookup, `doGet`), the address keeps serving the old version until you deploy a new one: **Deploy → Manage deployments → ✏ (edit) → Version: New version → Deploy**. The address stays the same, so nothing on the website changes. (The automatic deploy in docs/automatic-deploys.md pushes the code but does not do this step.)
+
+## Automation: what the robot does by itself
+
+The Driver and Customer apps and the robot now handle the simple jobs without a call:
+
+1. **Instant booking.** A booking from a logged-in customer for *1 hour* or *3 hours*, or a trip whose estimate the customer accepted in the app (**Accept price**), is confirmed by the robot within a minute ("auto-confirmed" in Telegram, "Confirmed automatically" in the history) and offered to drivers as usual. Hospital / emergency bookings are always a call. Script property `INSTANT_BOOKINGS` = `off` stops it.
+2. **Can't make it.** A driver can give back a job he took, until he taps Start. The robot offers it again from the start (never to him) and adds a strike to his record (Drivers tab: *Jobs given back*).
+3. **Reminders.** An hour before the trip time, the customer ("Your driver Raju arrives at 3:30 pm") and the driver ("Job at 3:30 pm · Shankar Nagar") get one notification.
+4. **Trip taps.** The driver taps **Start → Arrived → Job done** (one-way drops: **→ Reached home**) in the Driver app. For outstation trips and one-way drops the times go to the booking's clock and Telegram, as with the trip link; you still save the final bill. For local jobs (1 hour, 3 hours, full day, night) **Job done** makes the bill — the package price plus each hour over it after 15 minutes' grace, at `prices.localExtraHour` in `site-settings.ts` — and completes the booking.
+5. **Payment link (optional).** With `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` set, a completed job with a bill gets a Razorpay payment link by SMS; the app shows **Pay** / **Paid ✓**, and the robot checks every 5 minutes. Without the keys nothing happens.
+6. **Ratings.** After the job (and the payment, when payments are on) the customer is asked once to rate the driver. Ratings make the driver's average in the Drivers tab; a 5-star customer is invited to review you on Google. Drivers rated below 4 (3+ ratings) or with 3+ jobs given back get new jobs after the others. Below 3.5 with 5+ ratings, Telegram asks whether to pause him — the robot never does that itself.
+7. **Payouts.** Mondays around 9:30, Telegram lists each driver to pay (total, UPI ID he set in the app, jobs) with a **Paid ✓** button. Press it after paying: his jobs are marked paid. Only presses in your own chat count.
+8. **9 pm report.** Today's bookings, revenue, DriveBuddy's cut, jobs nobody took, drivers online and payouts due.
+9. **Nearby cities.** An automatic offer nobody takes 10 minutes after its pay reached the top goes to Bhilai and Durg drivers too (for Raipur; and the other way round), and the customer hears "Still finding your driver".
+
+After pasting the new `Code.js`, nothing else is needed: the Monday and 9 pm triggers set themselves up on the next minute's run (or run **Connect Telegram and start** again). Publish the new `firestore.rules` at the same time as the apps that use them.
 
 ## Everyday use
 
