@@ -16,13 +16,19 @@ rules_version = '2';
 //                         (users/{uid}), register their phones for booking
 //                         notifications (users/{uid}/devices), and read the
 //                         bookings they made while logged in. Never anyone else's.
+//                         On their own trip they may accept the estimate once
+//                         (acceptedPrice), and rate the driver once the job is
+//                         completed (ratings/{bookingId}).
 //    A driver             logged in to the DriveBuddy Driver app (a code by SMS;
 //                         the alerts robot signs his login with role 'driver' and
 //                         his number): read the bookings assigned to his number
 //                         while they are "assigned", and share his live location
 //                         on them (tracking/{bookingId}); an Active driver also
-//                         sees the open job offers in his city, takes one (the
-//                         booking is assigned to him), and sees his earnings.
+//                         sees the open job offers in his city (or offered to
+//                         it from a nearby city), takes one (the booking is
+//                         assigned to him), and sees his earnings. He taps
+//                         Start / Arrived / Job done on his job (tripTaps), may
+//                         give a job back before Start, and sets his UPI ID.
 //                         Nothing else.
 //    An admin             read everything; move bookings and drivers through
 //                         their statuses; assign drivers; add notes; save the
@@ -274,6 +280,23 @@ service cloud.firestore {
         && b.at == request.time;
     }
 
+    // The trip estimate the customer accepted in the app: the booking's own
+    // estimate (trip.estTo, the top of the range they were shown), now.
+    function isAcceptedPrice(a, b) {
+      return a is map
+        && a.keys().hasOnly(['amount', 'at'])
+        && a.keys().hasAll(['amount', 'at'])
+        && b.trip.estTo is int && b.trip.estTo > 0
+        && a.amount is int && a.amount == b.trip.estTo
+        && a.at == request.time;
+    }
+
+    // The driver has not tapped Start on this job yet (no tripTaps, or no leftAt).
+    function notStarted(bookingId) {
+      return !exists(/databases/$(database)/documents/tripTaps/$(bookingId))
+        || !('leftAt' in get(/databases/$(database)/documents/tripTaps/$(bookingId)).data);
+    }
+
     match /bookings/{bookingId} {
       // Admins see everything; a customer sees only bookings tied to their login;
       // a driver only the jobs assigned to him right now.
@@ -355,6 +378,31 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'open'
         && getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'taken'
         && getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.takenBy == meAsDriverRef();
+
+      // The customer accepting the trip's estimate in the app ("Accept price"),
+      // once, while the booking is still open: exactly the estimate they were
+      // shown, at the server's time. The robot then confirms and offers it.
+      allow update: if isSignedIn()
+        && resource.data.get('customerUid', '') == request.auth.uid
+        && resource.data.status in ['new', 'confirmed']
+        && !('acceptedPrice' in resource.data)
+        && changedOnly(['acceptedPrice'])
+        && isAcceptedPrice(request.resource.data.acceptedPrice, resource.data);
+
+      // "Can't make it": the driver who took the job gives it back before he
+      // has tapped Start, in the same transaction as his offer becoming
+      // "released". The robot offers it again (never to him) and counts a strike.
+      allow update: if isDriver()
+        && isMyJob(resource.data)
+        && changedOnly(['status', 'assignedDriver', 'updatedAt', 'updatedBy'])
+        && request.resource.data.status == 'confirmed'
+        && request.resource.data.assignedDriver == null
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && notStarted(bookingId)
+        && get(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'taken'
+        && get(/databases/$(database)/documents/offers/$(bookingId)).data.takenBy.phone == request.auth.token.driverPhone
+        && getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'released';
 
       allow delete: if false;
 
@@ -465,8 +513,48 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    /* ---------------------------------------------------------- trip taps -- */
+    //  The Driver app's buttons on his job: Start (on my way) → Arrived → Job
+    //  done → (one-way drops) Reached home. Only the driver the booking is
+    //  assigned to, while it is "assigned"; each time once, in that order, at
+    //  the server's time. The alerts robot copies them to the booking (a trip's
+    //  clock, a local job's bill) — the customer sees them there, not here.
+
+    function tapIs(next, before) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([next])
+        && (before in resource.data)
+        && !(next in resource.data)
+        && request.resource.data[next] == request.time;
+    }
+
+    match /tripTaps/{bookingId} {
+      function job() {
+        return get(/databases/$(database)/documents/bookings/$(bookingId)).data;
+      }
+
+      allow read: if isAdmin()
+        || (isDriver() && (isMyJob(job()) || resource.data.driverPhone == request.auth.token.driverPhone));
+
+      // Start: the document begins with his number and the time he left.
+      allow create: if isDriver() && isMyJob(job())
+        && request.resource.data.keys().hasOnly(['driverPhone', 'leftAt'])
+        && request.resource.data.keys().hasAll(['driverPhone', 'leftAt'])
+        && request.resource.data.driverPhone == request.auth.token.driverPhone
+        && request.resource.data.leftAt == request.time;
+
+      allow update: if isDriver() && isMyJob(job())
+        && resource.data.driverPhone == request.auth.token.driverPhone
+        && (tapIs('arrivedAt', 'leftAt')
+          || tapIs('doneAt', 'arrivedAt')
+          || (tapIs('homeAt', 'doneAt') && job().package == 'one-way-drop'));
+
+      allow delete: if false;
+    }
+
     /* ----------------------------------------------------------- drivers -- */
     //  Applications from components/DriverForm.tsx; vetted in /admin.
+    //  ratingAvg, ratingCount and strikes are the alerts robot's (no browser
+    //  can write them).
 
     match /drivers/{driverId} {
       // Admins see all; a driver logged in to the Driver app sees his own (city, name).
@@ -524,6 +612,17 @@ service cloud.firestore {
         && request.resource.data.status in ['new', 'verified', 'active', 'inactive', 'rejected']
         && isOptionalText(request.resource.data.get('adminNote', ''), 1000)
         && isAdminStamped(request.resource.data);
+
+      // The driver himself, in the Driver app (Earnings): his UPI ID, where the
+      // weekly payout goes. Nothing else on his record.
+      allow update: if isDriver()
+        && request.auth.token.get('driverId', '') == driverId
+        && resource.data.phone == request.auth.token.driverPhone
+        && changedOnly(['upi', 'updatedAt'])
+        && request.resource.data.upi is string
+        && request.resource.data.upi.matches('^[a-zA-Z0-9.\\-_]{2,64}@[a-zA-Z]{2,32}$')
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['updatedAt'])
+            || request.resource.data.updatedAt == request.time);
 
       allow delete: if false;
     }
@@ -596,6 +695,10 @@ service cloud.firestore {
     //  booking is assigned to him in the same transaction, see bookings). He then
     //  sees his taken offers as his earnings: what DriveBuddy owes him, and what
     //  it has paid. The customer never sees this document (the cut is private).
+    //  `cities`: where it is offered — its own city, and (the alerts robot, when
+    //  nobody takes it) the nearby ones. Older offers have no `cities`: their
+    //  city only. He may give a taken job back before Start ("released"); the
+    //  robot offers it again.
 
     function offerKeys() {
       return ['bookingId', 'ref', 'city', 'package', 'when', 'area', 'to', 'price', 'cutPercent', 'driverPay',
@@ -603,7 +706,7 @@ service cloud.firestore {
     }
 
     function isOfferShape(o, bookingId) {
-      return o.keys().hasOnly(offerKeys()) && o.keys().hasAll(offerKeys())
+      return o.keys().hasOnly(offerKeys().concat(['cities'])) && o.keys().hasAll(offerKeys())
         && o.bookingId == bookingId
         && isOptionalText(o.ref, 20)
         && isServedCity(o.city)
@@ -614,7 +717,8 @@ service cloud.firestore {
         && o.price is int && o.price >= 100 && o.price <= 500000
         && o.cutPercent is int && o.cutPercent >= 20 && o.cutPercent <= 30
         && o.driverPay is int && o.driverPay > 0 && o.driverPay < o.price
-        && o.status in ['open', 'taken', 'withdrawn']
+        && o.status in ['open', 'taken', 'withdrawn', 'released']
+        && (!('cities' in o) || isOfferCities(o))
         && (o.takenBy == null || isDriverRef(o.takenBy))
         && (o.takenAt == null || o.takenAt is timestamp)
         && o.done is bool && o.paid is bool
@@ -622,9 +726,23 @@ service cloud.firestore {
         && o.createdAt is timestamp && o.updatedAt == request.time;
     }
 
+    // Served cities, its own city among them, each once at most (4 cities).
+    function isOfferCities(o) {
+      return o.cities is list
+        && o.cities.size() >= 1 && o.cities.size() <= 4
+        && o.cities.hasOnly(['Raipur', 'Bhilai', 'Durg', 'Bilaspur'])
+        && o.city in o.cities;
+    }
+
+    // Offered to this driver's city: in `cities` (the Driver app asks with
+    // array-contains), or — older offers without `cities` — its city.
+    function offeredToMe(o) {
+      return (myDriver().city in o.cities) || o.city == myDriver().city;
+    }
+
     match /offers/{bookingId} {
       allow read: if isAdmin()
-        || (isActiveDriver() && resource.data.status == 'open' && resource.data.city == myDriver().city)
+        || (isActiveDriver() && resource.data.status == 'open' && offeredToMe(resource.data))
         || (isDriver() && resource.data.takenBy.phone == request.auth.token.driverPhone);
 
       // An admin posts an offer (open, nobody yet) for a booking that exists.
@@ -635,6 +753,7 @@ service cloud.firestore {
         && request.resource.data.takenBy == null && request.resource.data.takenAt == null
         && request.resource.data.done == false && request.resource.data.paid == false
         && request.resource.data.paidAt == null
+        && (!('cities' in request.resource.data) || request.resource.data.cities == [request.resource.data.city])
         && request.resource.data.createdAt == request.time
         && request.resource.data.by == request.auth.uid;
 
@@ -649,7 +768,7 @@ service cloud.firestore {
       // booking is assigned to him in the same transaction.
       allow update: if isActiveDriver()
         && resource.data.status == 'open'
-        && resource.data.city == myDriver().city
+        && offeredToMe(resource.data)
         && changedOnly(['status', 'takenBy', 'takenAt', 'updatedAt'])
         && request.resource.data.status == 'taken'
         && request.resource.data.takenBy == meAsDriverRef()
@@ -657,7 +776,49 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time
         && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.assignedDriver == meAsDriverRef();
 
+      // "Can't make it": the driver who took it gives it back — not done yet,
+      // before he tapped Start — and the booking goes back to "confirmed" with
+      // no driver in the same transaction.
+      allow update: if isDriver()
+        && resource.data.status == 'taken'
+        && resource.data.takenBy.phone == request.auth.token.driverPhone
+        && resource.data.done == false
+        && changedOnly(['status', 'updatedAt'])
+        && request.resource.data.status == 'released'
+        && request.resource.data.updatedAt == request.time
+        && notStarted(bookingId)
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.status == 'confirmed'
+        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.assignedDriver == null;
+
       allow delete: if false;
+    }
+
+    /* ----------------------------------------------------------- ratings -- */
+    //  ratings/{bookingId}: the customer rates the driver once the job is
+    //  completed (the DriveBuddy app). Once, never changed or deleted. The
+    //  alerts robot works out drivers/{id}.ratingAvg and ratingCount from them.
+    //  The customer can see their own rating (so the app knows it was sent).
+
+    match /ratings/{bookingId} {
+      function job() {
+        return get(/databases/$(database)/documents/bookings/$(bookingId)).data;
+      }
+
+      allow read: if isAdmin()
+        || (isSignedIn() && resource.data.customerUid == request.auth.uid);
+      allow create: if isSignedIn()
+        && job().get('customerUid', '') == request.auth.uid
+        && job().status == 'completed'
+        && job().assignedDriver != null
+        && request.resource.data.keys().hasOnly(['stars', 'comment', 'driverId', 'customerUid', 'at'])
+        && request.resource.data.keys().hasAll(['stars', 'comment', 'driverId', 'customerUid', 'at'])
+        && request.resource.data.stars is int
+        && request.resource.data.stars >= 1 && request.resource.data.stars <= 5
+        && isOptionalText(request.resource.data.comment, 300)
+        && request.resource.data.driverId == job().assignedDriver.id
+        && request.resource.data.customerUid == request.auth.uid
+        && request.resource.data.at == request.time;
+      allow update, delete: if false;
     }
 
     /* ------------------------------------------------------------- users -- */
@@ -745,8 +906,9 @@ service cloud.firestore {
     }
 
     /* -------------------------------------------------------- catch-all -- */
-    //  Anything not allowed above is denied — including meta/counters and any
-    //  collection someone invents.
+    //  Anything not allowed above is denied — including meta/counters, the
+    //  alerts robot's own notes (offerAlerts/, reminders/) and any collection
+    //  someone invents.
 
     match /{document=**} {
       allow read, write: if false;

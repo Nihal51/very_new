@@ -803,3 +803,365 @@ describe('availability — Online in the Driver app', () => {
     await assertFails(setDoc(doc(customer(), 'availability', 'd1'), on()));
   });
 });
+
+/* ---------------------------------------------- automation (spec items 2–12) */
+
+const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+const SONU = { id: 'd2', name: 'Sonu Verma', phone: '9425212345' };
+const drvDb = (d) => env.authenticatedContext(`driver-${d.phone}`, { role: 'driver', driverPhone: d.phone, driverId: d.id }).firestore();
+const seedDriversRB = () =>
+  env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'drivers', 'd1'), { ...RAJU, city: 'Raipur', status: 'active' });
+    await setDoc(doc(db, 'drivers', 'd2'), { ...SONU, city: 'Bhilai', status: 'active' });
+  });
+const seedAs = (path, data) => env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), ...path.split('/')), data));
+const offerDoc = (extra = {}) => ({
+  bookingId: 'b1', ref: 'DB-1042', city: 'Raipur', package: '3-hours-600', when: '', area: 'Shankar Nagar',
+  to: '', price: 600, cutPercent: 25, driverPay: 450, status: 'open', takenBy: null, takenAt: null,
+  done: false, paid: false, paidAt: null, createdAt: new Date(), updatedAt: new Date(), by: 'robot', ...extra,
+});
+
+describe('bookings — the customer accepts the trip price (2)', () => {
+  const trip = { to: 'Nagpur', destId: 'nagpur', kind: 'one-way', km: 284, days: 1, returnHours: 6, estFrom: 1440, estTo: 1600 };
+  const accept = (db, extra = {}) => updateDoc(doc(db, 'bookings', 't1'), { acceptedPrice: { amount: 1600, at: serverTimestamp(), ...extra } });
+
+  beforeEach(() => seedBooking('t1', { package: 'one-way-drop', trip, customerUid: 'cust1' }));
+
+  test('the customer who made it accepts the estimate once, at the server time', async () => {
+    await assertSucceeds(accept(customer('cust1')));
+    // Only once.
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { acceptedPrice: { amount: 1600, at: serverTimestamp() } }));
+  });
+
+  test('also while confirmed; not once a driver is on it, completed or cancelled', async () => {
+    await seedBooking('t1', { package: 'one-way-drop', trip, customerUid: 'cust1', status: 'confirmed' });
+    await assertSucceeds(accept(customer('cust1')));
+    for (const status of ['assigned', 'completed', 'cancelled']) {
+      await seedBooking('t1', { package: 'one-way-drop', trip, customerUid: 'cust1', status });
+      await assertFails(accept(customer('cust1')));
+    }
+  });
+
+  test('nobody else, no other amount, nothing else with it', async () => {
+    await assertFails(accept(customer('cust2')));
+    await assertFails(accept(guest()));
+    await assertFails(accept(admin())); // the office saves a quote instead
+    await assertFails(accept(drvDb(RAJU)));
+    await assertFails(accept(customer('cust1'), { amount: 1440 })); // only the estimate shown
+    await assertFails(accept(customer('cust1'), { amount: '1600' }));
+    await assertFails(accept(customer('cust1'), { at: new Date() }));
+    await assertFails(accept(customer('cust1'), { note: 'ok' }));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { acceptedPrice: { amount: 1600 } }));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { acceptedPrice: { amount: 1600, at: serverTimestamp() }, status: 'confirmed' }));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { acceptedPrice: 1600 }));
+  });
+
+  test('only a booking with an estimate', async () => {
+    await seedBooking('t1', { customerUid: 'cust1' }); // 3 hours: no trip
+    await assertFails(accept(customer('cust1')));
+    await seedBooking('t1', { package: 'one-way-drop', trip: { ...trip, estFrom: 0, estTo: 0 }, customerUid: 'cust1' });
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { acceptedPrice: { amount: 0, at: serverTimestamp() } }));
+  });
+});
+
+describe("driver app — can't make it (3)", () => {
+  const giveBack = (db, who, { booking = {}, offer = {} } = {}) =>
+    runTransaction(db, async (tx) => {
+      const ref = doc(db, 'offers', 'b1');
+      await tx.get(ref);
+      tx.update(ref, { status: 'released', updatedAt: serverTimestamp(), ...offer });
+      tx.update(doc(db, 'bookings', 'b1'), { status: 'confirmed', assignedDriver: null, updatedAt: serverTimestamp(), updatedBy: `driver-${who.phone}`, ...booking });
+    });
+
+  beforeEach(async () => {
+    await seedDriversRB();
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1' });
+    await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date() }));
+  });
+
+  test('the driver who took it gives it back before Start: offer released, booking back to confirmed', async () => {
+    await assertSucceeds(giveBack(drvDb(RAJU), RAJU));
+    const after = await env.withSecurityRulesDisabled(async (ctx) => ({
+      b: (await getDoc(doc(ctx.firestore(), 'bookings', 'b1'))).data(),
+      o: (await getDoc(doc(ctx.firestore(), 'offers', 'b1'))).data(),
+    }));
+    assert.equal(after.b.status, 'confirmed');
+    assert.equal(after.b.assignedDriver, null);
+    assert.equal(after.o.status, 'released');
+  });
+
+  test('also with Start not yet tapped but the taps document missing fields', async () => {
+    await seedAs('tripTaps/b1', { driverPhone: RAJU.phone });
+    await assertSucceeds(giveBack(drvDb(RAJU), RAJU));
+  });
+
+  test('not after he tapped Start', async () => {
+    await seedAs('tripTaps/b1', { driverPhone: RAJU.phone, leftAt: new Date() });
+    await assertFails(giveBack(drvDb(RAJU), RAJU));
+  });
+
+  test('not for someone else, and only both halves together', async () => {
+    await assertFails(giveBack(drvDb(SONU), SONU));
+    await assertFails(giveBack(customer('cust1'), { phone: 'cust1' }));
+    const db = drvDb(RAJU);
+    await assertFails(updateDoc(doc(db, 'offers', 'b1'), { status: 'released', updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), { status: 'confirmed', assignedDriver: null, updatedAt: serverTimestamp(), updatedBy: `driver-${RAJU.phone}` }));
+    // Back to "new", to someone else, or with anything else changed: refused.
+    await assertFails(giveBack(db, RAJU, { booking: { status: 'new' } }));
+    await assertFails(giveBack(db, RAJU, { booking: { assignedDriver: SONU } }));
+    await assertFails(giveBack(db, RAJU, { offer: { takenBy: null } }));
+    await assertFails(giveBack(db, RAJU, { offer: { status: 'withdrawn' } }));
+  });
+
+  test('a job already marked done cannot be given back', async () => {
+    await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date(), done: true }));
+    await assertFails(giveBack(drvDb(RAJU), RAJU));
+  });
+
+  test('an admin can still post the released offer again (status released is a valid offer)', async () => {
+    await giveBack(drvDb(RAJU), RAJU);
+    await assertSucceeds(updateDoc(doc(admin(), 'offers', 'b1'), { status: 'open', takenBy: null, takenAt: null, cities: ['Raipur'], updatedAt: serverTimestamp(), by: 'admin1' }));
+  });
+});
+
+describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
+  const ref = (db, id = 'b1') => doc(db, 'tripTaps', id);
+  const start = (db, id = 'b1', extra = {}) => setDoc(ref(db, id), { driverPhone: RAJU.phone, leftAt: serverTimestamp(), ...extra });
+  const tap = (db, field, id = 'b1') => updateDoc(ref(db, id), { [field]: serverTimestamp() });
+
+  beforeEach(async () => {
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1' });
+    await seedBooking('t1', { status: 'assigned', assignedDriver: RAJU, package: 'one-way-drop' });
+  });
+
+  test('the assigned driver taps each step once, in order, at the server time', async () => {
+    const db = drvDb(RAJU);
+    await assertSucceeds(start(db));
+    await assertFails(tap(db, 'leftAt')); // once
+    await assertFails(tap(db, 'doneAt')); // Arrived first
+    await assertSucceeds(tap(db, 'arrivedAt'));
+    await assertFails(tap(db, 'arrivedAt'));
+    await assertSucceeds(tap(db, 'doneAt'));
+    await assertFails(tap(db, 'homeAt')); // only one-way drops get home
+    await assertSucceeds(getDoc(ref(db)));
+  });
+
+  test('a one-way drop ends with Reached home', async () => {
+    const db = drvDb(RAJU);
+    await assertSucceeds(start(db, 't1'));
+    await assertFails(tap(db, 'homeAt', 't1'));
+    await assertSucceeds(tap(db, 'arrivedAt', 't1'));
+    await assertSucceeds(tap(db, 'doneAt', 't1'));
+    await assertSucceeds(tap(db, 'homeAt', 't1'));
+    await assertFails(tap(db, 'homeAt', 't1'));
+  });
+
+  test('no picking his own time, no other shape, no two steps at once', async () => {
+    const db = drvDb(RAJU);
+    await assertFails(start(db, 'b1', { leftAt: new Date() }));
+    await assertFails(start(db, 'b1', { driverPhone: SONU.phone }));
+    await assertFails(start(db, 'b1', { arrivedAt: serverTimestamp() }));
+    await assertFails(setDoc(ref(db), { driverPhone: RAJU.phone, arrivedAt: serverTimestamp() }));
+    await assertFails(setDoc(ref(db), { leftAt: serverTimestamp() }));
+    await start(db);
+    await assertFails(updateDoc(ref(db), { arrivedAt: new Date() }));
+    await assertFails(updateDoc(ref(db), { arrivedAt: serverTimestamp(), doneAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref(db), { arrivedAt: serverTimestamp(), note: 'x' }));
+    await assertFails(updateDoc(ref(db), { driverPhone: SONU.phone }));
+    await assertFails(deleteDoc(ref(db)));
+  });
+
+  test('only on his current job; nobody else taps; customers and other drivers cannot read it', async () => {
+    await seedBooking('other', { status: 'assigned', assignedDriver: SONU });
+    await seedBooking('done', { status: 'completed', assignedDriver: RAJU });
+    const db = drvDb(RAJU);
+    await assertFails(start(db, 'other'));
+    await assertFails(start(db, 'done'));
+    await assertFails(start(db, 'nobooking'));
+    await assertFails(start(customer('cust1')));
+    await assertFails(start(admin()));
+    await start(db);
+    await assertSucceeds(getDoc(ref(admin())));
+    await assertFails(getDoc(ref(customer('cust1'))));
+    await assertFails(getDoc(ref(drvDb(SONU))));
+    await assertFails(getDoc(ref(guest())));
+    // He can look before his first tap (nothing there yet).
+    await assertSucceeds(getDoc(ref(db, 't1')));
+  });
+
+  test('after the job is completed he still sees his taps, but taps no more', async () => {
+    const db = drvDb(RAJU);
+    await start(db);
+    await tap(db, 'arrivedAt');
+    await seedBooking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'cust1' });
+    await assertSucceeds(getDoc(ref(db)));
+    await assertFails(tap(db, 'doneAt'));
+  });
+});
+
+describe('ratings (7)', () => {
+  const rating = (extra = {}) => ({ stars: 5, comment: 'Very polite', driverId: 'd1', customerUid: 'cust1', at: serverTimestamp(), ...extra });
+  const rate = (db, extra) => setDoc(doc(db, 'ratings', 'b1'), rating(extra));
+
+  beforeEach(() => seedBooking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'cust1' }));
+
+  test('the customer rates the driver of a completed job, once; never changed or deleted', async () => {
+    await assertSucceeds(rate(customer('cust1')));
+    await assertFails(rate(customer('cust1'), { stars: 1 }));
+    await assertFails(updateDoc(doc(customer('cust1'), 'ratings', 'b1'), { stars: 1 }));
+    await assertFails(deleteDoc(doc(customer('cust1'), 'ratings', 'b1')));
+    await assertFails(deleteDoc(doc(admin(), 'ratings', 'b1')));
+    await assertSucceeds(getDoc(doc(admin(), 'ratings', 'b1')));
+    await assertSucceeds(getDoc(doc(customer('cust1'), 'ratings', 'b1')));
+    await assertFails(getDoc(doc(customer('cust2'), 'ratings', 'b1')));
+    await assertFails(getDoc(doc(drvDb(RAJU), 'ratings', 'b1')));
+    await assertFails(getDoc(doc(guest(), 'ratings', 'b1')));
+  });
+
+  test('a comment is optional, up to 300 characters', async () => {
+    await assertSucceeds(rate(customer('cust1'), { stars: 3, comment: '' }));
+  });
+
+  test('1 to 5 whole stars, his own name, the right driver, the server time, nothing else', async () => {
+    const db = customer('cust1');
+    for (const stars of [0, 6, 4.5, '5']) await assertFails(rate(db, { stars }));
+    await assertFails(rate(db, { comment: 'x'.repeat(301) }));
+    await assertFails(rate(db, { driverId: 'd2' }));
+    await assertFails(rate(db, { customerUid: 'cust2' }));
+    await assertFails(rate(db, { at: new Date() }));
+    await assertFails(rate(db, { tip: 50 }));
+    const { comment, ...noComment } = rating();
+    await assertFails(setDoc(doc(db, 'ratings', 'b1'), noComment));
+  });
+
+  test('not by anyone else, not before the job is completed', async () => {
+    await assertFails(rate(customer('cust2'), { customerUid: 'cust2' }));
+    await assertFails(rate(guest()));
+    await assertFails(rate(admin(), { customerUid: 'admin1' }));
+    for (const status of ['confirmed', 'assigned', 'cancelled']) {
+      await seedBooking('b1', { status, assignedDriver: RAJU, customerUid: 'cust1' });
+      await assertFails(rate(customer('cust1')));
+    }
+    await seedBooking('b1', { status: 'completed', customerUid: 'cust1' }); // no driver on it
+    await assertFails(rate(customer('cust1')));
+    await assertFails(setDoc(doc(customer('cust1'), 'ratings', 'nobooking'), rating()));
+  });
+});
+
+describe('drivers — his UPI ID; ratings and strikes are the robot’s (8, 10)', () => {
+  const upi = (db, value, extra = {}) => updateDoc(doc(db, 'drivers', 'd1'), { upi: value, ...extra });
+
+  beforeEach(seedDriversRB);
+
+  test('the driver sets and changes his own UPI ID', async () => {
+    const db = drvDb(RAJU);
+    await assertSucceeds(upi(db, 'raju@okaxis'));
+    await assertSucceeds(upi(db, 'raju.sahu-91_x@ybl'));
+    await assertSucceeds(upi(db, '9893302783@paytm', { updatedAt: serverTimestamp() }));
+  });
+
+  test('only a UPI-shaped ID, only his own record, nothing else on it', async () => {
+    const db = drvDb(RAJU);
+    for (const bad of ['raju', 'raju@', '@okaxis', 'r@okaxis', 'raju@ok1', 'raju@okaxis.com', 'raju sahu@okaxis', 'raju@o', 42, ''])
+      await assertFails(upi(db, bad));
+    await assertFails(upi(db, 'raju@okaxis', { updatedAt: new Date() }));
+    await assertFails(upi(db, 'raju@okaxis', { name: 'Raju S' }));
+    await assertFails(upi(db, 'raju@okaxis', { status: 'inactive' }));
+    await assertFails(upi(db, 'raju@okaxis', { strikes: 0 }));
+    await assertFails(updateDoc(doc(drvDb(SONU), 'drivers', 'd1'), { upi: 'sonu@okaxis' }));
+    await assertFails(upi(customer(), 'raju@okaxis'));
+    // His login must match his record's number.
+    const wrongPhone = env.authenticatedContext('driver-9000000000', { role: 'driver', driverPhone: '9000000000', driverId: 'd1' }).firestore();
+    await assertFails(upi(wrongPhone, 'raju@okaxis'));
+  });
+
+  test('nobody but the robot writes ratingAvg, ratingCount or strikes — not the driver, not an admin', async () => {
+    const db = drvDb(RAJU);
+    await assertFails(updateDoc(doc(db, 'drivers', 'd1'), { ratingAvg: 5 }));
+    await assertFails(updateDoc(doc(db, 'drivers', 'd1'), { strikes: 0 }));
+    const stamp = { updatedAt: serverTimestamp(), updatedBy: 'admin1' };
+    await assertFails(updateDoc(doc(admin(), 'drivers', 'd1'), { ratingAvg: 5, ratingCount: 1, ...stamp }));
+    await assertFails(updateDoc(doc(admin(), 'drivers', 'd1'), { strikes: 0, ...stamp }));
+    await assertSucceeds(updateDoc(doc(admin(), 'drivers', 'd1'), { status: 'inactive', ...stamp }));
+  });
+});
+
+describe('offers — nearby cities (12)', () => {
+  const take = (db, who) =>
+    runTransaction(db, async (tx) => {
+      const ref = doc(db, 'offers', 'b1');
+      const snap = await tx.get(ref);
+      if (snap.data()?.status !== 'open') throw new Error('gone');
+      tx.update(ref, { status: 'taken', takenBy: who, takenAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      tx.update(doc(db, 'bookings', 'b1'), { status: 'assigned', assignedDriver: who, updatedAt: serverTimestamp(), updatedBy: `driver-${who.phone}` });
+    });
+  const adminOffer = (extra = {}) => offerDoc({ createdAt: serverTimestamp(), updatedAt: serverTimestamp(), by: 'admin1', ...extra });
+  const byCities = (db, city) => getDocs(query(collection(db, 'offers'), where('status', '==', 'open'), where('cities', 'array-contains', city)));
+
+  beforeEach(async () => {
+    await seedDriversRB();
+    await seedBooking('b1', { status: 'confirmed', customerUid: 'cust1' });
+  });
+
+  test('widened by the robot: a Bhilai driver sees it (the app asks by cities) and can take it', async () => {
+    await seedAs('offers/b1', offerDoc({ cities: ['Raipur', 'Bhilai', 'Durg'] }));
+    const snap = await assertSucceeds(byCities(drvDb(SONU), 'Bhilai'));
+    assert.deepEqual(snap.docs.map((d) => d.id), ['b1']);
+    await assertSucceeds(getDoc(doc(drvDb(SONU), 'offers', 'b1')));
+    await assertSucceeds(byCities(drvDb(RAJU), 'Raipur'));
+    await assertSucceeds(take(drvDb(SONU), SONU));
+  });
+
+  test('its own city only: a Bhilai driver neither sees nor takes it', async () => {
+    await seedAs('offers/b1', offerDoc({ cities: ['Raipur'] }));
+    // His own city's list is allowed — and does not have it.
+    const mine = await assertSucceeds(byCities(drvDb(SONU), 'Bhilai'));
+    assert.equal(mine.size, 0);
+    await assertFails(getDoc(doc(drvDb(SONU), 'offers', 'b1')));
+    await assertFails(take(drvDb(SONU), SONU));
+    // Asking for another city's offers is refused, too.
+    await assertFails(byCities(drvDb(SONU), 'Raipur'));
+    await assertSucceeds(take(drvDb(RAJU), RAJU));
+  });
+
+  test('an older offer without cities still works by its city', async () => {
+    await seedAs('offers/b1', offerDoc());
+    await assertSucceeds(getDocs(query(collection(drvDb(RAJU), 'offers'), where('status', '==', 'open'), where('city', '==', 'Raipur'))));
+    await assertFails(getDoc(doc(drvDb(SONU), 'offers', 'b1')));
+    await assertSucceeds(take(drvDb(RAJU), RAJU));
+  });
+
+  test('an admin posts with its own city only; cities are served cities with its own among them', async () => {
+    await assertSucceeds(setDoc(doc(admin(), 'offers', 'b1'), adminOffer({ cities: ['Raipur'] })));
+    await seedBooking('b2', { status: 'confirmed' });
+    const post = (extra) => setDoc(doc(admin(), 'offers', 'b2'), adminOffer({ bookingId: 'b2', ...extra }));
+    await assertFails(post({ cities: ['Raipur', 'Bhilai'] })); // widening is the robot's, when nobody takes it
+    await assertFails(post({ cities: ['Bhilai'] }));
+    await assertFails(post({ cities: 'Raipur' }));
+    await assertSucceeds(post({}));
+    const patch = (cities) => updateDoc(doc(admin(), 'offers', 'b2'), { cities, updatedAt: serverTimestamp(), by: 'admin1' });
+    await assertSucceeds(patch(['Raipur', 'Durg']));
+    await assertFails(patch(['Durg']));
+    await assertFails(patch(['Raipur', 'Mumbai']));
+    await assertFails(patch([]));
+    await assertFails(patch(['Raipur', 'Bhilai', 'Durg', 'Bilaspur', 'Raipur']));
+  });
+
+  test('a driver cannot widen an offer himself', async () => {
+    await seedAs('offers/b1', offerDoc({ cities: ['Raipur'] }));
+    await assertFails(updateDoc(doc(drvDb(RAJU), 'offers', 'b1'), { cities: ['Raipur', 'Bhilai'], updatedAt: serverTimestamp() }));
+  });
+});
+
+describe("the robot's own notes", () => {
+  test('offerAlerts and reminders are closed to every browser', async () => {
+    await seedAs('reminders/b1', { remindedAt: new Date() });
+    await seedAs('offerAlerts/b1', { stage: 1 });
+    for (const db of [admin(), customer(), drvDb(RAJU), guest()]) {
+      await assertFails(getDoc(doc(db, 'reminders', 'b1')));
+      await assertFails(getDoc(doc(db, 'offerAlerts', 'b1')));
+      await assertFails(setDoc(doc(db, 'reminders', 'b2'), { remindedAt: new Date() }));
+    }
+  });
+});
