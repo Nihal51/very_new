@@ -548,7 +548,8 @@ service cloud.firestore {
           || tapIs('doneAt', 'arrivedAt')
           || (tapIs('homeAt', 'doneAt') && job().package == 'one-way-drop'));
 
-      allow delete: if false;
+      // An admin clears them when he gives the job to another driver.
+      allow delete: if isAdmin();
     }
 
     /* ----------------------------------------------------------- drivers -- */

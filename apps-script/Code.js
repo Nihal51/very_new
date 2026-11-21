@@ -1955,6 +1955,9 @@ function syncTripTaps_(rows) {
 function syncTaps_(id, taps) {
   var b = fsGet_('bookings/' + id);
   if (!b || b.status === 'cancelled') return;
+  // Taps from a driver who no longer has the job (the office gave it to
+  // someone else after he tapped Start) are not this trip's.
+  if (!b.assignedDriver || String(b.assignedDriver.phone || '') !== String(taps.driverPhone || '')) return;
   if (TRIP_TAP_KINDS[b.package]) {
     var clock = tapsClockOf(b.package, taps);
     if (!clock.startAt) return;

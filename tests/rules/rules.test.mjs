@@ -998,6 +998,14 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
     await assertSucceeds(getDoc(ref(db)));
     await assertFails(tap(db, 'doneAt'));
   });
+
+  test('the office gives the job to another driver: it clears the old taps, he starts afresh', async () => {
+    await start(drvDb(RAJU));
+    await assertFails(deleteDoc(ref(drvDb(RAJU))));
+    await assertSucceeds(deleteDoc(ref(admin())));
+    await seedBooking('b1', { status: 'assigned', assignedDriver: SONU, customerUid: 'cust1' });
+    await assertSucceeds(setDoc(ref(drvDb(SONU)), { driverPhone: SONU.phone, leftAt: serverTimestamp() }));
+  });
 });
 
 describe('ratings (7)', () => {

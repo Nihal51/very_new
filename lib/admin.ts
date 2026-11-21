@@ -49,6 +49,9 @@ export async function changeBookingStatus(
     updatedAt: serverTimestamp(),
     updatedBy: user.uid,
   });
+  // A new driver starts his own Start / Arrived / Job done: the last driver's
+  // taps (if he had tapped Start before the office changed drivers) go.
+  if (driver !== undefined) batch.delete(doc(db, 'tripTaps', bookingId));
   batch.set(doc(collection(ref, 'events')), {
     type: driver ? 'driver' : 'status',
     from,

@@ -1679,6 +1679,17 @@ describe('automation', () => {
       assert.ok(c.startAt && c.homeAt && !c.dropAt);
       assert.match(env.telegram.at(-1).text, /trip over – Raju Sahu is back/);
     });
+
+    test("taps from a driver who no longer has the job are not this trip's", () => {
+      booking('b3', { status: 'assigned', assignedDriver: { id: 'd2', name: 'Sonu Verma', phone: '9425212345' } });
+      tapped('b3', { leftAt: ago(4 * 3600_000), arrivedAt: ago(3 * 3600_000), doneAt: ago(0) });
+      const n = env.telegram.length;
+      env.ctx.watchChanges_();
+      const b = get('bookings/b3');
+      assert.equal(b.status, 'assigned');
+      assert.equal(b.localBill, undefined);
+      assert.equal(env.telegram.length, n);
+    });
   });
 
   describe('payment link (6) and the rating request (7)', () => {
