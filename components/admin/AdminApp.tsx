@@ -13,7 +13,18 @@ import { Card } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Spinner';
 import { ensureAdmin } from '@/lib/admin';
 import { signOutUser, watchUser } from '@/lib/auth';
-import { istMidnight, packageName, toBill, toClock, toDate, type Booking, type Driver } from '@/lib/bookings';
+import {
+  istMidnight,
+  packageName,
+  toAcceptedPrice,
+  toBill,
+  toClock,
+  toDate,
+  toLocalBill,
+  toPayment,
+  type Booking,
+  type Driver,
+} from '@/lib/bookings';
 import { readPickupGeo } from '@/lib/geo';
 import { cn } from '@/lib/cn';
 import { getFirebaseApp, isFirebaseConfigured } from '@/lib/firebase';
@@ -130,6 +141,9 @@ const mapBooking = (id: string, d: Record<string, unknown>): Booking => {
     quote: quote && { ...quote, at: toDate(quote.at) },
     clock: toClock(d.clock),
     bill: toBill(d.bill),
+    acceptedPrice: toAcceptedPrice(d.acceptedPrice),
+    localBill: toLocalBill(d.localBill),
+    payment: toPayment(d.payment),
     pickupGeo: readPickupGeo(d.pickupGeo),
   } as Booking;
 };

@@ -72,17 +72,25 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
     <div className="border-border mt-5 border-t pt-5">
       <SectionTitle>Offer to drivers</SectionTitle>
 
+      {offer?.status === 'released' && (
+        <p className="text-sm">
+          {offer.takenBy?.name ?? 'The driver'} gave this job back (can&apos;t make it). The robot offers it to drivers again from
+          the start within a minute — without him.
+        </p>
+      )}
+
       {offer?.status === 'open' && (
         <div className="flex flex-col gap-2">
           <p>
-            Offered to {b.city} drivers at <strong>{rupees(offer.price)}</strong> · driver earns{' '}
+            Offered to {(offer.cities?.length ? offer.cities : [b.city]).join(', ')} drivers at <strong>{rupees(offer.price)}</strong> · driver earns{' '}
             <strong>{rupees(offer.driverPay)}</strong> · DriveBuddy keeps {offer.cutPercent}%. The nearest online drivers got an
             alert, the rest a minute later. Waiting for one to accept…
           </p>
           {offer.by === 'robot' && (
             <p className="text-fg-muted text-sm">
               Automatic offer: if nobody takes it, the robot lowers DriveBuddy&apos;s cut every 2 minutes (30% → 25% → 20%),
-              so the driver earns more, and tells every online driver.
+              so the driver earns more, and tells every online driver. Still nobody 10 minutes after that: drivers in the nearby
+              cities hear about it too.
             </p>
           )}
           <div>

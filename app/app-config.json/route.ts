@@ -33,6 +33,8 @@ export function GET() {
       /* Cheaper days for places closer by (one-way road km from the pickup city), nearest first. */
       outstationNear: prices.outstationNear.map((t) => ({ upToKm: t.upToKm, from: t.from, to: t.to })),
       nightFrom: prices.nightFrom,
+      /* Each hour a local job runs over its package: the alerts robot bills it from the driver's taps. */
+      localExtraHour: prices.localExtraHour,
     },
     monthly: {
       basic: { from: monthly.basic.from, to: monthly.basic.to },

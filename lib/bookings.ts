@@ -123,6 +123,39 @@ export type BookingBill = {
   at?: Date;
 };
 
+/** The trip estimate the customer accepted in the app (firestore.rules: isAcceptedPrice); the robot then confirms it. */
+export type BookingAcceptedPrice = { amount: number; at?: Date };
+
+/**
+ * A local job's bill, worked out by the alerts robot from the Driver app's
+ * taps (Arrived → Job done): the package price plus each hour over it.
+ * Customer-visible: no costs here.
+ */
+export type BookingLocalBill = {
+  amount: number;
+  baseHours: number;
+  usedHours: number;
+  extraHours: number;
+  extraHourRate: number;
+  at?: Date;
+};
+
+/** The Razorpay payment link the robot sent for a completed job (only once its keys are set). */
+export type BookingPayment = {
+  status: 'pending' | 'paid';
+  amount: number;
+  url: string;
+  linkId: string;
+  at?: Date;
+  paidAt?: Date;
+};
+
+/** The Driver app's taps on a job (tripTaps/{bookingId}, firestore.rules). */
+export type TripTaps = { driverPhone: string; leftAt?: Date; arrivedAt?: Date; doneAt?: Date; homeAt?: Date };
+
+/** The customer's rating of the driver (ratings/{bookingId}). */
+export type Rating = { stars: number; comment: string; driverId: string; customerUid: string; at?: Date };
+
 /** A booking document as stored. Fields after `source` are written by the server or an admin. */
 export type Booking = {
   id: string;
@@ -143,6 +176,9 @@ export type Booking = {
   quote?: BookingQuote | null;
   clock?: BookingClock | null;
   bill?: BookingBill | null;
+  acceptedPrice?: BookingAcceptedPrice | null;
+  localBill?: BookingLocalBill | null;
+  payment?: BookingPayment | null;
   ref?: string;
   number?: number;
   isReturning?: boolean;
@@ -177,6 +213,13 @@ export type Driver = {
   status: DriverStatus;
   createdAt?: Date;
   adminNote?: string;
+  /** His UPI ID, set by himself in the Driver app (Earnings). */
+  upi?: string;
+  /** Kept by the alerts robot: the customers' average stars (1 decimal) and how many rated him. */
+  ratingAvg?: number;
+  ratingCount?: number;
+  /** Kept by the alerts robot: jobs he took and gave back ("Can't make it"). */
+  strikes?: number;
 };
 
 export type Customer = {
@@ -190,6 +233,18 @@ export type Customer = {
   lastBookingRef?: string;
   lastPackage?: string;
 };
+
+/**
+ * Bookings the alerts robot confirms by itself (apps-script/Code.js
+ * instantConfirmable — the same rule, without its INSTANT_BOOKINGS switch):
+ * a logged-in customer's 1 hour / 3 hours, or a trip price the customer
+ * accepted. Never a hospital / emergency booking.
+ */
+export function isInstantBooking(b: Pick<Booking, 'package' | 'customerUid' | 'acceptedPrice'>): boolean {
+  if (b.package === 'medical-emergency') return false;
+  if (b.acceptedPrice && b.acceptedPrice.amount > 0) return true;
+  return Boolean(b.customerUid) && (b.package === '1-hour-300' || b.package === '3-hours-600');
+}
 
 /* --------------------------------------------------------------- formatting */
 
@@ -319,4 +374,45 @@ export function toBill(v: unknown): BookingBill | null {
 export function refLabel(b: Pick<Booking, 'ref' | 'createdAt'>, now = Date.now()): string {
   if (b.ref) return b.ref;
   return b.createdAt && now - b.createdAt.getTime() < 15 * 60_000 ? 'Numbering…' : '—';
+}
+
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
+
+/** A stored accepted price → typed; null when there is none. */
+export function toAcceptedPrice(v: unknown): BookingAcceptedPrice | null {
+  if (!v || typeof v !== 'object') return null;
+  const a = v as Record<string, unknown>;
+  return num(a.amount) > 0 ? { amount: num(a.amount), at: toDate(a.at) } : null;
+}
+
+/** A stored local bill → typed; null when there is none or it is not whole. */
+export function toLocalBill(v: unknown): BookingLocalBill | null {
+  if (!v || typeof v !== 'object') return null;
+  const b = v as Record<string, unknown>;
+  const keys = ['amount', 'baseHours', 'usedHours', 'extraHours', 'extraHourRate'] as const;
+  if (keys.some((k) => Number.isNaN(num(b[k])))) return null;
+  return { ...(Object.fromEntries(keys.map((k) => [k, num(b[k])])) as Record<(typeof keys)[number], number>), at: toDate(b.at) };
+}
+
+/** A stored payment → typed; null when there is none or it is odd. */
+export function toPayment(v: unknown): BookingPayment | null {
+  if (!v || typeof v !== 'object') return null;
+  const p = v as Record<string, unknown>;
+  if ((p.status !== 'pending' && p.status !== 'paid') || !(num(p.amount) > 0) || typeof p.url !== 'string') return null;
+  // Only Razorpay's own links are shown as links.
+  const url = /^https:\/\/(rzp\.io|[a-z0-9-]+\.razorpay\.com)\//.test(p.url) ? p.url : '';
+  return { status: p.status, amount: num(p.amount), url, linkId: String(p.linkId ?? ''), at: toDate(p.at), paidAt: toDate(p.paidAt) };
+}
+
+/** A stored taps document → typed; null when there is none. */
+export function toTripTaps(v: unknown): TripTaps | null {
+  if (!v || typeof v !== 'object') return null;
+  const t = v as Record<string, unknown>;
+  return {
+    driverPhone: String(t.driverPhone ?? ''),
+    leftAt: toDate(t.leftAt),
+    arrivedAt: toDate(t.arrivedAt),
+    doneAt: toDate(t.doneAt),
+    homeAt: toDate(t.homeAt),
+  };
 }

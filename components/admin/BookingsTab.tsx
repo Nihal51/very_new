@@ -27,6 +27,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input, Select } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
+import { AppActivity } from '@/components/admin/AppActivity';
 import { OfferPanel } from '@/components/admin/OfferPanel';
 import { QuoteCalculator } from '@/components/admin/QuoteCalculator';
 import { TripClock } from '@/components/admin/TripClock';
@@ -687,6 +688,8 @@ function BookingDetail({
           )}
         </dl>
 
+        <AppActivity b={b} />
+
         {err && (
           <Alert tone="error" className="mt-5">
             {err}
@@ -851,7 +854,7 @@ function History({ bookingId, user }: { bookingId: string; user: User }) {
               </p>
               {ev.note && <p className="text-fg-muted">{ev.note}</p>}
               <p className="text-fg-subtle text-xs">
-                {formatDateTime(ev.at)} · {ev.by === 'system' ? 'website' : ev.by}
+                {formatDateTime(ev.at)} · {ev.by === 'system' ? 'website' : ev.by === 'robot' ? 'the robot (automatic)' : ev.by}
               </p>
             </li>
           ))}

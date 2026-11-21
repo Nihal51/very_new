@@ -6,7 +6,8 @@
 
 import type { DriverRef } from './bookings.ts';
 
-export type OfferStatus = 'open' | 'taken' | 'withdrawn';
+/** released: the driver gave it back before Start ("Can't make it"); the robot offers it again. */
+export type OfferStatus = 'open' | 'taken' | 'withdrawn' | 'released';
 
 export type Offer = {
   bookingId: string;
@@ -28,7 +29,16 @@ export type Offer = {
   createdAt?: Date;
   /** Who posted it: an admin's uid, or 'robot' for an automatic offer (its cut drops 30 → 25 → 20% while nobody takes it). */
   by?: string;
+  /**
+   * Where drivers see it: its own city, and the nearby ones once the robot
+   * widens it (nobody took it 10 minutes after the top pay). Older offers
+   * have none: their city only.
+   */
+  cities?: string[];
 };
+
+/** The cities an offer is posted to: an admin's offer goes to its own city only (firestore.rules checks it). */
+export const offerCitiesFor = (city: string): string[] => [city];
 
 /**
  * DriveBuddy's cut, in whole percent: the same band as the quote calculator

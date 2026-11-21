@@ -106,6 +106,11 @@ export const settings = {
       { upToKm: 160, from: 1050, to: 1350 }, //  same-day drops: Bilaspur, Kanker, Janjgir …
     ],
     nightFrom: 500, //                        Night driver, 8 PM – 6 AM, "from ₹500"
+    /* Local jobs (1 hour, 3 hours, full day, night) that run longer than the
+       package: each started hour over it, after 15 minutes' grace, from the
+       driver's Arrived → Job done taps in the Driver app. The bill is
+       worked out by itself and shown to the customer. */
+    localExtraHour: 150, //                   decide: price of each hour over the package
   },
 
   /* ------------------------------------- outstation trips & one-way drops --

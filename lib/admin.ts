@@ -6,9 +6,9 @@
 
 import type { User } from 'firebase/auth';
 
-import type { BookingQuote, BookingStatus, DriverRef, DriverStatus } from './bookings';
+import { type BookingQuote, type BookingStatus, type DriverRef, type DriverStatus, type Rating, type TripTaps, toDate, toTripTaps } from './bookings';
 import { getFirebaseApp } from './firebase';
-import { type Offer, clampCut, driverPayFor } from './offers';
+import { type Offer, clampCut, driverPayFor, offerCitiesFor } from './offers';
 
 async function fs() {
   const [app, mod] = await Promise.all([getFirebaseApp(), import('firebase/firestore')]);
@@ -188,6 +188,8 @@ export async function postOffer(user: User, o: OfferInput, existing: Offer | nul
     when: o.when.slice(0, 40),
     area: o.area.trim().slice(0, 120),
     to: o.to.slice(0, 60),
+    // Its own city; the robot adds the nearby ones if nobody takes it (automatic offers only).
+    cities: offerCitiesFor(o.city),
     price,
     cutPercent,
     driverPay: driverPayFor(price, cutPercent),
@@ -218,6 +220,36 @@ export const markOfferDone = (user: User, bookingId: string, done = true) => pat
 export async function markOfferPaid(user: User, bookingId: string, paid = true) {
   const { serverTimestamp } = await fs();
   await patchOffer(user, bookingId, { paid, paidAt: paid ? serverTimestamp() : null });
+}
+
+/** The driver's Start / Arrived / Job done / Reached home taps on a job, live (null = none yet). */
+export async function watchTripTaps(bookingId: string, onChange: (t: TripTaps | null) => void): Promise<() => void> {
+  const { db, doc, onSnapshot } = await fs();
+  return onSnapshot(
+    doc(db, 'tripTaps', bookingId),
+    (snap) => onChange(snap.exists() ? toTripTaps(snap.data()) : null),
+    () => onChange(null),
+  );
+}
+
+/** The customer's rating of the driver for a booking, live (null = not rated). */
+export async function watchRating(bookingId: string, onChange: (r: Rating | null) => void): Promise<() => void> {
+  const { db, doc, onSnapshot } = await fs();
+  return onSnapshot(
+    doc(db, 'ratings', bookingId),
+    (snap) => {
+      if (!snap.exists()) return onChange(null);
+      const d = snap.data();
+      onChange({
+        stars: Number(d.stars) || 0,
+        comment: String(d.comment ?? ''),
+        driverId: String(d.driverId ?? ''),
+        customerUid: String(d.customerUid ?? ''),
+        at: toDate(d.at),
+      });
+    },
+    () => onChange(null),
+  );
 }
 
 /* ------------------------------------------------------------- online drivers */

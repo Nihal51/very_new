@@ -55,7 +55,23 @@ const NEXT: Record<DriverStatus, [DriverStatus, string][]> = {
   rejected: [['new', 'Reconsider']],
 };
 
-type SortKey = 'name' | 'city' | 'exp' | 'status' | 'applied';
+/** "4.6 ★ (12)", or '—' before anyone rated him. */
+export const ratingText = (d: Pick<Driver, 'ratingAvg' | 'ratingCount'>) =>
+  d.ratingCount ? `${(d.ratingAvg ?? 0).toFixed(1)} ★ (${d.ratingCount})` : '—';
+
+/** The robot puts these drivers after the others for new jobs (apps-script/Code.js backSeat). */
+const backSeat = (d: Driver) => ((d.ratingCount ?? 0) >= 3 && (d.ratingAvg ?? 5) < 4) || (d.strikes ?? 0) >= 3;
+
+function Quality({ d }: { d: Driver }) {
+  return (
+    <span className={cn('whitespace-nowrap tabular', backSeat(d) && 'text-error font-semibold')} title={backSeat(d) ? 'Offered new jobs after the other drivers' : undefined}>
+      {ratingText(d)}
+      {(d.strikes ?? 0) > 0 && <span className="text-fg-subtle ml-1.5 text-xs">· {d.strikes} given back</span>}
+    </span>
+  );
+}
+
+type SortKey = 'name' | 'city' | 'exp' | 'status' | 'applied' | 'rating';
 const ORDER: Record<DriverStatus, number> = { new: 0, verified: 1, active: 2, inactive: 3, rejected: 4 };
 const sortValue = (d: Driver, k: SortKey) =>
   k === 'name'
@@ -66,7 +82,9 @@ const sortValue = (d: Driver, k: SortKey) =>
         ? Number(d.experienceYears) || 0
         : k === 'status'
           ? ORDER[d.status]
-          : d.createdAt?.getTime();
+          : k === 'rating'
+            ? (d.ratingCount ? (d.ratingAvg ?? 0) : -1)
+            : d.createdAt?.getTime();
 
 export function DriversTab({ user, drivers, error }: { user: User; drivers: Driver[] | null; error: boolean }) {
   const all = useMemo(() => drivers ?? [], [drivers]);
@@ -114,7 +132,7 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
 
   function exportRows() {
     downloadCsv(exportName('drivers'), [
-      ['Name', 'Phone', 'City', 'Experience (years)', 'Licence', 'Status', 'Applied at', 'About', 'Admin note'],
+      ['Name', 'Phone', 'City', 'Experience (years)', 'Licence', 'Status', 'Applied at', 'About', 'Admin note', 'Rating', 'Ratings', 'Jobs given back', 'UPI ID'],
       ...visible.map((d) => [
         d.name,
         sheetPhone(d.phone),
@@ -125,6 +143,10 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
         formatDateTime(d.createdAt),
         d.about ?? '',
         d.adminNote ?? '',
+        d.ratingCount ? (d.ratingAvg ?? '') : '',
+        d.ratingCount ?? 0,
+        d.strikes ?? 0,
+        d.upi ?? '',
       ]),
     ]);
   }
@@ -185,6 +207,7 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
                   </span>
                   <span className="text-fg-muted text-sm">
                     {d.city} · {d.experienceYears} yrs · {LICENCE[d.licence] ?? d.licence}
+                    {d.ratingCount ? ` · ${ratingText(d)}` : ''}
                   </span>
                 </button>
               </li>
@@ -201,6 +224,7 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
                   <SortTh k="exp" sort={sort} onSort={setSort}>Experience</SortTh>
                   <Th>Licence</Th>
                   <SortTh k="status" sort={sort} onSort={setSort}>Status</SortTh>
+                  <SortTh k="rating" sort={sort} onSort={setSort}>Rating</SortTh>
                   <SortTh k="applied" sort={sort} onSort={setSort}>Applied</SortTh>
                   <Th>Note</Th>
                 </tr>
@@ -228,6 +252,9 @@ export function DriversTab({ user, drivers, error }: { user: User; drivers: Driv
                     <td className="px-3 py-2.5 whitespace-nowrap">{LICENCE[d.licence] ?? d.licence}</td>
                     <td className="px-3 py-2.5">
                       <DriverPill status={d.status} />
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <Quality d={d} />
                     </td>
                     <td className="text-fg-muted px-3 py-2.5 whitespace-nowrap">{formatDateTime(d.createdAt)}</td>
                     <td className="text-fg-muted max-w-[18rem] px-3 py-2.5">
@@ -309,6 +336,21 @@ function DriverDetail({ d, user, onClose }: { d: Driver; user: User; onClose: ()
             <Detail label="About" wide>
               {d.about}
             </Detail>
+          )}
+          <Detail label="Customers' rating">
+            {d.ratingCount ? `${(d.ratingAvg ?? 0).toFixed(1)} of 5 · ${d.ratingCount} rating${d.ratingCount === 1 ? '' : 's'}` : 'Not rated yet'}
+          </Detail>
+          <Detail label="Jobs given back">{d.strikes ?? 0}</Detail>
+          <Detail label="UPI ID (for payouts)" wide>
+            {d.upi ? <span className="tabular">{d.upi}</span> : <span className="text-fg-subtle">Not set yet — he adds it in the Driver app (Earnings)</span>}
+          </Detail>
+          {backSeat(d) && (
+            <div className="col-span-2">
+              <Alert tone="info">
+                New jobs reach him after the other drivers (a rating below 4, or 3 or more jobs given back). The robot never pauses
+                him — Deactivate below if he should stop for now.
+              </Alert>
+            </div>
           )}
         </dl>
 

@@ -41,6 +41,8 @@ export type SiteSettings = {
     /** Cheaper days for places closer by: one-way road km from the pickup city, nearest first (the first: same-day drops). */
     outstationNear: readonly NearRate[];
     nightFrom: number;
+    /** Each hour a local job runs over its package (the automatic bill from the Driver app's taps). */
+    localExtraHour: number;
   };
   /** Trip rules for the outstation estimate (lib/outstation.ts). */
   outstation: {
@@ -189,6 +191,9 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
       problems.push(`${name} (${t.from}–${t.to}) must not cost more than prices.outstation (${s.prices.outstation.from}–${s.prices.outstation.to})`);
   });
   price('prices.nightFrom', s.prices.nightFrom);
+  price('prices.localExtraHour', s.prices.localExtraHour);
+  if (s.prices.localExtraHour > s.prices.threeHours)
+    problems.push('prices.localExtraHour (one hour over a package) should not cost more than the 3-hour package — is a 0 too many?');
 
   const o = s.outstation;
   count('outstation.hoursPerDay', o.hoursPerDay, 16);
