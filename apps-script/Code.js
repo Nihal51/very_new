@@ -60,6 +60,17 @@
  *   AUTO_OFFER_STEP_MIN  minutes at each step before the driver pay goes up, default 2
  *   REVIEW_PHONE         optional: a number that logs in to the Driver app with
  *   REVIEW_CODE          this fixed code and no SMS (for the Google Play reviewer)
+ *   INSTANT_BOOKINGS     "off" stops the robot confirming simple bookings by itself
+ *                        (logged-in 1 hour / 3 hours, or a trip price the customer
+ *                        accepted in the app); then every booking waits for a call
+ *   RAZORPAY_KEY_ID      optional: Razorpay API key id and secret — a payment link
+ *   RAZORPAY_KEY_SECRET  goes to the customer when a job is completed with a bill.
+ *                        Off until both are set. Never logged or sent anywhere else.
+ *
+ * Also automatic (see "automation" below): job reminders an hour before, the
+ * Driver app's Start / Arrived / Job done taps (tripTaps), the bill and the end
+ * of local jobs, a rating request, Monday's driver payouts with a Paid ✓
+ * button, a 9 pm report, and nearby drivers when a city has nobody free.
  *
  * Your own columns are safe: the robot finds its columns by their heading, only
  * ever writes those, and leaves any column you add (e.g. "Paid?") alone.
@@ -316,6 +327,7 @@ function bookingTelegram(c) {
     : '🆕 New customer');
   if (b.source === 'app') lines.push('📱 Booked in the DriveBuddy app');
   if (b.customerUid) lines.push('👤 Booked while logged in');
+  if (c.autoConfirm) lines.push('⚡ <b>Auto-confirmed</b> — instant booking, no call needed. It goes to drivers now.');
   var greeting = 'Hi ' + b.name + ', this is DriveBuddy about your booking ' + c.ref + '. ';
   return {
     text: lines.join('\n'),
@@ -615,16 +627,56 @@ function fsList_(path) {
  * the same single field, which Firestore indexes automatically.
  */
 function fsQuery_(collection, where, orderDir, limit, orderField) {
+  var rows = fsFetch_(fsBase_() + ':runQuery', { structuredQuery: structuredQuery_(collection, where, orderDir, limit, orderField) }) || [];
+  return queryRows_(rows);
+}
+
+function structuredQuery_(collection, where, orderDir, limit, orderField) {
   var query = {
     from: [{ collectionId: collection }],
     orderBy: [{ field: { fieldPath: orderField || 'createdAt' }, direction: orderDir }],
     limit: limit,
   };
   if (where) query.where = where;
-  var rows = fsFetch_(fsBase_() + ':runQuery', { structuredQuery: query }) || [];
-  return rows.filter(function (r) { return r.document; }).map(function (r) {
+  return query;
+}
+
+function queryRows_(rows) {
+  return (rows || []).filter(function (r) { return r.document; }).map(function (r) {
     return { id: r.document.name.split('/').pop(), data: fromFields(r.document.fields) };
   });
+}
+
+/**
+ * Several queries at once (UrlFetchApp.fetchAll runs them side by side), so
+ * the robot's "anything new?" checks cost one round trip of the minute's run
+ * time, not one each — the 90 minutes a day of trigger time is the tight limit.
+ * qs: [{ collection, where, dir, limit, field }] → [{ rows } | { error }], same order.
+ */
+function fsQueryAll_(qs) {
+  if (!qs.length) return [];
+  var headers = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken(), 'X-Goog-User-Project': prop_('FIREBASE_PROJECT_ID') };
+  var url = fsBase_() + ':runQuery';
+  var responses = UrlFetchApp.fetchAll(qs.map(function (q) {
+    return {
+      url: url,
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify({ structuredQuery: structuredQuery_(q.collection, q.where, q.dir || 'ASCENDING', q.limit || 200, q.field) }),
+      headers: headers,
+      muteHttpExceptions: true,
+    };
+  }));
+  return responses.map(function (res) {
+    var code = res.getResponseCode();
+    if (code >= 300) return { error: new Error('Firestore ' + code + ': ' + res.getContentText().slice(0, 300)) };
+    return { rows: queryRows_(JSON.parse(res.getContentText() || '[]')) };
+  });
+}
+
+/** A value inside a document by its dotted path ("acceptedPrice.at"). */
+function fieldAt_(data, path) {
+  return String(path).split('.').reduce(function (v, k) { return v && typeof v === 'object' ? v[k] : undefined; }, data);
 }
 
 function fsCommit_(writes) {
@@ -788,10 +840,22 @@ function driversTable_() {
 
 /** Runs every minute (set up by setup()): the safety net behind the instant ping below. */
 function tick() {
-  var steps = [processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_, autoOffers_, dispatchOffers_];
-  if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_);
-  steps.push(ensureRailTrigger_);
+  var steps = robotSteps_();
+  // Every 5 minutes: things that can wait a few minutes (and cost a query each).
+  if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_, tripReminders_, pollPayments_, processRatingsStep_);
+  steps.push(telegramCallbacks_, ensureRailTrigger_, ensureTimeTriggers_);
   runSteps_(steps, 5000);
+}
+
+/**
+ * The minute's work, in order: number new bookings, then what drivers and
+ * customers did in the apps (watchChanges_: instant confirmations, taps,
+ * given-back jobs, completions, ratings), then the Sheet, the customers'
+ * notifications and the job offers — so each sees the others' changes in the
+ * same minute.
+ */
+function robotSteps_() {
+  return [processBookings_, watchChanges_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_, autoOffers_, dispatchOffers_];
 }
 
 /** Runs the steps under the script lock. One failing step never stops the others. */
@@ -1109,13 +1173,51 @@ function autoCutAt(ageMs, cuts, stepMs) {
   return cuts[Math.min(i, cuts.length - 1)];
 }
 
-/** The price an offer can go out at by itself: the price saved on the call, else the site's fixed price; 0 = none. */
-function autoPriceOf(b, prices) {
+/**
+ * The price the customer agreed to: the one saved on the call (quote), else
+ * the trip estimate they accepted in the app (acceptedPrice); 0 = none.
+ */
+function agreedPriceOf(b) {
+  var ok = function (n) { return n >= 100 && n <= 500000; };
   var quoted = b.quote && Number(b.quote.amount);
-  if (quoted >= 100 && quoted <= 500000) return Math.round(quoted);
+  if (ok(quoted)) return Math.round(quoted);
+  var accepted = b.acceptedPrice && Number(b.acceptedPrice.amount);
+  if (ok(accepted)) return Math.round(accepted);
+  return 0;
+}
+
+/** The price an offer can go out at by itself: quote → accepted price → the site's fixed price; 0 = none. */
+function autoPriceOf(b, prices) {
+  var agreed = agreedPriceOf(b);
+  if (agreed) return agreed;
   var key = AUTO_PACKAGES[b.package];
   var fixed = key && prices && Number(prices[key]);
   return fixed >= 100 ? Math.round(fixed) : 0;
+}
+
+/**
+ * Nearby cities: an automatic offer nobody has taken 10 minutes after its pay
+ * reached the top goes to these drivers too (firestore.rules lets a driver
+ * see an offer whose `cities` has his city). Bilaspur is too far from the rest.
+ */
+var NEARBY_CITIES = { Raipur: ['Bhilai', 'Durg'], Bhilai: ['Durg', 'Raipur'], Durg: ['Bhilai', 'Raipur'], Bilaspur: [] };
+var WIDEN_AFTER_TOP_MS = 10 * 60 * 1000;
+
+/** An offer's cities: its `cities`, or only its own city (older offers have none). */
+function offerCities(o) {
+  return Array.isArray(o.cities) && o.cities.length ? o.cities.slice() : [o.city];
+}
+
+/** A city and its neighbours, own city first. */
+function citiesWith(city) {
+  return [city].concat(NEARBY_CITIES[city] || []);
+}
+
+/** Has this automatic offer waited 10 minutes at the top pay, and not been widened yet? */
+function widenDue(o, alert, cuts, stepMs, now) {
+  if (!o || o.by !== 'robot' || o.status !== 'open' || !o.createdAt || (alert && alert.widenedAt)) return false;
+  var topAt = o.createdAt.getTime() + (cuts.length - 1) * Math.max(60000, stepMs);
+  return now - topAt >= WIDEN_AFTER_TOP_MS;
 }
 var CITY_CENTRES = {
   Raipur: { lat: 21.2514, lng: 81.6296 },
@@ -1135,11 +1237,24 @@ function distanceKm(a, b) {
 }
 
 /**
+ * A driver who goes after the others: rated below 4 by at least 3 customers,
+ * or 3 or more jobs given back. Never paused by the robot — that is the
+ * office's call (see the low-rating Telegram).
+ */
+function backSeat(q) {
+  q = q || {};
+  return (Number(q.ratingCount) >= 3 && Number(q.ratingAvg) < 4) || Number(q.strikes) >= 3;
+}
+
+/**
  * Online drivers who can be told about a job at `spot`, nearest first:
  * online, seen in the last 10 minutes, with a push token. Drivers whose
- * phone sent no spot go last.
+ * phone sent no spot go last; so do (before that) drivers with a poor
+ * rating or many jobs given back (`quality`: { driverId: { ratingAvg,
+ * ratingCount, strikes } }, the robot's own copy of those fields).
  */
-function rankDrivers(rows, spot, now) {
+function rankDrivers(rows, spot, now, quality) {
+  quality = quality || {};
   return (rows || [])
     .filter(function (r) {
       var a = r.data || {};
@@ -1148,9 +1263,9 @@ function rankDrivers(rows, spot, now) {
     .map(function (r) {
       var a = r.data;
       var km = typeof a.lat === 'number' && typeof a.lng === 'number' ? distanceKm(spot, { lat: a.lat, lng: a.lng }) : Infinity;
-      return { id: r.id, name: a.name || '', token: a.pushToken, km: km };
+      return { id: r.id, name: a.name || '', token: a.pushToken, km: km, back: backSeat(quality[r.id]) };
     })
-    .sort(function (x, y) { return x.km - y.km; });
+    .sort(function (x, y) { return (x.back - y.back) || (x.km - y.km); });
 }
 
 /** Who to alert now, given what was sent: { stage, send: [drivers], alarm }. */
@@ -1189,7 +1304,7 @@ function autoOfferFor(id, b, prices, cut, now) {
     bookingId: id, ref: b.ref || '', city: b.city, package: b.package, when: b.preferredTime || '', area: area,
     to: (b.trip && b.trip.to) || '', price: Math.round(price), cutPercent: Math.min(30, Math.max(20, Math.round(cut))),
     driverPay: driverPayOf(price, cut), status: 'open', takenBy: null, takenAt: null, done: false, paid: false,
-    paidAt: null, createdAt: now, updatedAt: now, by: 'robot',
+    paidAt: null, createdAt: now, updatedAt: now, by: 'robot', cities: [b.city],
   };
 }
 
@@ -1208,15 +1323,27 @@ function offerPush(offer, token, raised) {
   };
 }
 
-function sitePrices_() {
+/**
+ * The website's public settings (SITE_URL/app-config.json, made from
+ * site-settings.ts): { prices, google }, kept for an hour. null when the site
+ * cannot be reached.
+ */
+function siteConfig_() {
   var cache = CacheService.getScriptCache();
-  var had = cache.get('sitePrices');
+  var had = cache.get('siteConfig');
   if (had) return JSON.parse(had);
   var res = UrlFetchApp.fetch(prop_('SITE_URL') + '/app-config.json', { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) return null;
-  var prices = (JSON.parse(res.getContentText()) || {}).prices || null;
-  if (prices) cache.put('sitePrices', JSON.stringify(prices), 3600);
-  return prices;
+  var all = JSON.parse(res.getContentText()) || {};
+  if (!all.prices) return null;
+  var keep = { prices: all.prices, google: all.google || {} };
+  cache.put('siteConfig', JSON.stringify(keep), 3600);
+  return keep;
+}
+
+function sitePrices_() {
+  var c = siteConfig_();
+  return c ? c.prices : null;
 }
 
 /** Confirmed fixed-price bookings → an open offer, once. */
@@ -1228,10 +1355,11 @@ function autoOffers_() {
     rows.forEach(function (row) {
       var b = row.data;
       if (b.status !== 'confirmed' || b.assignedDriver) return;
-      if (!AUTO_PACKAGES[b.package] && !(b.quote && Number(b.quote.amount) >= 100)) return; // no price yet
+      if (!AUTO_PACKAGES[b.package] && !agreedPriceOf(b)) return; // no price yet
       if (fsGet_('offers/' + row.id)) return; // already offered (by hand or before)
-      prices = prices || (AUTO_PACKAGES[b.package] ? sitePrices_() : {});
-      var offer = autoOfferFor(row.id, b, prices, cut, new Date());
+      // The site's prices only when needed (and once a run).
+      if (!agreedPriceOf(b) && !prices) prices = sitePrices_();
+      var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date());
       if (!offer) return;
       fsCommit_([{ update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } }]);
     });
@@ -1246,6 +1374,7 @@ function dispatchOffers_() {
   var byCity = {};
   var cuts = autoCuts(prop_('AUTO_OFFER_CUTS'));
   var stepMs = (Number(prop_('AUTO_OFFER_STEP_MIN')) || AUTO_STEP_MIN) * 60000;
+  var quality = driverQuality_();
   offers.forEach(function (row) {
     var o = row.data;
     var alert = fsGet_('offerAlerts/' + row.id);
@@ -1265,30 +1394,957 @@ function dispatchOffers_() {
         if (alert) alert.alerted = []; // everyone hears about the new pay, the first wave included
       }
     }
-    if (!byCity[o.city]) byCity[o.city] = fsQuery_('availability', fieldFilter_('city', 'EQUAL', o.city), 'ASCENDING', 100, 'city');
     var booking = fsGet_('bookings/' + row.id) || {};
+    // The robot's notes on this offer that outlive each write below.
+    var keep = {
+      skipIds: (alert && alert.skipIds) || [], // drivers who gave this job back
+      widenedAt: (alert && alert.widenedAt) || null,
+      stillPushedAt: (alert && alert.stillPushedAt) || null,
+    };
+    var cities = offerCities(o);
+    var touched = false;
+    // Still nobody 10 minutes after the top pay: the neighbouring cities' drivers too, and the customer hears we are on it.
+    if (widenDue(o, alert, cuts, stepMs, now)) {
+      var wide = citiesWith(o.city);
+      wide.forEach(function (c) { if (cities.indexOf(c) < 0) cities.push(c); });
+      if (cities.length > offerCities(o).length) {
+        fsCommit_([{
+          update: { name: docName_('offers/' + row.id), fields: toFields({ cities: cities, updatedAt: new Date(now) }) },
+          updateMask: { fieldPaths: ['cities', 'updatedAt'] },
+          currentDocument: { exists: true },
+        }]);
+        try {
+          sendTelegram_({ text: '🔎 Nobody in ' + escapeHtml(o.city) + ' has taken ' + escapeHtml(o.ref || 'a job') + ' yet: offered to ' + escapeHtml(cities.slice(1).join(' and ')) + ' drivers too.' });
+        } catch (err) { console.warn('widen telegram: ' + err); }
+      }
+      if (!keep.stillPushedAt && booking.customerUid) {
+        pushToCustomer_(booking.customerUid, function (lang, token) { return stillFindingPush(row.id, lang, token); });
+      }
+      keep.widenedAt = new Date(now);
+      keep.stillPushedAt = keep.stillPushedAt || new Date(now);
+      touched = true;
+    }
+    var pool = [];
+    cities.forEach(function (c) {
+      if (!byCity[c]) byCity[c] = fsQuery_('availability', fieldFilter_('city', 'EQUAL', c), 'ASCENDING', 100, 'city');
+      pool = pool.concat(byCity[c]);
+    });
     var spot = (booking.pickupGeo && typeof booking.pickupGeo.lat === 'number') ? booking.pickupGeo : (CITY_CENTRES[o.city] || CITY_CENTRES.Raipur);
-    var ranked = rankDrivers(byCity[o.city], spot, now);
+    var ranked = rankDrivers(pool, spot, now, quality).filter(function (d) { return keep.skipIds.indexOf(d.id) < 0; });
     var step = raised && alert && alert.stage >= 1
       ? { stage: Math.max(2, alert.stage), send: ranked, alarm: false }
       : dispatchStep(alert, ranked, now);
-    if (!step) return;
-    // An automatic offer only rings Telegram once its pay has reached the top.
-    if (step.alarm && o.by === 'robot' && o.cutPercent > cuts[cuts.length - 1]) step = { stage: 2, send: step.send, alarm: false, keepTime: true };
-    if (step.send.length) sendPush_(step.send.map(function (d) { return offerPush(o, d.token, raised); }));
-    if (step.alarm) {
-      try {
-        sendTelegram_({ text: '⏰ No driver has taken ' + (o.ref || 'a job') + ' (' + (PACKAGE_NAMES[o.package] || o.package) + ', ' + o.city + ') yet, at ₹' + inr(o.driverPay) + ' for the driver (' + o.cutPercent + '% cut). Call a driver, or change the offer in /admin.' });
-      } catch (err) { console.warn('dispatch alarm: ' + err); }
+    if (!step && !touched) return;
+    if (step) {
+      // An automatic offer only rings Telegram once its pay has reached the top.
+      if (step.alarm && o.by === 'robot' && o.cutPercent > cuts[cuts.length - 1]) step = { stage: 2, send: step.send, alarm: false, keepTime: true };
+      if (step.send.length) sendPush_(step.send.map(function (d) { return offerPush(o, d.token, raised); }));
+      if (step.alarm) {
+        try {
+          sendTelegram_({ text: '⏰ No driver has taken ' + (o.ref || 'a job') + ' (' + (PACKAGE_NAMES[o.package] || o.package) + ', ' + o.city + ') yet, at ₹' + inr(o.driverPay) + ' for the driver (' + o.cutPercent + '% cut). Call a driver, or change the offer in /admin.' });
+        } catch (err) { console.warn('dispatch alarm: ' + err); }
+      }
+    } else {
+      step = { stage: (alert && alert.stage) || 0, send: [], keepTime: true };
     }
     var alerted = ((alert && alert.alerted) || []).concat(step.send.map(function (d) { return d.id; }));
     fsCommit_([{
       update: {
         name: docName_('offerAlerts/' + row.id),
-        fields: toFields({ stage: step.stage, stageAt: step.keepTime && alert && alert.stageAt ? alert.stageAt : new Date(now), alerted: alerted }),
+        fields: toFields({
+          stage: step.stage, stageAt: step.keepTime && alert && alert.stageAt ? alert.stageAt : new Date(now), alerted: alerted,
+          skipIds: keep.skipIds, widenedAt: keep.widenedAt, stillPushedAt: keep.stillPushedAt,
+        }),
       },
     }]);
   });
+}
+
+/* ============================================================ automation
+   What used to need a phone call or a tap in /admin, done by the robot:
+
+   • Instant booking: a logged-in customer's 1 hour / 3 hours booking, or a
+     trip whose estimate the customer accepted in the app (acceptedPrice), is
+     confirmed at once and then offered to drivers as usual. Never a hospital
+     / emergency booking: those are always a call. INSTANT_BOOKINGS = off.
+   • "Can't make it": a driver may give back a job he took, before he taps
+     Start (firestore.rules). The offer goes out again from the first step,
+     never to him, and his drivers/{id}.strikes goes up.
+   • An hour before the job: a reminder to the customer and the driver.
+   • The Driver app's taps (tripTaps/{bookingId}: Start, Arrived, Job done,
+     Reached home): a trip's times go to the booking's clock and Telegram, as
+     with the trip link (the office still saves the bill); a local job gets
+     its bill (localBill) at Job done and is completed.
+   • A completed job with a bill gets a Razorpay payment link (only once the
+     keys are set), then a request to rate the driver; the ratings make
+     drivers/{id}.ratingAvg and ratingCount, which push poorly rated drivers
+     (and those with 3 strikes) to the back of the queue for new jobs.
+   • Monday ~9:30: who to pay for the week, with a Paid ✓ button. ~9 pm: the
+     day in numbers.
+   The robot's own notes per booking live in reminders/{bookingId}, which no
+   browser can read or write. */
+
+var INSTANT_PACKAGES = ['1-hour-300', '3-hours-600'];
+/** Hours each local package includes; past them each started hour (after LOCAL_GRACE_MIN) is extra. */
+var LOCAL_BASE_HOURS = { '1-hour-300': 1, '3-hours-600': 3, 'local-full-day': 8, 'night-driver': 10 };
+var LOCAL_GRACE_MIN = 15;
+/** Trip packages and their kind, as on the trip link: their taps fill the booking's clock. */
+var TRIP_TAP_KINDS = { outstation: 'round', 'one-way-drop': 'one-way' };
+var REMIND_BEFORE_MIN = 60;
+var RAZORPAY_API = 'https://api.razorpay.com/v1';
+/** Telegram asks about a driver whose average falls below this, once he has this many ratings. */
+var LOW_RATING = { avg: 3.5, count: 5 };
+
+/* ------------------------------------------------------------ pure parts */
+
+/**
+ * May the robot confirm this booking by itself? New, numbered, not an
+ * emergency, and either a logged-in customer's 1 hour / 3 hours, or a
+ * price the customer accepted. `setting`: INSTANT_BOOKINGS ("off" = never).
+ */
+function instantConfirmable(b, setting) {
+  if (String(setting || '').trim().toLowerCase() === 'off') return false;
+  if (!b || b.status !== 'new' || !b.ref || b.package === 'medical-emergency') return false;
+  if (b.acceptedPrice && Number(b.acceptedPrice.amount) > 0) return true;
+  return Boolean(b.customerUid) && INSTANT_PACKAGES.indexOf(b.package) >= 0;
+}
+
+/** Whole hours from `fromMs` to `toMs`, an hour started counting only after `graceMin` minutes (3 h 15 m = 3, 3 h 16 m = 4). */
+function usedHours(fromMs, toMs, graceMin) {
+  var minutes = Math.floor(Math.max(0, toMs - fromMs) / 60000);
+  return Math.max(0, Math.ceil((minutes - graceMin) / 60));
+}
+
+/** A local package's price: the agreed price (quote, accepted price), else the site's: 1 hour, 3 hours, full day from, night from. */
+function localPackagePrice(b, prices) {
+  var agreed = agreedPriceOf(b);
+  if (agreed) return agreed;
+  prices = prices || {};
+  var p = {
+    '1-hour-300': prices.oneHour,
+    '3-hours-600': prices.threeHours,
+    'local-full-day': prices.fullDay && prices.fullDay.from,
+    'night-driver': prices.nightFrom,
+  }[b.package];
+  p = Number(p);
+  return p >= 100 ? Math.round(p) : 0;
+}
+
+/**
+ * The bill of a local job from the driver's taps: the package's price, plus
+ * each hour past the package (Arrived → Job done, after the grace minutes) at
+ * prices.localExtraHour. null when it cannot be worked out yet.
+ */
+function localBillOf(b, taps, prices, now) {
+  var base = LOCAL_BASE_HOURS[b && b.package];
+  var from = taps && (taps.arrivedAt || taps.leftAt);
+  if (!base || !from || !taps.doneAt) return null;
+  var price = localPackagePrice(b, prices);
+  if (!price) return null;
+  var used = usedHours(from.getTime(), taps.doneAt.getTime(), LOCAL_GRACE_MIN);
+  var extra = Math.max(0, used - base);
+  var rate = Math.max(0, Math.round(Number(prices && prices.localExtraHour) || 0));
+  return { amount: price + extra * rate, baseHours: base, usedHours: used, extraHours: extra, extraHourRate: rate, at: now };
+}
+
+/** A trip's taps → the booking's clock (firestore.rules isClock): Start; one-way: Job done = car dropped, Reached home; round: Job done = back home. */
+function tapsClockOf(pkg, taps) {
+  var kind = TRIP_TAP_KINDS[pkg];
+  var c = {};
+  if (!kind || !taps) return c;
+  if (taps.leftAt) c.startAt = taps.leftAt;
+  if (kind === 'one-way') {
+    if (taps.doneAt) c.dropAt = taps.doneAt;
+    if (taps.homeAt) c.homeAt = taps.homeAt;
+  } else if (taps.doneAt) {
+    c.homeAt = taps.doneAt;
+  }
+  return c;
+}
+
+/** "2026-10-08T15:30" → "3:30 pm" (the digits are India time, as written). '' if there is no time. */
+function clockText(raw) {
+  var m = String(raw == null ? '' : raw).match(/^\d{4}-\d{2}-\d{2}[T ](\d{2}):(\d{2})/);
+  if (!m) return '';
+  var h = +m[1];
+  return (((h + 11) % 12) + 1) + ':' + m[2] + ' ' + (h < 12 ? 'am' : 'pm');
+}
+
+/** epoch ms → India time in the booking form's format, "2026-10-08T15:30". */
+function istStamp(ms) {
+  return new Date(ms + 330 * 60000).toISOString().slice(0, 16);
+}
+
+function pushMsg_(token, text, data, channelId) {
+  return { to: token, title: text.title, body: text.body, data: data, sound: 'default', priority: 'high', channelId: channelId || 'bookings' };
+}
+
+var AUTO_PUSH_TEXT = {
+  en: {
+    reminder: function (c) { return { title: 'Your driver is coming', body: 'Your driver ' + c.driver + ' arrives at ' + c.time + '.' }; },
+    still: function () { return { title: 'Still finding your driver', body: 'Still finding your driver — we\'ll call you if it takes longer.' }; },
+    review: function (c) { return { title: 'How was your driver?', body: 'How was your driver? Rate ' + c.driver + ' — tap to give 1 to 5 stars.' }; },
+    thanks: function (c) { return { title: 'Thank you!', body: 'Glad ' + c.driver + ' drove well. Would you say so on Google? Tap to write a review.' }; },
+  },
+  hi: {
+    reminder: function (c) { return { title: 'आपका ड्राइवर आ रहा है', body: 'आपके ड्राइवर ' + c.driver + ' ' + c.time + ' पर पहुँचेंगे।' }; },
+    still: function () { return { title: 'ड्राइवर ढूँढ रहे हैं', body: 'अभी भी आपका ड्राइवर ढूँढ रहे हैं — देर हुई तो हम आपको कॉल करेंगे।' }; },
+    review: function (c) { return { title: 'ड्राइवर कैसे थे?', body: c.driver + ' को रेटिंग दें — 1 से 5 स्टार, टैप करें।' }; },
+    thanks: function (c) { return { title: 'धन्यवाद!', body: 'खुशी है कि ' + c.driver + ' के साथ सफ़र अच्छा रहा। Google पर रिव्यू लिखेंगे? टैप करें।' }; },
+  },
+};
+
+/** One of the robot's own notifications to a customer, in the phone's language. kind: reminder | still | review | thanks. */
+function autoPush(kind, c) {
+  var texts = AUTO_PUSH_TEXT[c.language] || AUTO_PUSH_TEXT.en;
+  var data = { bookingId: c.id };
+  if (kind === 'review') data.action = 'rate';
+  if (kind === 'thanks' && c.url) data.url = c.url;
+  return pushMsg_(c.token, texts[kind]({ driver: c.driver || 'your driver', time: c.time || '' }), data);
+}
+
+function stillFindingPush(id, language, token) {
+  return autoPush('still', { id: id, language: language, token: token });
+}
+
+/** The driver's reminder an hour before (English and Hindi, as job alerts): "Job at 3:30 pm · Shankar Nagar". */
+function driverReminderPush(b, id, token) {
+  var area = offerAreaOf(b.pickup) || b.city || '';
+  return pushMsg_(token, { title: 'Job reminder · काम की याद', body: 'Job at ' + clockText(b.preferredTime) + ' · ' + area + (b.ref ? ' · ' + b.ref : '') }, { bookingId: id }, 'jobs');
+}
+
+/** A given-back offer, open again as a fresh automatic offer: nobody's, from the first step, its own city first. */
+function reopenedOffer(o, cut, now) {
+  return {
+    status: 'open', takenBy: null, takenAt: null, done: false, cities: [o.city], cutPercent: cut,
+    driverPay: driverPayOf(o.price, cut), createdAt: now, updatedAt: now, by: 'robot',
+  };
+}
+
+/** What a completed job costs the customer, from its bill: the local bill, else the trip's final bill; 0 = none. */
+function billAmountOf(b) {
+  var n = Number((b.localBill && b.localBill.amount) || (b.bill && b.bill.amount) || 0);
+  return n >= 1 && n <= 1000000 ? Math.round(n) : 0;
+}
+
+/** The Razorpay Payment Link for a completed job (amount in paise; Razorpay texts the link to the customer). */
+function razorpayLinkRequest(b, amount) {
+  var phone = String(b.phone == null ? '' : b.phone).replace(/\D/g, '').slice(-10);
+  return {
+    amount: Math.round(amount) * 100,
+    currency: 'INR',
+    accept_partial: false,
+    reference_id: String(b.ref || '').slice(0, 40),
+    description: ('DriveBuddy ' + (b.ref || '') + ' · ' + packageName(b.package)).slice(0, 2048),
+    customer: { name: oneLine(b.name).slice(0, 60), contact: '+91' + phone },
+    notify: { sms: true, email: false },
+    reminder_enable: true,
+    notes: { booking: String(b.ref || '') },
+  };
+}
+
+/** Ratings → { ratingAvg (1 decimal), ratingCount }. Anything but 1–5 whole stars is left out. */
+function ratingSummary(list) {
+  var stars = (list || []).map(function (r) { return r && r.stars; }).filter(function (n) { return Number.isInteger(n) && n >= 1 && n <= 5; });
+  if (!stars.length) return { ratingAvg: 0, ratingCount: 0 };
+  var sum = stars.reduce(function (a, n) { return a + n; }, 0);
+  return { ratingAvg: Math.round((sum / stars.length) * 10) / 10, ratingCount: stars.length };
+}
+
+function lowRatingTelegram(c) {
+  return {
+    text: '⚠️ ' + escapeHtml(c.name) + '\'s rating is ' + c.ratingAvg + ' (' + c.ratingCount + ' ratings) — pause him in /admin?',
+    reply_markup: { inline_keyboard: [[{ text: 'Open drivers in admin panel', url: c.siteUrl + '/admin/?tab=drivers' }]] },
+  };
+}
+
+/** Offers to pay out: taken, done and not paid yet → one group per driver, by name. */
+function payoutGroups(rows) {
+  var by = {};
+  (rows || []).forEach(function (r) {
+    var o = r.data || {};
+    if (o.status !== 'taken' || o.done !== true || o.paid === true || !o.takenBy || !o.takenBy.id) return;
+    var g = by[o.takenBy.id] || (by[o.takenBy.id] = { driverId: o.takenBy.id, name: o.takenBy.name || '', amount: 0, jobs: 0, offerIds: [], refs: [] });
+    g.amount += Number(o.driverPay) || 0;
+    g.jobs++;
+    g.offerIds.push(r.id);
+    if (o.ref) g.refs.push(o.ref);
+  });
+  return Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+}
+
+/** "Pay Raju ₹1,350 · UPI raju@okaxis · 3 jobs", with the Paid ✓ button (callback paid:<driverId>:<week>). */
+function payoutTelegram(g, week) {
+  return {
+    text: 'Pay ' + escapeHtml(g.name) + ' ₹' + inr(g.amount) + ' · ' +
+      (g.upi ? 'UPI ' + escapeHtml(g.upi) : 'no UPI ID yet (he adds it in the Driver app, Earnings)') +
+      ' · ' + g.jobs + ' job' + (g.jobs === 1 ? '' : 's') + (g.refs.length ? '\n' + escapeHtml(g.refs.join(', ')) : ''),
+    reply_markup: { inline_keyboard: [[{ text: 'Paid ✓', callback_data: 'paid:' + g.driverId + ':' + week }]] },
+  };
+}
+
+/** "paid:<driverId>:2026-11-23" → { driverId, week }, or null. */
+function parsePaidCallback(data) {
+  var m = /^paid:([A-Za-z0-9_-]{1,40}):(\d{4}-\d{2}-\d{2})$/.exec(String(data == null ? '' : data));
+  return m ? { driverId: m[1], week: m[2] } : null;
+}
+
+/** What the customer paid for a job: the payment, the bill, the agreed price, else the offer's price. */
+function amountOf(b, offerPrice) {
+  return Number((b.payment && b.payment.amount) || billAmountOf(b) || agreedPriceOf(b) || offerPrice || 0);
+}
+
+/**
+ * The day in numbers from the report's queries (see sendDailyReport_):
+ * created / changed today, offers changed today, open offers, unpaid offers,
+ * online drivers.
+ */
+function dailySummary(q, now) {
+  var counts = { new: 0, confirmed: 0, assigned: 0, completed: 0, cancelled: 0 };
+  q.created.forEach(function (r) { if (counts[r.data.status] !== undefined) counts[r.data.status]++; });
+  var offers = {};
+  q.offersToday.forEach(function (r) { offers[r.id] = r.data; });
+  var done = q.changed.filter(function (r) { return r.data.status === 'completed'; });
+  var revenue = 0;
+  var cut = 0;
+  done.forEach(function (r) {
+    var o = offers[r.id];
+    revenue += amountOf(r.data, o && o.price);
+    if (o && o.done === true && o.status === 'taken') cut += (Number(o.price) || 0) - (Number(o.driverPay) || 0);
+  });
+  var payouts = payoutGroups(q.unpaid);
+  return {
+    day: formatIst(new Date(now)).split(',')[0],
+    total: q.created.length,
+    counts: counts,
+    revenue: revenue,
+    completedJobs: done.length,
+    cut: cut,
+    open: q.open.filter(function (r) { return r.data.status === 'open'; }).map(function (r) { return r.data.ref || r.id; }),
+    online: q.online.filter(function (r) { return r.data.online === true && r.data.at && now - r.data.at.getTime() <= DISPATCH.freshMs; }).length,
+    payoutAmount: payouts.reduce(function (a, g) { return a + g.amount; }, 0),
+    payoutDrivers: payouts.length,
+  };
+}
+
+function dailyReportText(s) {
+  var c = s.counts;
+  return [
+    '📊 <b>DriveBuddy today — ' + escapeHtml(s.day) + '</b>',
+    '',
+    '<b>Bookings:</b> ' + s.total + ' (new ' + c.new + ' · confirmed ' + c.confirmed + ' · with driver ' + c.assigned +
+      ' · completed ' + c.completed + ' · cancelled ' + c.cancelled + ')',
+    '<b>Revenue:</b> ₹' + inr(s.revenue) + ' from ' + s.completedJobs + ' completed job' + (s.completedJobs === 1 ? '' : 's'),
+    '<b>DriveBuddy\'s cut:</b> ₹' + inr(s.cut),
+    '<b>Jobs nobody took:</b> ' + (s.open.length ? s.open.length + ' still open — ' + escapeHtml(s.open.join(', ')) : 'none'),
+    '<b>Drivers online now:</b> ' + s.online,
+    '<b>Payouts due:</b> ' + (s.payoutDrivers ? '₹' + inr(s.payoutAmount) + ' to ' + s.payoutDrivers + ' driver' + (s.payoutDrivers === 1 ? '' : 's') : 'none'),
+  ].join('\n');
+}
+
+/* --------------------------------------------------------- the robot's notes */
+
+function bookOf_(id) {
+  return fsGet_('reminders/' + id) || {};
+}
+
+function saveBook_(id, fields) {
+  fsCommit_([{ update: { name: docName_('reminders/' + id), fields: toFields(fields) }, updateMask: { fieldPaths: Object.keys(fields) } }]);
+}
+
+/** A timeline entry written by the robot. */
+function robotEvent_(id, from, to, note, at) {
+  return {
+    update: {
+      name: docName_('bookings/' + id + '/events/' + Utilities.getUuid().replace(/-/g, '')),
+      fields: toFields({ type: 'status', from: from, to: to, note: String(note).slice(0, 500), by: 'robot', at: at }),
+    },
+    currentDocument: { exists: false },
+  };
+}
+
+/** The robot's copy of each driver's ratingAvg, ratingCount and strikes, for ranking without reading every driver each minute. */
+function driverQuality_() {
+  try {
+    return JSON.parse(PropertiesService.getScriptProperties().getProperty('driverQuality') || '{}') || {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function saveDriverQuality_(id, patch) {
+  var q = driverQuality_();
+  q[id] = Object.assign({}, q[id] || {}, patch);
+  PropertiesService.getScriptProperties().setProperty('driverQuality', JSON.stringify(q));
+}
+
+function telegramLine_(text) {
+  try { sendTelegram_({ text: text }); } catch (err) { console.warn('telegram: ' + err); }
+}
+
+/* ----------------------------------------------------- what changed, at once */
+
+/**
+ * The apps' news since the last minute, in one round trip (fsQueryAll_):
+ * bookings changed (instant confirmations, completions), prices accepted,
+ * Start / Job done / Reached home taps, jobs given back. Each has its own
+ * bookmark, and one that fails never stops the others.
+ */
+function watchChanges_() {
+  confirmedThisRun_ = {};
+  var jobs = [
+    { spec: sinceSpec_('bookings', 'robotBookingsMs'), run: changedBookings_ },
+    { spec: sinceSpec_('bookings', 'acceptedPriceMs', 'acceptedPrice.at'), run: acceptedPrices_ },
+    { spec: sinceSpec_('tripTaps', 'tapsLeftMs', 'leftAt'), run: syncTripTaps_ },
+    { spec: sinceSpec_('tripTaps', 'tapsDoneMs', 'doneAt'), run: syncTripTaps_ },
+    { spec: sinceSpec_('tripTaps', 'tapsHomeMs', 'homeAt'), run: syncTripTaps_ },
+    { spec: { collection: 'offers', where: fieldFilter_('status', 'EQUAL', 'released'), field: 'status', limit: 20 }, run: releasedOffers_ },
+  ];
+  var results = fsQueryAll_(jobs.map(function (j) { return j.spec; }));
+  jobs.forEach(function (j, i) {
+    try {
+      var r = results[i];
+      if (r.error) throw r.error;
+      if (j.spec.bookmark) sinceRun_(j.spec, r.rows, j.run);
+      else if (r.rows.length) j.run(r.rows);
+    } catch (err) {
+      console.error(j.run.name + ': ' + (err && err.stack || err));
+    }
+  });
+}
+
+/** Bookings that changed: confirm the simple ones, and take completed ones on (payment link, rating request). Both are safe to repeat. */
+function changedBookings_(rows) {
+  instantConfirm_(rows);
+  completedBookings_(rows);
+}
+
+/* ------------------------------------------------------- instant booking */
+
+function confirmByRobot_(id) {
+  var now = new Date();
+  fsCommit_([
+    {
+      update: { name: docName_('bookings/' + id), fields: toFields({ status: 'confirmed', updatedAt: now, updatedBy: 'robot' }) },
+      updateMask: { fieldPaths: ['status', 'updatedAt', 'updatedBy'] },
+      currentDocument: { exists: true },
+    },
+    robotEvent_(id, 'new', 'confirmed', 'Confirmed automatically', now),
+  ]);
+}
+
+/** Bookings this run confirmed (Apps Script starts every run with fresh globals). */
+var confirmedThisRun_ = {};
+
+function acceptedLine_(b, id) {
+  return '✅ <b>' + escapeHtml(b.ref || id) + ' auto-confirmed</b>: the customer accepted ₹' + inr(b.acceptedPrice.amount) + ' in the app. It goes to drivers now.';
+}
+
+/**
+ * A logged-in customer's 1 hour / 3 hours (the new-booking alert already said
+ * "auto-confirmed"), or a price accepted before the booking was numbered:
+ * confirmed now.
+ */
+function instantConfirm_(rows) {
+  var setting = prop_('INSTANT_BOOKINGS');
+  rows.forEach(function (row) {
+    var b = row.data;
+    if (!instantConfirmable(b, setting)) return;
+    confirmByRobot_(row.id);
+    confirmedThisRun_[row.id] = true;
+    b.status = 'confirmed';
+    if (b.acceptedPrice) telegramLine_(acceptedLine_(b, row.id));
+  });
+}
+
+/**
+ * The customer tapped "Accept price" in the app. A new booking is confirmed
+ * (unless INSTANT_BOOKINGS = off); a confirmed one without a driver is
+ * offered to drivers at that price (its updatedAt moves so autoOffers_ sees it).
+ */
+function acceptedPrices_(rows) {
+  var setting = prop_('INSTANT_BOOKINGS');
+  rows.forEach(function (row) {
+    if (confirmedThisRun_[row.id]) return; // instantConfirm_ just did, and said so
+    var b = fsGet_('bookings/' + row.id); // fresh: this minute's other steps may have moved it
+    // Not numbered yet: instantConfirm_ takes it once the robot numbers it.
+    if (!b || !b.acceptedPrice || !b.ref) return;
+    var ref = escapeHtml(b.ref);
+    var amount = '₹' + inr(b.acceptedPrice.amount);
+    if (b.status === 'new' && instantConfirmable(b, setting)) {
+      confirmByRobot_(row.id);
+      telegramLine_(acceptedLine_(b, row.id));
+    } else if (b.status === 'new') {
+      telegramLine_('💬 ' + ref + ': the customer accepted ' + amount + ' in the app. Confirm it in /admin.');
+    } else if (b.status === 'confirmed' && !b.assignedDriver) {
+      fsCommit_([{
+        update: { name: docName_('bookings/' + row.id), fields: toFields({ updatedAt: new Date(), updatedBy: 'robot' }) },
+        updateMask: { fieldPaths: ['updatedAt', 'updatedBy'] },
+        currentDocument: { exists: true },
+      }]);
+      telegramLine_('💬 ' + ref + ': the customer accepted ' + amount + ' in the app. Offering it to drivers at that price.');
+    }
+  });
+}
+
+/* ------------------------------------------------------- jobs given back */
+
+/** "Can't make it": open the offer again from the first step (never to him), and count a strike. */
+function releasedOffers_(rows) {
+  var cut = autoCuts(prop_('AUTO_OFFER_CUTS'))[0];
+  rows.forEach(function (row) {
+    var o = row.data;
+    var who = o.takenBy || {};
+    var b = fsGet_('bookings/' + row.id);
+    var now = new Date();
+    var reopen = Boolean(b && b.status === 'confirmed' && !b.assignedDriver);
+    if (reopen) {
+      var fields = reopenedOffer(o, cut, now);
+      fsCommit_([
+        {
+          update: { name: docName_('offers/' + row.id), fields: toFields(fields) },
+          updateMask: { fieldPaths: Object.keys(fields) },
+          currentDocument: { exists: true },
+        },
+        {
+          update: {
+            name: docName_('offerAlerts/' + row.id),
+            fields: toFields({ stage: 0, stageAt: now, alerted: [], skipIds: who.id ? [who.id] : [], widenedAt: null, stillPushedAt: null }),
+          },
+        },
+      ]);
+    } else {
+      // Assigned by hand or cancelled meanwhile: nothing to offer.
+      fsCommit_([{
+        update: { name: docName_('offers/' + row.id), fields: toFields({ status: 'withdrawn', updatedAt: now }) },
+        updateMask: { fieldPaths: ['status', 'updatedAt'] },
+        currentDocument: { exists: true },
+      }]);
+    }
+    var strikes = 0;
+    if (who.id) {
+      var d = fsGet_('drivers/' + who.id);
+      if (d) {
+        fsCommit_([{
+          update: { name: docName_('drivers/' + who.id), fields: {} },
+          updateMask: { fieldPaths: [] },
+          updateTransforms: [{ fieldPath: 'strikes', increment: { integerValue: '1' } }],
+          currentDocument: { exists: true },
+        }]);
+        strikes = (Number(d.strikes) || 0) + 1;
+        saveDriverQuality_(who.id, { strikes: strikes });
+      }
+    }
+    telegramLine_('↩️ <b>' + escapeHtml(who.name || 'A driver') + ' gave back ' + escapeHtml(o.ref || row.id) + '</b> (can\'t make it, before starting)' +
+      (strikes ? ' — strike ' + strikes : '') + '. ' +
+      (reopen ? 'Offered to drivers again from the start.' : 'The booking had changed, so the offer is closed.'));
+  });
+}
+
+/* ------------------------------------------------------- the driver's taps */
+
+function syncTripTaps_(rows) {
+  rows.forEach(function (row) { syncTaps_(row.id, row.data); });
+}
+
+/**
+ * One booking's taps. A trip: Start / Job done / Reached home become the
+ * clock (Telegram hears each step once, as with the trip link). A local job:
+ * at Job done, the bill, completed, and the offer done. Safe to repeat.
+ */
+function syncTaps_(id, taps) {
+  var b = fsGet_('bookings/' + id);
+  if (!b || b.status === 'cancelled') return;
+  if (TRIP_TAP_KINDS[b.package]) {
+    var clock = tapsClockOf(b.package, taps);
+    if (!clock.startAt) return;
+    var news = tripClockNews(b.clock, clock);
+    if (!sameClock(b.clock, clock)) {
+      fsCommit_([{
+        update: { name: docName_('bookings/' + id), fields: toFields({ clock: clock }) },
+        updateMask: { fieldPaths: ['clock'] },
+        currentDocument: { exists: true },
+      }]);
+    }
+    var link = {
+      ref: b.ref, to: (b.trip && b.trip.to) || '?', kind: TRIP_TAP_KINDS[b.package], driverName: (b.assignedDriver && b.assignedDriver.name) || '',
+      startAt: clock.startAt, dropAt: clock.dropAt, homeAt: clock.homeAt,
+    };
+    news.forEach(function (step) {
+      sendTelegram_(tripTelegram({ link: link, step: step, booking: b, id: id, siteUrl: prop_('SITE_URL') }));
+    });
+    return;
+  }
+  if (!LOCAL_BASE_HOURS[b.package] || !taps.doneAt || b.status !== 'assigned' || b.localBill) return;
+  var prices = sitePrices_();
+  if (!prices) throw new Error('the website prices could not be read; trying again next minute');
+  var now = new Date();
+  var bill = localBillOf(b, taps, prices, now);
+  if (!bill) {
+    console.warn('No price for the bill of ' + (b.ref || id) + ': left for the office.');
+    return;
+  }
+  var from = taps.arrivedAt || taps.leftAt;
+  var note = 'Completed automatically: ' + hoursText(taps.doneAt.getTime() - from.getTime()) + ' on the job → ' + bill.usedHours +
+    ' h (package ' + bill.baseHours + ' h' + (bill.extraHours ? ' + ' + bill.extraHours + ' extra' : '') + '). Bill ₹' + inr(bill.amount) + '.';
+  var writes = [
+    {
+      update: { name: docName_('bookings/' + id), fields: toFields({ localBill: bill, status: 'completed', updatedAt: now, updatedBy: 'robot' }) },
+      updateMask: { fieldPaths: ['localBill', 'status', 'updatedAt', 'updatedBy'] },
+      currentDocument: { exists: true },
+    },
+    robotEvent_(id, 'assigned', 'completed', note, now),
+  ];
+  var offer = fsGet_('offers/' + id);
+  if (offer && offer.status === 'taken') {
+    writes.push({
+      update: { name: docName_('offers/' + id), fields: toFields({ done: true, updatedAt: now }) },
+      updateMask: { fieldPaths: ['done', 'updatedAt'] },
+      currentDocument: { exists: true },
+    });
+  }
+  fsCommit_(writes);
+  telegramLine_('✅ <b>' + escapeHtml(b.ref || id) + ' done</b> — ' + escapeHtml((b.assignedDriver && b.assignedDriver.name) || 'the driver') + ': ' + escapeHtml(note.replace('Completed automatically: ', '')));
+}
+
+/* ------------------------------------------------- payment and the rating */
+
+function razorpayReady_() {
+  return Boolean(prop_('RAZORPAY_KEY_ID') && prop_('RAZORPAY_KEY_SECRET'));
+}
+
+/** Basic auth for Razorpay. Built here only; never logged, stored or returned. */
+function razorpayFetch_(method, path, payload) {
+  var auth = 'Basic ' + Utilities.base64Encode(prop_('RAZORPAY_KEY_ID') + ':' + prop_('RAZORPAY_KEY_SECRET'));
+  var res = UrlFetchApp.fetch(RAZORPAY_API + path, {
+    method: method,
+    contentType: 'application/json',
+    headers: { Authorization: auth },
+    payload: payload ? JSON.stringify(payload) : undefined,
+    muteHttpExceptions: true,
+  });
+  var body = {};
+  try { body = JSON.parse(res.getContentText() || '{}'); } catch (err) { body = {}; }
+  return { code: res.getResponseCode(), body: body };
+}
+
+/** Razorpay's reason for a refusal, without anything of ours in it. */
+function razorpayWhy_(r) {
+  return String((r.body && r.body.error && r.body.error.description) || 'HTTP ' + r.code).slice(0, 200);
+}
+
+function askReview_(id, b) {
+  var driver = (b.assignedDriver && b.assignedDriver.name) || '';
+  pushToCustomer_(b.customerUid, function (lang, token) { return autoPush('review', { id: id, language: lang, token: token, driver: driver }); });
+}
+
+/**
+ * Completed bookings: a payment link for the bill (with Razorpay keys), and
+ * once paid — or at once without payments — one request to rate the driver.
+ */
+function completedBookings_(rows) {
+  var payments = razorpayReady_();
+  rows.forEach(function (row) {
+    var b = row.data;
+    if (b.status !== 'completed') return;
+    var amount = billAmountOf(b);
+    var waiting = Boolean(b.payment && b.payment.status === 'pending');
+    var book = null;
+    var notes = {};
+    if (payments && amount && !b.payment) {
+      book = bookOf_(row.id);
+      if (!book.paymentTriedAt) {
+        notes.paymentTriedAt = new Date();
+        var r = razorpayFetch_('post', '/payment_links', razorpayLinkRequest(b, amount));
+        if (r.code < 300 && r.body.id && r.body.short_url) {
+          var payment = { status: 'pending', amount: amount, url: String(r.body.short_url), linkId: String(r.body.id), at: new Date() };
+          fsCommit_([{
+            update: { name: docName_('bookings/' + row.id), fields: toFields({ payment: payment }) },
+            updateMask: { fieldPaths: ['payment'] },
+            currentDocument: { exists: true },
+          }]);
+          waiting = true;
+          telegramLine_('💳 ' + escapeHtml(b.ref || row.id) + ': payment link for ₹' + inr(amount) + ' sent to the customer by SMS.');
+        } else {
+          console.warn('Razorpay ' + r.code + ': ' + razorpayWhy_(r));
+          telegramLine_('⚠️ Could not make the payment link for ' + escapeHtml(b.ref || row.id) + ' (Razorpay: ' + escapeHtml(razorpayWhy_(r)) + '). Collect it the usual way.');
+        }
+      }
+    }
+    if (b.customerUid && !waiting) {
+      book = book || bookOf_(row.id);
+      if (!book.reviewAt) {
+        askReview_(row.id, b);
+        notes.reviewAt = new Date();
+      }
+    }
+    if (Object.keys(notes).length) saveBook_(row.id, notes);
+  });
+}
+
+/** Every 5 minutes: has a pending payment link been paid? Then the booking says so, Telegram hears, and the rating request goes. */
+function pollPayments_() {
+  if (!razorpayReady_()) return;
+  var rows = fsQuery_('bookings', fieldFilter_('payment.status', 'EQUAL', 'pending'), 'ASCENDING', 50, 'payment.status');
+  rows.forEach(function (row) {
+    var b = row.data;
+    var p = b.payment;
+    if (!p || !p.linkId) return;
+    var r = razorpayFetch_('get', '/payment_links/' + encodeURIComponent(p.linkId));
+    if (r.code !== 200) {
+      console.warn('Razorpay ' + r.code + ' for ' + (b.ref || row.id) + ': ' + razorpayWhy_(r));
+      return;
+    }
+    if (r.body.status !== 'paid') return;
+    var now = new Date();
+    var paid = Object.assign({}, p, { status: 'paid', paidAt: now });
+    fsCommit_([{
+      update: { name: docName_('bookings/' + row.id), fields: toFields({ payment: paid }) },
+      updateMask: { fieldPaths: ['payment'] },
+      currentDocument: { exists: true },
+    }]);
+    telegramLine_('💰 ' + escapeHtml(b.ref || row.id) + ': ₹' + inr(p.amount) + ' paid online.');
+    if (b.customerUid && !bookOf_(row.id).reviewAt) {
+      askReview_(row.id, b);
+      saveBook_(row.id, { reviewAt: now });
+    }
+  });
+}
+
+/* ------------------------------------------------------------- ratings */
+
+function processRatingsStep_() {
+  return changedSince_('ratings', 'ratingsMs', processRatings_, 'at');
+}
+
+/**
+ * New ratings: each driver's average and count worked out again from all his
+ * ratings (exact, never drifting); Telegram once when a driver falls below
+ * LOW_RATING; a 5-star customer gets the Google review link.
+ */
+function processRatings_(rows) {
+  var ids = {};
+  rows.forEach(function (r) { if (r.data.driverId) ids[r.data.driverId] = true; });
+  var names = {};
+  var props = PropertiesService.getScriptProperties();
+  var low = JSON.parse(props.getProperty('lowRatingAlerted') || '[]');
+  Object.keys(ids).forEach(function (id) {
+    var d = fsGet_('drivers/' + id);
+    if (!d) return;
+    names[id] = d.name || '';
+    var all = fsQuery_('ratings', fieldFilter_('driverId', 'EQUAL', id), 'ASCENDING', 1000, 'driverId');
+    var sum = ratingSummary(all.map(function (r) { return r.data; }));
+    fsCommit_([{
+      update: { name: docName_('drivers/' + id), fields: toFields(sum) },
+      updateMask: { fieldPaths: ['ratingAvg', 'ratingCount'] },
+      currentDocument: { exists: true },
+    }]);
+    saveDriverQuality_(id, { ratingAvg: sum.ratingAvg, ratingCount: sum.ratingCount, strikes: Number(d.strikes) || 0 });
+    var isLow = sum.ratingCount >= LOW_RATING.count && sum.ratingAvg < LOW_RATING.avg;
+    if (isLow && low.indexOf(id) < 0) {
+      low.push(id);
+      try { sendTelegram_(lowRatingTelegram({ name: d.name || 'A driver', ratingAvg: sum.ratingAvg, ratingCount: sum.ratingCount, siteUrl: prop_('SITE_URL') })); } catch (err) { console.warn('low rating: ' + err); }
+    } else if (!isLow && low.indexOf(id) >= 0) {
+      low.splice(low.indexOf(id), 1); // recovered: a later fall is asked about again
+    }
+  });
+  props.setProperty('lowRatingAlerted', JSON.stringify(low));
+
+  var fives = rows.filter(function (r) { return r.data.stars === 5 && r.data.customerUid; });
+  if (!fives.length) return;
+  var cfg = siteConfig_();
+  var url = cfg && cfg.google && (cfg.google.writeReview || cfg.google.profile);
+  if (!url) return;
+  fives.forEach(function (r) {
+    var driver = names[r.data.driverId] || '';
+    pushToCustomer_(r.data.customerUid, function (lang, token) {
+      return autoPush('thanks', { id: r.id, language: lang, token: token, driver: driver, url: url });
+    });
+  });
+}
+
+/* ------------------------------------------------------------- reminders */
+
+/**
+ * Every 5 minutes: jobs starting within the hour (preferredTime, India time,
+ * compared as text — the form writes "2026-10-08T15:30") that have a driver
+ * get one reminder to the customer's phones and one to the driver's.
+ */
+function tripReminders_() {
+  var now = Date.now();
+  var rows = fsQuery_('bookings', {
+    compositeFilter: {
+      op: 'AND',
+      filters: [
+        fieldFilter_('preferredTime', 'GREATER_THAN_OR_EQUAL', istStamp(now)),
+        fieldFilter_('preferredTime', 'LESS_THAN_OR_EQUAL', istStamp(now + REMIND_BEFORE_MIN * 60000)),
+      ],
+    },
+  }, 'ASCENDING', 50, 'preferredTime');
+  var props = PropertiesService.getScriptProperties();
+  var done = JSON.parse(props.getProperty('remindedIds') || '[]');
+  rows.forEach(function (row) {
+    var b = row.data;
+    if (b.status !== 'assigned' || !b.assignedDriver || done.indexOf(row.id) >= 0) return;
+    done.push(row.id);
+    if (bookOf_(row.id).remindedAt) return;
+    var time = clockText(b.preferredTime);
+    if (b.customerUid) {
+      pushToCustomer_(b.customerUid, function (lang, token) {
+        return autoPush('reminder', { id: row.id, language: lang, token: token, driver: b.assignedDriver.name, time: time });
+      });
+    }
+    var av = b.assignedDriver.id ? fsGet_('availability/' + b.assignedDriver.id) : null;
+    if (av && av.pushToken) sendPush_([driverReminderPush(b, row.id, av.pushToken)]);
+    saveBook_(row.id, { remindedAt: new Date(), preferredTime: b.preferredTime });
+  });
+  props.setProperty('remindedIds', JSON.stringify(done.slice(-100)));
+}
+
+/* ---------------------------------------------------------- weekly payouts */
+
+/** Mondays ~9:30 (a trigger from setup): one Telegram per driver to pay, with a Paid ✓ button. */
+function weeklyPayouts() {
+  runSteps_([sendPayouts_], 60000);
+}
+
+function sendPayouts_() {
+  var now = Date.now();
+  var week = istDay(now);
+  var groups = payoutGroups(fsQuery_('offers', fieldFilter_('paid', 'EQUAL', false), 'ASCENDING', 500, 'paid'));
+  var props = PropertiesService.getScriptProperties();
+  var pending = JSON.parse(props.getProperty('payoutsPending') || '{}');
+  // A button nobody pressed for five weeks is dropped (its jobs are in the newer messages).
+  Object.keys(pending).forEach(function (k) { if (now - (pending[k].at || 0) > 35 * 86400000) delete pending[k]; });
+  if (!groups.length) telegramLine_('💸 No driver payouts due this week.');
+  groups.forEach(function (g) {
+    var d = fsGet_('drivers/' + g.driverId) || {};
+    g.upi = d.upi || '';
+    sendTelegram_(payoutTelegram(g, week));
+    pending[g.driverId + ':' + week] = { ids: g.offerIds, amount: g.amount, at: now };
+  });
+  props.setProperty('payoutsPending', JSON.stringify(pending));
+}
+
+function telegramApi_(method, payload) {
+  var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + prop_('TELEGRAM_BOT_TOKEN') + '/' + method, {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true,
+  });
+  try { return JSON.parse(res.getContentText() || '{}'); } catch (err) { return null; }
+}
+
+/** Marks these offers paid (only his, only those not paid yet) → how many. */
+function markPaid_(driverId, ids) {
+  var now = new Date();
+  var writes = [];
+  (ids || []).forEach(function (id) {
+    var o = fsGet_('offers/' + id);
+    if (!o || o.paid === true || !o.takenBy || o.takenBy.id !== driverId) return;
+    writes.push({
+      update: { name: docName_('offers/' + id), fields: toFields({ paid: true, paidAt: now, updatedAt: now }) },
+      updateMask: { fieldPaths: ['paid', 'paidAt', 'updatedAt'] },
+      currentDocument: { exists: true },
+    });
+  });
+  if (writes.length) fsCommit_(writes);
+  return writes.length;
+}
+
+/**
+ * While a payout waits for its Paid ✓ press: read the bot's updates
+ * (getUpdates, from the last update_id seen), and for a press in the office's
+ * own chat (TELEGRAM_CHAT_ID; any other chat is ignored) mark those jobs paid,
+ * answer the button and change the message to "Paid ✓". Chats that wrote to
+ * the bot meanwhile are remembered for setup().
+ */
+function telegramCallbacks_() {
+  var props = PropertiesService.getScriptProperties();
+  var pending = JSON.parse(props.getProperty('payoutsPending') || '{}');
+  if (!Object.keys(pending).length || !prop_('TELEGRAM_BOT_TOKEN')) return;
+  var last = Number(props.getProperty('telegramUpdateId') || 0);
+  var got = telegramApi_('getUpdates', { offset: last ? last + 1 : 0, timeout: 0, allowed_updates: ['message', 'my_chat_member', 'callback_query'] });
+  if (!got || !got.ok) return;
+  var office = prop_('TELEGRAM_CHAT_ID').split(',').map(function (x) { return x.trim(); }).filter(String);
+  var seen = JSON.parse(props.getProperty('telegramSeenChats') || '[]');
+  (got.result || []).forEach(function (u) {
+    last = Math.max(last, Number(u.update_id) || 0);
+    var chat = (u.message && u.message.chat) || (u.my_chat_member && u.my_chat_member.chat);
+    if (chat && seen.indexOf(String(chat.id)) < 0) seen.push(String(chat.id));
+    var cq = u.callback_query;
+    if (!cq || !cq.message || !cq.message.chat) return;
+    if (office.indexOf(String(cq.message.chat.id)) < 0) return; // not the office's chat: never counts
+    var p = parsePaidCallback(cq.data);
+    if (!p) return;
+    var key = p.driverId + ':' + p.week;
+    var entry = pending[key];
+    if (!entry) {
+      telegramApi_('answerCallbackQuery', { callback_query_id: cq.id, text: 'Already marked paid.' });
+      return;
+    }
+    var n = markPaid_(p.driverId, entry.ids);
+    delete pending[key];
+    props.setProperty('payoutsPending', JSON.stringify(pending));
+    telegramApi_('answerCallbackQuery', { callback_query_id: cq.id, text: 'Marked paid ✓' });
+    telegramApi_('editMessageText', {
+      chat_id: cq.message.chat.id,
+      message_id: cq.message.message_id,
+      text: String(cq.message.text || '') + '\n\nPaid ✓ ' + formatIst(new Date()) + (n < entry.ids.length ? ' (' + (entry.ids.length - n) + ' were already paid)' : ''),
+    });
+  });
+  props.setProperty('telegramUpdateId', String(last));
+  props.setProperty('telegramSeenChats', JSON.stringify(seen.slice(-20)));
+}
+
+/* ------------------------------------------------------------ 9 pm report */
+
+/** Every day ~21:00 (a trigger from setup): the day in numbers on Telegram. */
+function dailyReport() {
+  runSteps_([sendDailyReport_], 60000);
+}
+
+function sendDailyReport_() {
+  var now = Date.now();
+  var midnight = new Date(Date.parse(istDay(now) + 'T00:00:00+05:30'));
+  var names = ['created', 'changed', 'offersToday', 'open', 'unpaid', 'online', 'drivers'];
+  var res = fsQueryAll_([
+    { collection: 'bookings', where: fieldFilter_('createdAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'createdAt', limit: 500 },
+    { collection: 'bookings', where: fieldFilter_('updatedAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'updatedAt', limit: 500 },
+    { collection: 'offers', where: fieldFilter_('updatedAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'updatedAt', limit: 500 },
+    { collection: 'offers', where: fieldFilter_('status', 'EQUAL', 'open'), field: 'status', limit: 100 },
+    { collection: 'offers', where: fieldFilter_('paid', 'EQUAL', false), field: 'paid', limit: 500 },
+    { collection: 'availability', where: fieldFilter_('online', 'EQUAL', true), field: 'online', limit: 200 },
+    { collection: 'drivers', where: fieldFilter_('status', 'EQUAL', 'active'), field: 'status', limit: 500 },
+  ]);
+  var q = {};
+  res.forEach(function (r, i) {
+    if (r.error) throw r.error;
+    q[names[i]] = r.rows;
+  });
+  sendTelegram_({ text: dailyReportText(dailySummary(q, now)) });
+  // Once a day the ranking's copy of ratings and strikes is made again from the drivers themselves.
+  var quality = {};
+  q.drivers.forEach(function (r) {
+    var d = r.data;
+    if (d.ratingCount || d.strikes) quality[r.id] = { ratingAvg: Number(d.ratingAvg) || 0, ratingCount: Number(d.ratingCount) || 0, strikes: Number(d.strikes) || 0 };
+  });
+  PropertiesService.getScriptProperties().setProperty('driverQuality', JSON.stringify(quality));
+}
+
+/** Monday's payouts and the 9 pm report: exactly one trigger each (called by setup and by tick, so nobody has to re-run setup). */
+function ensureTimeTriggers_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('timeTriggers') === 'v1') return;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    var fn = t.getHandlerFunction();
+    if (fn === 'weeklyPayouts' || fn === 'dailyReport') ScriptApp.deleteTrigger(t);
+  });
+  // The script's time zone is Asia/Kolkata (appsscript.json), so these are India times.
+  ScriptApp.newTrigger('weeklyPayouts').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(9).nearMinute(30).create();
+  ScriptApp.newTrigger('dailyReport').timeBased().everyDays(1).atHour(21).nearMinute(0).create();
+  props.setProperty('timeTriggers', 'v1');
 }
 
 /* ============================================================ train lookup
@@ -1680,7 +2736,7 @@ function ping_() {
   var cache = CacheService.getScriptCache();
   if (!cache.get('ping')) {
     cache.put('ping', '1', 3);
-    runSteps_([processBookings_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_, autoOffers_, dispatchOffers_], 25000);
+    runSteps_(robotSteps_(), 25000);
   }
   return ContentService.createTextOutput('ok');
 }
@@ -1727,7 +2783,11 @@ function processBookings_() {
     var customer = fsGet_('customers/' + b.phone);
     var previous = customer ? customer.bookingsCount || 0 : 0;
 
-    var ctx = { booking: b, id: row.id, ref: ref, previousBookings: previous, siteUrl: siteUrl };
+    var ctx = {
+      booking: b, id: row.id, ref: ref, previousBookings: previous, siteUrl: siteUrl,
+      // The next step (watchChanges_) confirms it by itself; the alert says so.
+      autoConfirm: instantConfirmable(Object.assign({}, b, { ref: ref }), prop_('INSTANT_BOOKINGS')),
+    };
     var alerts;
     if (flood && alerted >= FLOOD_ALERTS) {
       alerts = { telegram: 'held-flood', email: 'held-flood' };
@@ -1817,22 +2877,43 @@ function processDrivers_() {
  * (the Sheet copy, customer updates) keeps its own bookmark, so one failing
  * never makes another skip or repeat work.
  */
-function changedSince_(collection, bookmark, handle) {
+function changedSince_(collection, bookmark, handle, field) {
+  var spec = sinceSpec_(collection, bookmark, field);
+  return sinceRun_(spec, fsQuery_(spec.collection, spec.where, 'ASCENDING', spec.limit, spec.field), handle);
+}
+
+/**
+ * The query behind changedSince_, without running it (watchChanges_ runs
+ * several at once). `field`: the time that moves, default updatedAt (a tap's
+ * own time for tripTaps, which has no updatedAt).
+ */
+function sinceSpec_(collection, bookmark, field) {
   var props = PropertiesService.getScriptProperties();
+  field = field || 'updatedAt';
   var since = Number(props.getProperty(bookmark) || Date.now() - 15 * 60 * 1000);
-  // Documents already handled at exactly the bookmark millisecond (Firestore keeps
-  // microseconds, so "≥ bookmark" returns them again until something newer comes).
-  var seen = (props.getProperty(bookmark + 'Ids') || '').split(',');
-  var ms = function (r) { return r.data.updatedAt.getTime(); };
-  var rows = fsQuery_(collection, fieldFilter_('updatedAt', 'GREATER_THAN_OR_EQUAL', new Date(since)), 'ASCENDING', 200, 'updatedAt')
-    .filter(function (r) { return !(ms(r) === since && seen.indexOf(r.id) >= 0); });
+  return {
+    collection: collection, bookmark: bookmark, field: field, since: since, dir: 'ASCENDING', limit: 200,
+    // Documents already handled at exactly the bookmark millisecond (Firestore keeps
+    // microseconds, so "≥ bookmark" returns them again until something newer comes).
+    seen: (props.getProperty(bookmark + 'Ids') || '').split(','),
+    where: fieldFilter_(field, 'GREATER_THAN_OR_EQUAL', new Date(since)),
+  };
+}
+
+/** Hands the new rows to `handle`, then moves the bookmark (not if `handle` throws: the next run tries again). */
+function sinceRun_(spec, rows, handle) {
+  var props = PropertiesService.getScriptProperties();
+  var since = spec.since;
+  var seen = spec.seen;
+  var ms = function (r) { return fieldAt_(r.data, spec.field).getTime(); };
+  rows = rows.filter(function (r) { return !(ms(r) === since && seen.indexOf(r.id) >= 0); });
   if (!rows.length) return 0;
   handle(rows);
   var last = ms(rows[rows.length - 1]);
   var atLast = rows.filter(function (r) { return ms(r) === last; }).map(function (r) { return r.id; });
   if (last === since) atLast = atLast.concat(seen.filter(String));
-  props.setProperty(bookmark, String(last));
-  props.setProperty(bookmark + 'Ids', atLast.join(','));
+  props.setProperty(spec.bookmark, String(last));
+  props.setProperty(spec.bookmark + 'Ids', atLast.join(','));
   return rows.length;
 }
 
@@ -1849,6 +2930,25 @@ function syncBookingsSheet_() {
 
 function syncDriversSheet_() {
   return syncSheet_('drivers', 'sheetDriversMs', driversTable_, driverRecord);
+}
+
+/**
+ * One notification on every phone a customer is logged in on: build(language,
+ * token) makes each message (null = none for that phone). Phones that
+ * uninstalled the app or logged out offline are forgotten. → how many were sent.
+ */
+function pushToCustomer_(uid, build) {
+  var devices = fsList_('users/' + uid + '/devices').filter(function (d) { return d.data.token; });
+  var pairs = devices
+    .map(function (d) { return { d: d, m: build(d.data.language, d.data.token) }; })
+    .filter(function (p) { return p.m; });
+  var tickets = sendPush_(pairs.map(function (p) { return p.m; }));
+  var gone = pairs.filter(function (p, i) {
+    var t = tickets[i];
+    return t && t.status === 'error' && t.details && t.details.error === 'DeviceNotRegistered';
+  });
+  if (gone.length) fsCommit_(gone.map(function (p) { return { delete: docName_('users/' + uid + '/devices/' + p.d.id) }; }));
+  return pairs.length;
 }
 
 /**
@@ -1869,17 +2969,9 @@ function notifyCustomer_(id, b) {
 
   // App users: a notification on every phone they are logged in on.
   if (b.customerUid && b.pushedKey !== key && customerPush({ booking: b, id: id, language: 'en', token: '' })) {
-    var devices = fsList_('users/' + b.customerUid + '/devices').filter(function (d) { return d.data.token; });
-    var messages = devices.map(function (d) {
-      return customerPush({ booking: b, id: id, language: d.data.language, token: d.data.token });
+    pushToCustomer_(b.customerUid, function (lang, token) {
+      return customerPush({ booking: b, id: id, language: lang, token: token });
     });
-    var tickets = sendPush_(messages);
-    // Phones that uninstalled the app or logged out offline: forget them.
-    var gone = devices.filter(function (d, i) {
-      var t = tickets[i];
-      return t && t.status === 'error' && t.details && t.details.error === 'DeviceNotRegistered';
-    });
-    if (gone.length) fsCommit_(gone.map(function (d) { return { delete: docName_('users/' + b.customerUid + '/devices/' + d.id) }; }));
     fields.pushedKey = key;
   }
 
@@ -2093,7 +3185,7 @@ function summarySheet_() {
  *   1. checks it can reach Firestore with this account,
  *   2. finds your Telegram chat (send your bot "hi" first),
  *   3. writes the admin list that /admin checks,
- *   4. starts the every-minute trigger,
+ *   4. starts the every-minute trigger (and Monday's payouts, the 9 pm report),
  *   5. builds the Sheet (all existing bookings + drivers, colours, Summary tab),
  *   6. sends a test message.
  */
@@ -2113,6 +3205,10 @@ function setup() {
   (upd.result || []).forEach(function (u) {
     var chat = (u.message && u.message.chat) || (u.my_chat_member && u.my_chat_member.chat);
     if (chat) chats[String(chat.id)] = chat.title || [chat.first_name, chat.last_name].filter(String).join(' ');
+  });
+  // Chats whose "hi" the robot already read while waiting for a Paid ✓ press (telegramCallbacks_).
+  JSON.parse(props.getProperty('telegramSeenChats') || '[]').forEach(function (id) {
+    if (chats[String(id)] === undefined) chats[String(id)] = '';
   });
   // Keep only chats this bot can actually reach (an old bot's chat gives "chat not found").
   var known = prop_('TELEGRAM_CHAT_ID').split(',').map(function (s) { return s.trim(); }).filter(function (id) {
@@ -2140,6 +3236,9 @@ function setup() {
   // 4. Trigger (exactly one)
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'tick') ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('tick').timeBased().everyMinutes(1).create();
+  // Monday's driver payouts and the 9 pm report (exactly one each).
+  props.deleteProperty ? props.deleteProperty('timeTriggers') : props.setProperty('timeTriggers', '');
+  ensureTimeTriggers_();
   if (!props.getProperty('lastBookingMs')) props.setProperty('lastBookingMs', String(Date.now() - 15 * 60 * 1000));
   if (!props.getProperty('lastDriverMs')) props.setProperty('lastDriverMs', String(Date.now() - 15 * 60 * 1000));
   console.log('✓ Checking for bookings every minute');

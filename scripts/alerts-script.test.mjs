@@ -29,15 +29,19 @@ function makeStore() {
     if ('booleanValue' in v) return v.booleanValue;
     return null;
   };
+  /** A field by its dotted path ("payment.status"), as Firestore reads map fields. */
+  const at = (fields, path) =>
+    path.split('.').reduce((f, k, i) => (i === 0 ? f?.[k] : f?.mapValue?.fields?.[k]), fields);
   const matches = (fields, where) => {
     if (!where) return true;
     if (where.compositeFilter) return where.compositeFilter.filters.every((f) => matches(fields, f));
     const { field, op, value } = where.fieldFilter;
-    const a = val(fields[field.fieldPath]);
+    const a = val(at(fields, field.fieldPath));
     const b = val(value);
     if (a === null) return false;
     return op === 'EQUAL' ? a === b : op === 'GREATER_THAN_OR_EQUAL' ? a >= b : op === 'LESS_THAN_OR_EQUAL' ? a <= b : false;
   };
+  const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
   return {
     docs,
     queries: [],
@@ -52,8 +56,8 @@ function makeStore() {
       // Like Firestore: documents without the order-by field are left out.
       return [...docs.entries()]
         .filter(([p]) => p.startsWith(`${col}/`) && p.split('/').length === 2)
-        .filter(([, f]) => f[by] !== undefined && matches(f, q.where))
-        .sort(([, a], [, b]) => dir * (val(a[by]) - val(b[by])))
+        .filter(([, f]) => at(f, by) !== undefined && matches(f, q.where))
+        .sort(([, a], [, b]) => dir * cmp(val(at(a, by)), val(at(b, by))))
         .slice(0, q.limit)
         .map(([p, f]) => ({ document: { name: PREFIX + p, fields: f } }));
     },
@@ -144,6 +148,10 @@ function load() {
   const warnings = [];
   const deadTokens = new Set(); // tokens Expo answers with DeviceNotRegistered
   const rail = { calls: [], answer: () => ({ code: 404, body: { success: false } }) }; // RailRadar stand-in
+  // Telegram's other methods: getUpdates serves `updates` (from `offset`), the rest are recorded.
+  const tg = { updates: [], calls: [] };
+  // Razorpay stand-in: links it made, by id; `status` is what a GET answers.
+  const rzp = { calls: [], links: new Map(), createCode: 200, n: 0 };
   // Message Central stand-in: logs in, sends code 123456, accepts only that code.
   const mc = {
     calls: [],
@@ -175,12 +183,18 @@ function load() {
     },
     ScriptApp: (() => {
       const made = [];
+      const at = (t) => ({
+        create: () => made.push(t),
+        nearMinute: (m) => ({ create: () => made.push({ ...t, minute: m }) }),
+      });
       const timeBased = (fn) => ({
         everyMinutes: () => ({ create: () => made.push({ fn, every: 'minute' }) }),
-        everyDays: () => ({ atHour: (h) => ({ create: () => made.push({ fn, every: 'day', hour: h }) }) }),
+        everyDays: () => ({ atHour: (h) => at({ fn, every: 'day', hour: h }) }),
+        onWeekDay: (day) => ({ atHour: (h) => at({ fn, every: 'week', day, hour: h }) }),
       });
       return {
         made,
+        WeekDay: { MONDAY: 'MONDAY' },
         getOAuthToken: () => 'token',
         getProjectTriggers: () => [],
         deleteTrigger() {},
@@ -221,6 +235,7 @@ function load() {
     UrlFetchApp: {
       fetchAll(requests) {
         return requests.map((r) => {
+          if (!r.url.startsWith('https://api.railradar.in/')) return ctx.UrlFetchApp.fetch(r.url, r);
           rail.calls.push({ url: r.url, auth: r.headers?.Authorization });
           const { code, body } = rail.answer(r.url);
           return { getResponseCode: () => code, getContentText: () => (typeof body === 'string' ? body : JSON.stringify(body)) };
@@ -230,7 +245,22 @@ function load() {
         const body = opts.payload ? JSON.parse(opts.payload) : null;
         if (url.startsWith('https://api.telegram.org/')) {
           if (url.endsWith('/sendMessage')) telegram.push(body);
+          else tg.calls.push({ method: url.split('/').pop(), body });
+          if (url.endsWith('/getUpdates') && body) {
+            return response(200, { ok: true, result: tg.updates.filter((u) => u.update_id >= (body.offset || 0)) });
+          }
           return response(200, { ok: true, result: [] });
+        }
+        if (url.startsWith('https://api.razorpay.com/v1/payment_links')) {
+          rzp.calls.push({ url, method: opts.method, auth: opts.headers?.Authorization, body });
+          if (opts.method === 'post') {
+            if (rzp.createCode !== 200) return response(rzp.createCode, { error: { code: 'BAD_REQUEST_ERROR', description: 'The contact number is invalid' } });
+            const id = `plink_${++rzp.n}`;
+            rzp.links.set(id, { id, short_url: `https://rzp.io/i/${id}`, status: 'created', amount: body.amount });
+            return response(200, rzp.links.get(id));
+          }
+          const link = rzp.links.get(url.split('/').pop());
+          return link ? response(200, link) : response(404, { error: { description: 'not found' } });
         }
         if (url === 'https://exp.host/--/api/v2/push/send') {
           pushes.push(...body);
@@ -240,7 +270,12 @@ function load() {
             ),
           });
         }
-        if (url.endsWith('/app-config.json')) return response(200, { prices: { oneHour: 300, threeHours: 600 } });
+        if (url.endsWith('/app-config.json')) {
+          return response(200, {
+            prices: { oneHour: 300, threeHours: 600, fullDay: { from: 1000, to: 1200 }, nightFrom: 500, localExtraHour: 150 },
+            google: { profile: 'https://maps.app.goo.gl/x', writeReview: 'https://search.google.com/local/writereview?placeid=P1' },
+          });
+        }
         if (url.startsWith('https://cpaas.messagecentral.com/')) {
           mc.calls.push({ url, method: opts.method, auth: opts.headers?.authToken });
           const { code, body } = mc.answer(url, opts.method);
@@ -270,7 +305,7 @@ function load() {
     const [head = [], ...rows] = g;
     return rows.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
   };
-  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, rail, mc };
+  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, rail, mc, tg, rzp };
 }
 
 const ts = (msAgo) => ({ timestampValue: new Date(Date.now() - msAgo).toISOString() });
@@ -549,7 +584,8 @@ describe('customer updates', () => {
 
   test('guests, new bookings and customers without the app get no push', () => {
     seedBooking(env.store, 'guest', { extra: { ref: s('DB-1001') } });
-    seedBooking(env.store, 'fresh', { extra: { ref: s('DB-1002'), customerUid: s('u1') } });
+    // (A full day: a logged-in 1 hour / 3 hours would be confirmed by the robot at once.)
+    seedBooking(env.store, 'fresh', { extra: { ref: s('DB-1002'), customerUid: s('u1'), package: s('local-full-day') } });
     seedBooking(env.store, 'webOnly', { extra: { ref: s('DB-1003'), customerUid: s('u2') } });
     device('u1', 'p1', 'ExponentPushToken[somePhone0001]', 'en');
     adminSets('guest', { status: s('confirmed') });
@@ -1218,7 +1254,7 @@ describe('job dispatch', () => {
     // At the top pay and still nobody: Telegram, once.
     const before = env.telegram.length;
     age('b1', 5 * 60_000);
-    created(20 * 60_000);
+    created(12 * 60_000); // at the top for 8 minutes: not yet widened to nearby cities
     env.ctx.dispatchOffers_();
     assert.equal(env.telegram.length, before + 1);
     assert.ok(env.telegram.at(-1).text.includes('₹480'));
@@ -1286,5 +1322,626 @@ describe('job dispatch', () => {
     env.store.docs.get('offers/b1').status = s('taken');
     env.ctx.dispatchOffers_();
     assert.equal(env.pushes.length, 0);
+  });
+});
+
+/* ------------------------------------------- automation (spec items 1–12) */
+
+describe('automation', () => {
+  let env;
+  const MIN = 60_000;
+  const put = (path, obj) => env.store.docs.set(path, env.ctx.toFields(obj));
+  const get = (path) => (env.store.docs.has(path) ? env.ctx.fromFields(env.store.docs.get(path)) : null);
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  const ago = (ms) => new Date(Date.now() - ms);
+  const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+  const events = (id) =>
+    [...env.store.docs.entries()].filter(([p]) => p.startsWith(`bookings/${id}/events/`)).map(([, f]) => env.ctx.fromFields(f));
+  const device = (uid, id, token, language = 'en') => put(`users/${uid}/devices/${id}`, { token, platform: 'android', language });
+  const booking = (id, fields) =>
+    put(`bookings/${id}`, {
+      name: 'Ramesh Sahu', phone: '9111473929', city: 'Raipur', package: '3-hours-600', pickup: '12, Shankar Nagar, Raipur',
+      preferredTime: '', notes: '', status: 'new', source: 'app', createdAt: ago(MIN), ref: 'DB-1042', ...fields,
+    });
+  const takenOffer = (id, extra = {}) =>
+    put(`offers/${id}`, {
+      bookingId: id, ref: 'DB-1042', city: 'Raipur', package: '3-hours-600', when: '', area: 'Shankar Nagar, Raipur', to: '',
+      price: 600, cutPercent: 25, driverPay: 450, status: 'taken', takenBy: RAJU, takenAt: ago(30 * MIN), done: false,
+      paid: false, paidAt: null, createdAt: ago(40 * MIN), updatedAt: ago(30 * MIN), by: 'robot', cities: ['Raipur'], ...extra,
+    });
+
+  beforeEach(() => {
+    env = load();
+    put('drivers/d1', { name: 'Raju Sahu', phone: RAJU.phone, city: 'Raipur', status: 'active', strikes: 1, createdAt: ago(86_400_000) });
+  });
+
+  describe('pure parts', () => {
+    test('instant booking: logged-in 1 hour / 3 hours or an accepted price; never an emergency; off switch', () => {
+      const ok = env.ctx.instantConfirmable;
+      const b = { status: 'new', ref: 'DB-1', package: '3-hours-600', customerUid: 'u1' };
+      assert.equal(ok(b, ''), true);
+      assert.equal(ok({ ...b, package: '1-hour-300' }, ''), true);
+      assert.equal(ok({ ...b, customerUid: undefined }, ''), false, 'a guest is called');
+      assert.equal(ok({ ...b, package: 'local-full-day' }, ''), false);
+      assert.equal(ok({ ...b, package: 'medical-emergency' }, ''), false);
+      assert.equal(ok({ ...b, package: 'medical-emergency', acceptedPrice: { amount: 900 } }, ''), false, 'an emergency is always a call');
+      assert.equal(ok({ ...b, package: 'outstation', customerUid: 'u1', acceptedPrice: { amount: 3300 } }, ''), true);
+      assert.equal(ok({ ...b, ref: undefined }, ''), false, 'numbered first');
+      assert.equal(ok({ ...b, status: 'confirmed' }, ''), false);
+      assert.equal(ok(b, 'off'), false);
+      assert.equal(ok(b, ' OFF '), false);
+    });
+
+    test('the automatic price: quote, then the accepted price, then the site price', () => {
+      const { autoPriceOf } = env.ctx;
+      const prices = { oneHour: 300, threeHours: 600 };
+      assert.equal(autoPriceOf({ package: 'outstation', quote: { amount: 3100 }, acceptedPrice: { amount: 3300 } }, prices), 3100);
+      assert.equal(autoPriceOf({ package: 'outstation', acceptedPrice: { amount: 3300 } }, prices), 3300);
+      assert.equal(autoPriceOf({ package: '3-hours-600', acceptedPrice: { amount: 50 } }, prices), 600, 'a nonsense price is ignored');
+      assert.equal(autoPriceOf({ package: 'outstation' }, prices), 0);
+    });
+
+    test('hours used: whole hours, an hour counts after a 15-minute grace', () => {
+      const h = (m) => env.ctx.usedHours(0, m * MIN, 15);
+      assert.equal(h(0), 0);
+      assert.equal(h(15), 0);
+      assert.equal(h(16), 1);
+      assert.equal(h(60), 1);
+      assert.equal(h(3 * 60 + 15), 3);
+      assert.equal(h(3 * 60 + 16), 4);
+      assert.equal(h(3 * 60 + 14.99), 3);
+    });
+
+    test('the local bill: package price + each hour over the package at the extra-hour price', () => {
+      const prices = { oneHour: 300, threeHours: 600, fullDay: { from: 1000, to: 1200 }, nightFrom: 500, localExtraHour: 150 };
+      const t0 = new Date('2026-11-22T04:00:00Z');
+      const taps = (min) => ({ leftAt: new Date(t0 - 20 * MIN), arrivedAt: t0, doneAt: new Date(+t0 + min * MIN) });
+      const now = new Date();
+      const bill = (pkg, min, extra = {}) => plain(env.ctx.localBillOf({ package: pkg, ...extra }, taps(min), prices, now));
+      assert.deepEqual(bill('3-hours-600', 3 * 60 + 15), { amount: 600, baseHours: 3, usedHours: 3, extraHours: 0, extraHourRate: 150, at: now.toISOString() });
+      assert.deepEqual(bill('3-hours-600', 3 * 60 + 16), { amount: 750, baseHours: 3, usedHours: 4, extraHours: 1, extraHourRate: 150, at: now.toISOString() });
+      assert.equal(bill('1-hour-300', 40).amount, 300, 'shorter than the package: the package price');
+      assert.equal(bill('1-hour-300', 2 * 60 + 30).amount, 300 + 2 * 150);
+      assert.equal(bill('local-full-day', 9 * 60).amount, 1000 + 150, 'full day: the "from" price');
+      assert.equal(bill('local-full-day', 8 * 60, { quote: { amount: 1150 } }).amount, 1150, 'the agreed price wins');
+      assert.equal(bill('night-driver', 10 * 60).baseHours, 10);
+      assert.equal(env.ctx.localBillOf({ package: 'outstation' }, taps(60), prices, now), null);
+      assert.equal(env.ctx.localBillOf({ package: '1-hour-300' }, { arrivedAt: t0 }, prices, now), null, 'not done yet');
+      // No extra-hour price on the website yet: the extra hours are shown, not charged.
+      assert.equal(env.ctx.localBillOf({ package: '1-hour-300' }, taps(150), { oneHour: 300 }, now).amount, 300);
+    });
+
+    test('trip taps → the clock; times and India-time stamps', () => {
+      const [a, b, c] = [new Date('2026-11-22T01:00:00Z'), new Date('2026-11-22T09:00:00Z'), new Date('2026-11-22T20:00:00Z')];
+      const taps = { leftAt: a, arrivedAt: a, doneAt: b, homeAt: c };
+      assert.deepEqual(plain(env.ctx.tapsClockOf('one-way-drop', taps)), plain({ startAt: a, dropAt: b, homeAt: c }));
+      assert.deepEqual(plain(env.ctx.tapsClockOf('outstation', taps)), plain({ startAt: a, homeAt: b }));
+      assert.deepEqual(plain(env.ctx.tapsClockOf('3-hours-600', taps)), {});
+      assert.equal(env.ctx.clockText('2026-11-22T15:30'), '3:30 pm');
+      assert.equal(env.ctx.clockText('2026-11-22T09:05'), '9:05 am');
+      assert.equal(env.ctx.clockText('2026-11-22T00:10'), '12:10 am');
+      assert.equal(env.ctx.clockText(''), '');
+      assert.equal(env.ctx.istStamp(Date.parse('2026-11-22T10:00:00Z')), '2026-11-22T15:30');
+    });
+
+    test('ratings, payouts, the Paid ✓ button', () => {
+      assert.deepEqual(plain(env.ctx.ratingSummary([{ stars: 5 }, { stars: 4 }, { stars: 4 }, { stars: 9 }, { stars: 2.5 }])), { ratingAvg: 4.3, ratingCount: 3 });
+      assert.deepEqual(plain(env.ctx.ratingSummary([])), { ratingAvg: 0, ratingCount: 0 });
+      const rows = [
+        { id: 'a', data: { status: 'taken', done: true, paid: false, driverPay: 450, takenBy: RAJU, ref: 'DB-1' } },
+        { id: 'b', data: { status: 'taken', done: true, paid: false, driverPay: 900, takenBy: RAJU, ref: 'DB-2' } },
+        { id: 'c', data: { status: 'taken', done: false, paid: false, driverPay: 300, takenBy: RAJU } }, // not done yet
+        { id: 'd', data: { status: 'open', done: false, paid: false, driverPay: 300, takenBy: null } },
+        { id: 'e', data: { status: 'taken', done: true, paid: false, driverPay: 420, takenBy: { id: 'd2', name: 'Ajay Verma', phone: '9425212345' } } },
+      ];
+      const groups = plain(env.ctx.payoutGroups(rows));
+      assert.deepEqual(groups.map((g) => [g.name, g.amount, g.jobs, g.offerIds]), [['Ajay Verma', 420, 1, ['e']], ['Raju Sahu', 1350, 2, ['a', 'b']]]);
+      const msg = env.ctx.payoutTelegram({ ...groups[1], upi: 'raju@okaxis' }, '2026-11-23');
+      assert.equal(msg.text.split('\n')[0], 'Pay Raju Sahu ₹1,350 · UPI raju@okaxis · 2 jobs');
+      assert.deepEqual(plain(msg.reply_markup), { inline_keyboard: [[{ text: 'Paid ✓', callback_data: 'paid:d1:2026-11-23' }]] });
+      assert.ok(new TextEncoder().encode('paid:' + 'x'.repeat(20) + ':2026-11-23').length <= 64, 'callback data fits Telegram’s 64 bytes');
+      assert.match(env.ctx.payoutTelegram({ ...groups[0], upi: '' }, '2026-11-23').text, /no UPI ID yet/);
+      assert.deepEqual(plain(env.ctx.parsePaidCallback('paid:d1:2026-11-23')), { driverId: 'd1', week: '2026-11-23' });
+      for (const bad of ['paid:d1', 'paid:../x:2026-11-23', 'pay:d1:2026-11-23', null]) assert.equal(env.ctx.parsePaidCallback(bad), null);
+    });
+
+    test('ranking: poorly rated (3+ ratings) or 3-strike drivers go after the others', () => {
+      const { backSeat, rankDrivers } = env.ctx;
+      assert.equal(backSeat({ ratingAvg: 3.9, ratingCount: 3 }), true);
+      assert.equal(backSeat({ ratingAvg: 3.9, ratingCount: 2 }), false, 'too few ratings to judge');
+      assert.equal(backSeat({ ratingAvg: 4, ratingCount: 30 }), false);
+      assert.equal(backSeat({ strikes: 3 }), true);
+      assert.equal(backSeat(undefined), false);
+      const now = Date.now();
+      const row = (id, lat) => ({ id, data: { online: true, pushToken: `T${id}`, at: new Date(now - MIN), lat, lng: 81.63 } });
+      const rows = [row('near', 21.252), row('mid', 21.26), row('far', 21.35)];
+      const ids = (q) => rankDrivers(rows, { lat: 21.2514, lng: 81.6296 }, now, q).map((d) => d.id);
+      assert.deepEqual(ids(), ['near', 'mid', 'far']);
+      assert.deepEqual(ids({ near: { ratingAvg: 3.2, ratingCount: 6 } }), ['mid', 'far', 'near']);
+      assert.deepEqual(ids({ near: { strikes: 3 }, mid: { strikes: 4 } }), ['far', 'near', 'mid']);
+    });
+
+    test('nearby cities: 10 minutes after the top pay, once; Bilaspur has none', () => {
+      const { widenDue, citiesWith, offerCities } = env.ctx;
+      const now = Date.now();
+      const cuts = [30, 25, 20];
+      const o = (minAgo, extra = {}) => ({ by: 'robot', status: 'open', createdAt: new Date(now - minAgo * MIN), ...extra });
+      // The top (20%) is reached 4 minutes in (2-minute steps); 10 minutes later = 14 minutes.
+      assert.equal(widenDue(o(13.9), null, cuts, 2 * MIN, now), false);
+      assert.equal(widenDue(o(14), null, cuts, 2 * MIN, now), true);
+      assert.equal(widenDue(o(30), { widenedAt: new Date() }, cuts, 2 * MIN, now), false, 'once');
+      assert.equal(widenDue(o(30, { by: 'admin1' }), null, cuts, 2 * MIN, now), false, 'an offer posted by hand stays as the admin made it');
+      assert.deepEqual([...citiesWith('Raipur')], ['Raipur', 'Bhilai', 'Durg']);
+      assert.deepEqual([...citiesWith('Durg')], ['Durg', 'Bhilai', 'Raipur']);
+      assert.deepEqual([...citiesWith('Bilaspur')], ['Bilaspur']);
+      assert.deepEqual([...offerCities({ city: 'Raipur' })], ['Raipur'], 'older offers have no cities');
+      assert.deepEqual([...offerCities({ city: 'Raipur', cities: ['Raipur', 'Bhilai'] })], ['Raipur', 'Bhilai']);
+    });
+
+    test('the Razorpay request: paise, the booking number, the customer’s phone, SMS on', () => {
+      const r = plain(env.ctx.razorpayLinkRequest({ ref: 'DB-1042', name: 'Ramesh\nSahu', phone: '9111473929', package: '3-hours-600' }, 750));
+      assert.equal(r.amount, 75000);
+      assert.equal(r.currency, 'INR');
+      assert.equal(r.reference_id, 'DB-1042');
+      assert.deepEqual(r.customer, { name: 'Ramesh Sahu', contact: '+919111473929' });
+      assert.deepEqual(r.notify, { sms: true, email: false });
+    });
+  });
+
+  describe('instant booking (1)', () => {
+    test('a logged-in 3-hour booking is confirmed by the robot, offered to drivers, and the customer hears', () => {
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      seedBooking(env.store, 'b1', { extra: { customerUid: s('u1'), source: s('app') } });
+      env.ctx.tick();
+      const b = get('bookings/b1');
+      assert.equal(b.status, 'confirmed');
+      assert.equal(b.updatedBy, 'robot');
+      const ev = events('b1').find((e) => e.to === 'confirmed');
+      assert.deepEqual({ type: ev.type, from: ev.from, to: ev.to, note: ev.note, by: ev.by }, { type: 'status', from: 'new', to: 'confirmed', note: 'Confirmed automatically', by: 'robot' });
+      assert.match(env.telegram[0].text, /Auto-confirmed/);
+      assert.equal(get('offers/b1').status, 'open', 'offered to drivers in the same minute');
+      assert.deepEqual([...get('offers/b1').cities], ['Raipur']);
+      assert.equal(env.pushes.filter((p) => p.title === 'Booking confirmed').length, 1);
+    });
+
+    test('not for guests, emergencies, or when INSTANT_BOOKINGS is off', () => {
+      seedBooking(env.store, 'guest', { extra: { phone: s('9111473921') } });
+      seedBooking(env.store, 'sos', { extra: { customerUid: s('u1'), package: s('medical-emergency'), phone: s('9111473922') } });
+      env.ctx.tick();
+      assert.equal(get('bookings/guest').status, 'new');
+      assert.equal(get('bookings/sos').status, 'new');
+      assert.ok(env.telegram.every((m) => !/Auto-confirmed/.test(m.text)));
+
+      env.props.set('INSTANT_BOOKINGS', 'off');
+      seedBooking(env.store, 'off', { msAgo: 1000, extra: { customerUid: s('u2'), phone: s('9111473923') } });
+      env.ctx.tick();
+      assert.equal(get('bookings/off').status, 'new');
+      assert.ok(env.telegram.every((m) => !/Auto-confirmed/.test(m.text)));
+    });
+  });
+
+  describe('accepted price (2)', () => {
+    const trip = { to: 'Nagpur', destId: 'nagpur', kind: 'one-way', km: 284, days: 1, returnHours: 6, estFrom: 1440, estTo: 1600 };
+
+    test('a new trip whose price the customer accepted is confirmed and offered at that price', () => {
+      booking('t1', { package: 'one-way-drop', trip, customerUid: 'u1', updatedAt: ago(20 * MIN), acceptedPrice: { amount: 1600, at: new Date() } });
+      env.ctx.tick();
+      assert.equal(get('bookings/t1').status, 'confirmed');
+      assert.equal(get('offers/t1').price, 1600);
+      assert.equal(env.telegram.filter((m) => /DB-1042 auto-confirmed<\/b>: the customer accepted ₹1,600/.test(m.text)).length, 1);
+      env.ctx.tick();
+      assert.equal(events('t1').filter((e) => e.to === 'confirmed').length, 1, 'once');
+    });
+
+    test('accepted before the robot numbered it: confirmed as it is numbered, told once', () => {
+      seedBooking(env.store, 't0', {
+        msAgo: 5000,
+        extra: {
+          package: s('one-way-drop'), customerUid: s('u1'),
+          trip: env.ctx.toValue(trip), acceptedPrice: env.ctx.toValue({ amount: 1600, at: new Date() }),
+        },
+      });
+      env.ctx.tick();
+      assert.equal(get('bookings/t0').status, 'confirmed');
+      assert.equal(env.telegram.filter((m) => /auto-confirmed<\/b>: the customer accepted ₹1,600/.test(m.text)).length, 1);
+      assert.equal(env.telegram.filter((m) => /Offering it to drivers at that price/.test(m.text)).length, 0);
+      assert.equal(get('offers/t0').price, 1600);
+    });
+
+    test('already confirmed: offered at the accepted price; with INSTANT_BOOKINGS off a new one waits for the office', () => {
+      booking('t2', { package: 'one-way-drop', trip, customerUid: 'u1', status: 'confirmed', updatedAt: ago(20 * MIN), acceptedPrice: { amount: 1600, at: new Date() } });
+      env.ctx.tick();
+      assert.equal(get('offers/t2').price, 1600);
+      env.props.set('INSTANT_BOOKINGS', 'off');
+      booking('t3', { package: 'one-way-drop', trip, customerUid: 'u1', updatedAt: ago(20 * MIN), acceptedPrice: { amount: 1600, at: new Date() } });
+      env.ctx.tick();
+      assert.equal(get('bookings/t3').status, 'new');
+      assert.ok(env.telegram.some((m) => /accepted ₹1,600 in the app\. Confirm it in \/admin/.test(m.text)));
+    });
+  });
+
+  describe("can't make it (3)", () => {
+    test('a released offer opens again from the first step, never to him, and he gets a strike', () => {
+      booking('b1', { status: 'confirmed', assignedDriver: null, updatedAt: ago(MIN) });
+      takenOffer('b1', { status: 'released', cutPercent: 20, driverPay: 480, by: 'admin1' });
+      env.ctx.watchChanges_();
+      const o = get('offers/b1');
+      assert.deepEqual(
+        [o.status, o.takenBy, o.takenAt, o.cutPercent, o.driverPay, o.by, [...o.cities], o.done],
+        ['open', null, null, 30, 420, 'robot', ['Raipur'], false],
+      );
+      assert.ok(Date.now() - o.createdAt.getTime() < 5000, 'a fresh cycle');
+      assert.deepEqual([...get('offerAlerts/b1').skipIds], ['d1']);
+      assert.equal(get('drivers/d1').strikes, 2);
+      assert.match(env.telegram.at(-1).text, /Raju Sahu gave back DB-1042<\/b>.* strike 2\. Offered to drivers again/);
+
+      // He is online and nearest, but is not asked again; the others are.
+      const online = (id, lat) => put(`availability/${id}`, { online: true, city: 'Raipur', name: id, phone: '9000000000', lat, lng: 81.63, pushToken: `ExponentPushToken[${id}]`, at: ago(MIN) });
+      online('d1', 21.252);
+      online('d2', 21.26);
+      env.ctx.dispatchOffers_();
+      assert.deepEqual(env.pushes.map((p) => p.to), ['ExponentPushToken[d2]']);
+      env.ctx.watchChanges_();
+      assert.equal(get('drivers/d1').strikes, 2, 'one strike per release');
+    });
+
+    test('if the booking was assigned or cancelled meanwhile, the offer is closed instead', () => {
+      booking('b2', { status: 'cancelled', updatedAt: ago(MIN) });
+      takenOffer('b2', { status: 'released' });
+      env.ctx.watchChanges_();
+      assert.equal(get('offers/b2').status, 'withdrawn');
+    });
+  });
+
+  describe('reminders (4)', () => {
+    test('an hour before: one push to the customer and one to the driver, once', () => {
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      device('u1', 'p2', 'ExponentPushToken[customer0002]', 'hi');
+      put('availability/d1', { online: false, city: 'Raipur', name: 'Raju Sahu', phone: RAJU.phone, pushToken: 'ExponentPushToken[raju]', at: ago(MIN) });
+      const soon = env.ctx.istStamp(Date.now() + 40 * MIN);
+      booking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'u1', preferredTime: soon });
+      booking('later', { status: 'assigned', assignedDriver: RAJU, customerUid: 'u1', preferredTime: env.ctx.istStamp(Date.now() + 3 * 3600_000) });
+      booking('nodriver', { status: 'confirmed', customerUid: 'u1', preferredTime: soon });
+      env.ctx.tripReminders_();
+      env.ctx.tripReminders_();
+      env.props.delete('remindedIds'); // even if the robot's quick list is lost
+      env.ctx.tripReminders_();
+      const time = env.ctx.clockText(soon);
+      assert.deepEqual(env.pushes.map((p) => p.to), ['ExponentPushToken[customer0001]', 'ExponentPushToken[customer0002]', 'ExponentPushToken[raju]']);
+      assert.equal(env.pushes[0].body, `Your driver Raju Sahu arrives at ${time}.`);
+      assert.match(env.pushes[1].body, /Raju Sahu .* पर पहुँचेंगे/);
+      assert.equal(env.pushes[2].body, `Job at ${time} · Shankar Nagar, Raipur · DB-1042`);
+      assert.equal(env.pushes[2].channelId, 'jobs');
+      assert.ok(get('reminders/b1').remindedAt);
+    });
+  });
+
+  describe('trip taps (5)', () => {
+    const tapped = (id, fields) => put(`tripTaps/${id}`, { driverPhone: RAJU.phone, ...fields });
+
+    test('a local job: at Job done the bill (15-minute grace), completed by the robot, the offer done', () => {
+      booking('b1', { status: 'assigned', assignedDriver: RAJU });
+      takenOffer('b1');
+      const arrived = ago(3 * 3600_000 + 16 * MIN + 30_000);
+      tapped('b1', { leftAt: ago(4 * 3600_000), arrivedAt: arrived, doneAt: ago(30_000) });
+      env.ctx.watchChanges_();
+      const b = get('bookings/b1');
+      assert.equal(b.status, 'completed');
+      assert.equal(b.updatedBy, 'robot');
+      assert.deepEqual(
+        { ...b.localBill, at: undefined },
+        { amount: 750, baseHours: 3, usedHours: 4, extraHours: 1, extraHourRate: 150, at: undefined },
+      );
+      assert.equal(get('offers/b1').done, true);
+      assert.ok(events('b1').some((e) => e.from === 'assigned' && e.to === 'completed' && e.by === 'robot'));
+      assert.match(env.telegram.at(-1).text, /DB-1042 done<\/b> — Raju Sahu: .*4 h \(package 3 h \+ 1 extra\)\. Bill ₹750/);
+      const n = env.telegram.length;
+      env.ctx.watchChanges_();
+      env.store.docs.get('tripTaps/b1').doneAt = { timestampValue: new Date().toISOString() }; // even a tap seen again
+      env.ctx.watchChanges_();
+      assert.equal(env.telegram.length, n, 'billed once');
+    });
+
+    test('within the grace minutes: no extra hour; a quote is the package price', () => {
+      booking('b2', { status: 'assigned', assignedDriver: RAJU, quote: { amount: 700 } });
+      tapped('b2', { leftAt: ago(4 * 3600_000), arrivedAt: ago(3 * 3600_000 + 15 * MIN), doneAt: ago(0) });
+      env.ctx.watchChanges_();
+      const bill = get('bookings/b2').localBill;
+      assert.deepEqual([bill.amount, bill.usedHours, bill.extraHours], [700, 3, 0]);
+    });
+
+    test('a one-way drop: Start, Job done (car dropped), Reached home become the clock; Telegram once each', () => {
+      booking('t1', { status: 'assigned', assignedDriver: RAJU, package: 'one-way-drop', trip: { to: 'Nagpur', kind: 'one-way' } });
+      const left = ago(10 * MIN);
+      tapped('t1', { leftAt: left });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/t1').clock.startAt.getTime(), left.getTime());
+      assert.match(env.telegram.at(-1).text, /DB-1042: trip started<\/b>\nRaju Sahu left for Nagpur/);
+      const dropped = ago(5 * MIN);
+      tapped('t1', { leftAt: left, arrivedAt: ago(9 * MIN), doneAt: dropped });
+      env.ctx.watchChanges_();
+      const home = ago(MIN);
+      tapped('t1', { leftAt: left, arrivedAt: ago(9 * MIN), doneAt: dropped, homeAt: home });
+      env.ctx.watchChanges_();
+      env.ctx.watchChanges_();
+      const c = get('bookings/t1').clock;
+      assert.deepEqual([c.startAt, c.dropAt, c.homeAt].map((d) => d.getTime()), [left, dropped, home].map((d) => d.getTime()));
+      assert.equal(env.telegram.length, 3);
+      assert.match(env.telegram[2].text, /Raju Sahu is home<\/b>.*final bill is ready/s);
+      assert.equal(get('bookings/t1').status, 'assigned', 'the office still saves the bill for trips');
+    });
+
+    test('a round trip: Job done is back home', () => {
+      booking('t2', { status: 'assigned', assignedDriver: RAJU, package: 'outstation', trip: { to: 'Puri', kind: 'round' } });
+      tapped('t2', { leftAt: ago(3 * MIN), arrivedAt: ago(2 * MIN), doneAt: ago(MIN) });
+      env.ctx.watchChanges_();
+      const c = get('bookings/t2').clock;
+      assert.ok(c.startAt && c.homeAt && !c.dropAt);
+      assert.match(env.telegram.at(-1).text, /trip over – Raju Sahu is back/);
+    });
+  });
+
+  describe('payment link (6) and the rating request (7)', () => {
+    const completed = (id, extra = {}) =>
+      booking(id, { status: 'completed', assignedDriver: RAJU, customerUid: 'u1', updatedAt: ago(MIN), localBill: { amount: 750, baseHours: 3, usedHours: 4, extraHours: 1, extraHourRate: 150, at: ago(MIN) }, ...extra });
+
+    test('without Razorpay keys: no payment, nothing sent there; the rating request goes at once, once', () => {
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      completed('b1');
+      env.ctx.watchChanges_();
+      env.ctx.pollPayments_();
+      assert.equal(env.rzp.calls.length, 0);
+      assert.equal(get('bookings/b1').payment, undefined);
+      const asks = env.pushes.filter((p) => p.title === 'How was your driver?');
+      assert.equal(asks.length, 1);
+      assert.equal(asks[0].body, 'How was your driver? Rate Raju Sahu — tap to give 1 to 5 stars.');
+      assert.deepEqual({ ...asks[0].data }, { bookingId: 'b1', action: 'rate' });
+      env.store.docs.get('bookings/b1').updatedAt = { timestampValue: new Date().toISOString() };
+      env.ctx.watchChanges_();
+      assert.equal(env.pushes.filter((p) => p.title === 'How was your driver?').length, 1, 'once');
+    });
+
+    test('with keys: a link for the bill; paid → the booking says so, then the rating request; the key is never logged', () => {
+      env.props.set('RAZORPAY_KEY_ID', 'rzp_live_KEYID');
+      env.props.set('RAZORPAY_KEY_SECRET', 'SECRETsecret123');
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      completed('b1');
+      env.ctx.watchChanges_();
+      assert.equal(env.rzp.calls.length, 1);
+      const call = env.rzp.calls[0];
+      assert.equal(call.url, 'https://api.razorpay.com/v1/payment_links');
+      assert.equal(call.auth, 'Basic ' + Buffer.from('rzp_live_KEYID:SECRETsecret123').toString('base64'));
+      assert.deepEqual([call.body.amount, call.body.reference_id, call.body.customer.contact, call.body.notify.sms], [75000, 'DB-1042', '+919111473929', true]);
+      let p = get('bookings/b1').payment;
+      assert.deepEqual([p.status, p.amount, p.url, p.linkId], ['pending', 750, 'https://rzp.io/i/plink_1', 'plink_1']);
+      assert.equal(env.pushes.filter((m) => m.title === 'How was your driver?').length, 0, 'not before it is paid');
+
+      env.ctx.pollPayments_();
+      assert.equal(get('bookings/b1').payment.status, 'pending');
+      env.rzp.links.get('plink_1').status = 'paid';
+      env.ctx.pollPayments_();
+      env.ctx.pollPayments_();
+      p = get('bookings/b1').payment;
+      assert.equal(p.status, 'paid');
+      assert.ok(p.paidAt);
+      assert.equal(env.pushes.filter((m) => m.title === 'How was your driver?').length, 1);
+      assert.ok(env.telegram.some((m) => /DB-1042: ₹750 paid online/.test(m.text)));
+      // Seen again later (an admin edit): no second link.
+      env.store.docs.get('bookings/b1').updatedAt = { timestampValue: new Date().toISOString() };
+      env.ctx.watchChanges_();
+      assert.equal(env.rzp.calls.filter((c) => c.method === 'post').length, 1);
+      const everything = JSON.stringify([env.warnings, env.telegram, [...env.store.docs.values()]]);
+      assert.doesNotMatch(everything, /SECRETsecret123|rzp_live_KEYID/);
+    });
+
+    test('Razorpay refuses: Telegram once, no retry every minute, and the rating request still goes', () => {
+      env.props.set('RAZORPAY_KEY_ID', 'rzp_live_KEYID');
+      env.props.set('RAZORPAY_KEY_SECRET', 'SECRETsecret123');
+      env.rzp.createCode = 400;
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      completed('b1');
+      env.ctx.watchChanges_();
+      env.store.docs.get('bookings/b1').updatedAt = { timestampValue: new Date().toISOString() };
+      env.ctx.watchChanges_();
+      assert.equal(env.rzp.calls.length, 1);
+      assert.equal(env.telegram.filter((m) => /Could not make the payment link for DB-1042 \(Razorpay: The contact number is invalid\)/.test(m.text)).length, 1);
+      assert.equal(env.pushes.filter((m) => m.title === 'How was your driver?').length, 1);
+      assert.doesNotMatch(JSON.stringify(env.warnings), /SECRETsecret123/);
+    });
+
+    test('a completed booking without a bill gets no link, but the rating request', () => {
+      env.props.set('RAZORPAY_KEY_ID', 'rzp_live_KEYID');
+      env.props.set('RAZORPAY_KEY_SECRET', 'SECRETsecret123');
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      completed('b1', { localBill: null });
+      env.ctx.watchChanges_();
+      assert.equal(env.rzp.calls.length, 0);
+      assert.equal(env.pushes.filter((m) => m.title === 'How was your driver?').length, 1);
+    });
+  });
+
+  describe('ratings (7, 10)', () => {
+    const rate = (id, stars, extra = {}) =>
+      put(`ratings/${id}`, { stars, comment: '', driverId: 'd1', customerUid: 'u1', at: ago(MIN), ...extra });
+
+    test("ratings make the driver's average and count; 5 stars → the Google review link", () => {
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      rate('old1', 4, { at: ago(86_400_000) });
+      rate('old2', 3, { at: ago(86_400_000) });
+      rate('b9', 5);
+      env.ctx.processRatingsStep_();
+      const d = get('drivers/d1');
+      assert.deepEqual([d.ratingAvg, d.ratingCount], [4, 3]);
+      const thanks = env.pushes.filter((p) => p.title === 'Thank you!');
+      assert.equal(thanks.length, 1);
+      assert.equal(thanks[0].data.url, 'https://search.google.com/local/writereview?placeid=P1');
+      assert.deepEqual(plain(JSON.parse(env.props.get('driverQuality')).d1), { ratingAvg: 4, ratingCount: 3, strikes: 1 });
+      env.ctx.processRatingsStep_();
+      assert.equal(env.pushes.length, 1, 'each rating once');
+    });
+
+    test('below 3.5 with 5+ ratings: Telegram asks once — never paused by itself', () => {
+      [3, 3, 4, 3, 3].forEach((n, i) => rate(`o${i}`, n, { at: ago(86_400_000) }));
+      rate('b9', 3);
+      env.ctx.processRatingsStep_();
+      const asks = env.telegram.filter((m) => /rating is/.test(m.text));
+      assert.equal(asks.length, 1);
+      assert.equal(asks[0].text, "⚠️ Raju Sahu's rating is 3.2 (6 ratings) — pause him in /admin?");
+      assert.equal(get('drivers/d1').status, 'active');
+      rate('b10', 2, { at: new Date() });
+      env.ctx.processRatingsStep_();
+      assert.equal(env.telegram.filter((m) => /rating is/.test(m.text)).length, 1, 'once');
+    });
+
+    test('dispatch puts a poorly rated driver after the others', () => {
+      const online = (id, lat) => put(`availability/${id}`, { online: true, city: 'Raipur', name: id, phone: '9000000000', lat, lng: 81.63, pushToken: `ExponentPushToken[${id}]`, at: ago(MIN) });
+      online('d1', 21.252);
+      online('d2', 21.26);
+      online('d3', 21.28);
+      online('d4', 21.35);
+      env.props.set('driverQuality', JSON.stringify({ d1: { ratingAvg: 3.6, ratingCount: 5, strikes: 0 } }));
+      booking('b1', { status: 'confirmed', updatedAt: ago(1000) });
+      env.ctx.autoOffers_();
+      env.ctx.dispatchOffers_();
+      assert.deepEqual(env.pushes.map((p) => p.to), ['ExponentPushToken[d2]', 'ExponentPushToken[d3]', 'ExponentPushToken[d4]']);
+    });
+  });
+
+  describe('weekly payouts (9)', () => {
+    const week = () => env.ctx.istDay(Date.now());
+    const pressed = (updateId, chatId) => ({
+      update_id: updateId,
+      callback_query: { id: `cq${updateId}`, data: `paid:d1:${week()}`, message: { message_id: 77, chat: { id: chatId }, text: 'Pay Raju Sahu ₹900 · UPI raju@okaxis · 2 jobs' } },
+    });
+
+    beforeEach(() => {
+      put('drivers/d1', { name: 'Raju Sahu', phone: RAJU.phone, city: 'Raipur', status: 'active', upi: 'raju@okaxis' });
+      takenOffer('o1', { done: true, driverPay: 450, ref: 'DB-1041' });
+      takenOffer('o2', { done: true, driverPay: 450, ref: 'DB-1042' });
+      takenOffer('o3', { done: false }); // not finished yet
+      takenOffer('o4', { done: true, paid: true, paidAt: ago(86_400_000) }); // paid last week
+    });
+
+    test('Monday: one message per driver with the total, his UPI ID, the jobs and a Paid ✓ button', () => {
+      env.ctx.weeklyPayouts();
+      assert.equal(env.telegram.length, 1);
+      assert.equal(env.telegram[0].text, 'Pay Raju Sahu ₹900 · UPI raju@okaxis · 2 jobs\nDB-1041, DB-1042');
+      assert.equal(env.telegram[0].reply_markup.inline_keyboard[0][0].callback_data, `paid:d1:${week()}`);
+    });
+
+    test('Paid ✓ from the office chat marks the jobs paid; from any other chat it is ignored', () => {
+      env.ctx.telegramCallbacks_();
+      assert.equal(env.tg.calls.length, 0, 'nothing waiting: Telegram is not even asked');
+      env.ctx.weeklyPayouts();
+
+      env.tg.updates.push(pressed(10, 999)); // someone else's chat
+      env.ctx.telegramCallbacks_();
+      assert.equal(get('offers/o1').paid, false);
+      assert.deepEqual(env.tg.calls.map((c) => c.method), ['getUpdates']);
+      assert.equal(env.props.get('telegramUpdateId'), '10');
+
+      env.tg.updates.push(pressed(11, 555)); // the office (TELEGRAM_CHAT_ID)
+      env.ctx.telegramCallbacks_();
+      assert.equal(env.tg.calls.at(-3).body.offset, 11, 'asks only for updates after the last one seen');
+      for (const id of ['o1', 'o2']) {
+        const o = get(`offers/${id}`);
+        assert.equal(o.paid, true);
+        assert.ok(o.paidAt);
+      }
+      assert.equal(get('offers/o3').paid, false);
+      const [answer, edit] = env.tg.calls.slice(-2);
+      assert.deepEqual([answer.method, answer.body.callback_query_id], ['answerCallbackQuery', 'cq11']);
+      assert.equal(edit.method, 'editMessageText');
+      assert.deepEqual([edit.body.chat_id, edit.body.message_id], [555, 77]);
+      assert.match(edit.body.text, /\n\nPaid ✓ /);
+
+      // Done: nothing waits, so the robot stops asking Telegram.
+      const calls = env.tg.calls.length;
+      env.ctx.telegramCallbacks_();
+      assert.equal(env.tg.calls.length, calls);
+    });
+
+    test('chats that wrote to the bot meanwhile are kept for setup', () => {
+      env.ctx.weeklyPayouts();
+      env.tg.updates.push({ update_id: 5, message: { chat: { id: 4242 }, text: 'hi' } });
+      env.ctx.telegramCallbacks_();
+      assert.deepEqual(JSON.parse(env.props.get('telegramSeenChats')), ['4242']);
+    });
+  });
+
+  describe('nearby cities (12)', () => {
+    const online = (id, city, lat, lng) =>
+      put(`availability/${id}`, { online: true, city, name: id, phone: '9000000000', lat, lng, pushToken: `ExponentPushToken[${id}]`, at: ago(MIN) });
+
+    test('10 minutes at the top pay: Bhilai and Durg drivers too, the customer hears once, Telegram once', () => {
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      online('r1', 'Raipur', 21.252, 81.63);
+      online('b1', 'Bhilai', 21.19, 81.35);
+      booking('x1', { status: 'confirmed', customerUid: 'u1', updatedAt: ago(1000) });
+      env.ctx.autoOffers_();
+      env.ctx.dispatchOffers_(); // the Raipur driver hears
+      assert.deepEqual(env.pushes.map((p) => p.to), ['ExponentPushToken[r1]']);
+      const created = (ms) => { env.store.docs.get('offers/x1').createdAt = { timestampValue: ago(ms).toISOString() }; };
+      created(13 * MIN);
+      env.ctx.dispatchOffers_();
+      assert.deepEqual([...get('offers/x1').cities], ['Raipur'], 'not yet');
+      created(14 * MIN + 5000);
+      env.ctx.dispatchOffers_();
+      assert.deepEqual([...get('offers/x1').cities], ['Raipur', 'Bhilai', 'Durg']);
+      assert.ok(env.pushes.some((p) => p.to === 'ExponentPushToken[b1]'), 'the Bhilai driver hears');
+      const still = env.pushes.filter((p) => p.title === 'Still finding your driver');
+      assert.equal(still.length, 1);
+      assert.equal(still[0].body, "Still finding your driver — we'll call you if it takes longer.");
+      assert.equal(env.telegram.filter((m) => /offered to Bhilai and Durg drivers too/.test(m.text)).length, 1);
+      env.ctx.dispatchOffers_();
+      env.ctx.dispatchOffers_();
+      assert.equal(env.pushes.filter((p) => p.title === 'Still finding your driver').length, 1, 'once');
+      assert.equal(env.telegram.filter((m) => /offered to Bhilai and Durg/.test(m.text)).length, 1);
+    });
+  });
+
+  describe('9 pm report (11) and the triggers', () => {
+    test('the day in numbers', () => {
+      booking('n1', { createdAt: ago(1000) });
+      booking('c1', { createdAt: ago(1000), status: 'completed', updatedAt: ago(1000), localBill: { amount: 750 } });
+      booking('x1', { createdAt: ago(1000), status: 'cancelled', updatedAt: ago(1000) });
+      takenOffer('c1', { price: 750, driverPay: 520, done: true, updatedAt: ago(1000) });
+      put('offers/o9', { status: 'open', ref: 'DB-1050', city: 'Raipur', paid: false, done: false, updatedAt: ago(1000) });
+      put('availability/d1', { online: true, city: 'Raipur', at: ago(MIN) });
+      put('availability/d2', { online: true, city: 'Raipur', at: ago(30 * MIN) }); // stale
+      env.ctx.dailyReport();
+      const t = env.telegram.at(-1).text;
+      assert.match(t, /<b>Bookings:<\/b> 3 \(new 1 · confirmed 0 · with driver 0 · completed 1 · cancelled 1\)/);
+      assert.match(t, /<b>Revenue:<\/b> ₹750 from 1 completed job\n/);
+      assert.match(t, /<b>DriveBuddy's cut:<\/b> ₹230/);
+      assert.match(t, /<b>Jobs nobody took:<\/b> 1 still open — DB-1050/);
+      assert.match(t, /<b>Drivers online now:<\/b> 1/);
+      assert.match(t, /<b>Payouts due:<\/b> ₹520 to 1 driver$/);
+    });
+
+    test('tick sets up Monday 9:30 and daily 21:00 once', () => {
+      env.ctx.tick();
+      env.ctx.tick();
+      const made = env.ctx.ScriptApp.made.filter((t) => t.fn === 'weeklyPayouts' || t.fn === 'dailyReport').map((t) => plain(t));
+      assert.deepEqual(made, [
+        { fn: 'weeklyPayouts', every: 'week', day: 'MONDAY', hour: 9, minute: 30 },
+        { fn: 'dailyReport', every: 'day', hour: 21, minute: 0 },
+      ]);
+    });
+
+    test('every new query is on one field only (no composite index)', () => {
+      env.props.set('RAZORPAY_KEY_ID', 'k');
+      env.props.set('RAZORPAY_KEY_SECRET', 's');
+      env.ctx.watchChanges_();
+      env.ctx.tripReminders_();
+      env.ctx.pollPayments_();
+      env.ctx.processRatingsStep_();
+      env.ctx.dailyReport();
+      env.ctx.weeklyPayouts();
+      env.ctx.dispatchOffers_();
+      const fieldsOf = (w) => (!w ? [] : w.compositeFilter ? w.compositeFilter.filters.flatMap(fieldsOf) : [w.fieldFilter.field.fieldPath]);
+      assert.ok(env.store.queries.length >= 14);
+      for (const q of env.store.queries) assert.equal(new Set([...fieldsOf(q.where), q.orderBy[0].field.fieldPath]).size, 1, JSON.stringify(q));
+    });
   });
 });
