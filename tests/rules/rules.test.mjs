@@ -738,7 +738,11 @@ describe('job offers — admin posts, an Active driver in that city takes it', (
   test('the first driver to accept gets the job and the booking; the second cannot', async () => {
     await setDoc(doc(admin(), 'offers', 'b1'), offer());
     await assertSucceeds(take(drv(RAJU), RAJU));
-    const b = await env.withSecurityRulesDisabled(async (ctx) => (await getDoc(doc(ctx.firestore(), 'bookings', 'b1'))).data());
+    // withSecurityRulesDisabled resolves to nothing: read into a variable.
+    let b;
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      b = (await getDoc(doc(ctx.firestore(), 'bookings', 'b1'))).data();
+    });
     assert.equal(b.status, 'assigned');
     assert.deepEqual(b.assignedDriver, RAJU);
     // He now sees the job, and his offer as earnings.
@@ -882,10 +886,11 @@ describe("driver app — can't make it (3)", () => {
 
   test('the driver who took it gives it back before Start: offer released, booking back to confirmed', async () => {
     await assertSucceeds(giveBack(drvDb(RAJU), RAJU));
-    const after = await env.withSecurityRulesDisabled(async (ctx) => ({
-      b: (await getDoc(doc(ctx.firestore(), 'bookings', 'b1'))).data(),
-      o: (await getDoc(doc(ctx.firestore(), 'offers', 'b1'))).data(),
-    }));
+    const after = {};
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      after.b = (await getDoc(doc(ctx.firestore(), 'bookings', 'b1'))).data();
+      after.o = (await getDoc(doc(ctx.firestore(), 'offers', 'b1'))).data();
+    });
     assert.equal(after.b.status, 'confirmed');
     assert.equal(after.b.assignedDriver, null);
     assert.equal(after.o.status, 'released');
