@@ -523,8 +523,8 @@ service cloud.firestore {
     //  clock, a local job's bill) — the customer sees them there, not here.
     //  After Job done: "payment received" — paidBy 'upi' or 'cash' and paidAt,
     //  once, also once the robot has completed the booking (he can no longer
-    //  read the booking then, only this document). `amount` (the bill to
-    //  collect) is the robot's: no branch here lets a browser write it.
+    //  read the booking then, only this document). Nothing here carries the
+    //  customer's price: drivers never see it, nor DriveBuddy's cut.
 
     function tapIs(next, before) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([next])

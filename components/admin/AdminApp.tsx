@@ -22,6 +22,7 @@ import {
   toDate,
   toLocalBill,
   toPayment,
+  toDriverConfirmed,
   type Booking,
   type Driver,
 } from '@/lib/bookings';
@@ -144,6 +145,7 @@ const mapBooking = (id: string, d: Record<string, unknown>): Booking => {
     acceptedPrice: toAcceptedPrice(d.acceptedPrice),
     localBill: toLocalBill(d.localBill),
     payment: toPayment(d.payment),
+    driverConfirmed: toDriverConfirmed(d.driverConfirmed),
     pickupGeo: readPickupGeo(d.pickupGeo),
   } as Booking;
 };

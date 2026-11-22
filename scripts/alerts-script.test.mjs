@@ -1930,14 +1930,13 @@ describe('automation', () => {
       assert.equal(paymentLinkKind(false, ''), '');
     });
 
-    test('UPI_ID set: a local job done → the bill on his taps, a UPI link on the booking, no rating request yet', () => {
+    test('UPI_ID set: a local job done → a UPI link on the booking, no rating request yet', () => {
       env.props.set('UPI_ID', 'drivebuddy@ybl');
       device('u1', 'p1', 'ExponentPushToken[customer0001]');
       booking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'u1' });
       takenOffer('b1');
       tapped('b1', doneTaps());
-      env.ctx.watchChanges_(); // Job done: bill, completed, amount to the driver
-      assert.equal(get('tripTaps/b1').amount, 750);
+      env.ctx.watchChanges_(); // Job done: bill, completed
       env.ctx.watchChanges_(); // the completed booking: the link
       const p = get('bookings/b1').payment;
       assert.deepEqual([p.status, p.method, p.amount, p.url], ['pending', 'upi', 750, 'upi://pay?pa=drivebuddy%40ybl&pn=DriveBuddy&am=750.00&cu=INR&tn=DB-1042']);
@@ -1970,21 +1969,22 @@ describe('automation', () => {
       assert.equal(env.rzp.calls.length, 1);
     });
 
-    test('a trip bill saved by the office goes to his taps; no taps document → none is made', () => {
+    test('the driver is never sent the price: his taps hold only his own times, at Job done and after a trip bill', () => {
+      env.props.set('UPI_ID', 'drivebuddy@ybl');
+      booking('b1', { status: 'assigned', assignedDriver: RAJU });
+      takenOffer('b1');
+      tapped('b1', doneTaps());
       booking('t1', { status: 'completed', assignedDriver: RAJU, package: 'outstation', updatedAt: new Date(), bill: { amount: 5200 } });
       tapped('t1', { leftAt: ago(3 * 86_400_000), arrivedAt: ago(3 * 86_400_000), doneAt: ago(3600_000) });
       booking('t2', { status: 'completed', assignedDriver: RAJU, package: 'outstation', updatedAt: new Date(), bill: { amount: 4100 } });
       env.ctx.watchChanges_();
-      assert.equal(get('tripTaps/t1').amount, 5200);
-      assert.equal(env.store.docs.has('tripTaps/t2'), false);
-      // A corrected bill follows; another driver's old taps are left alone.
-      env.store.docs.get('bookings/t1').bill = env.ctx.toValue({ amount: 5400 });
-      touch('t1');
-      put('tripTaps/t3', { driverPhone: '9425212345', doneAt: ago(MIN) });
-      booking('t3', { status: 'completed', assignedDriver: RAJU, package: 'outstation', updatedAt: new Date(), bill: { amount: 900 } });
       env.ctx.watchChanges_();
-      assert.equal(get('tripTaps/t1').amount, 5400);
-      assert.equal(get('tripTaps/t3').amount, undefined);
+      assert.equal(get('bookings/b1').localBill.amount, 750);
+      for (const [path, f] of env.store.docs) {
+        if (!path.startsWith('tripTaps/')) continue;
+        assert.deepEqual(Object.keys(f).filter((k) => !['driverPhone', 'leftAt', 'arrivedAt', 'doneAt', 'homeAt'].includes(k)), [], path);
+      }
+      assert.equal(env.store.docs.has('tripTaps/t2'), false, 'no taps document is made');
     });
 
     test('paid in cash: the booking is paid, the cash goes on his offer, Telegram, then the rating request', () => {
@@ -1997,7 +1997,7 @@ describe('automation', () => {
       env.ctx.watchChanges_();
       assert.equal(get('bookings/b1').payment.status, 'pending');
       const paidAt = ago(5000);
-      tapped('b1', { ...doneTaps(), amount: 750, paidBy: 'cash', paidAt });
+      tapped('b1', { ...doneTaps(), paidBy: 'cash', paidAt });
       env.ctx.watchChanges_();
       const p = get('bookings/b1').payment;
       assert.deepEqual([p.status, p.method, p.amount, p.by, p.url], ['paid', 'cash', 750, 'driver', undefined], 'over the pending UPI link');
@@ -2019,7 +2019,7 @@ describe('automation', () => {
         payment: { status: 'pending', method: 'upi', amount: 750, url: 'upi://pay?pa=drivebuddy%40ybl', at: ago(20 * MIN) },
       });
       takenOffer('b1', { done: true });
-      tapped('b1', { ...doneTaps(), amount: 750, paidBy: 'upi', paidAt: ago(1000) });
+      tapped('b1', { ...doneTaps(), paidBy: 'upi', paidAt: ago(1000) });
       env.ctx.watchChanges_();
       const p = get('bookings/b1').payment;
       assert.deepEqual([p.status, p.method, p.amount, p.by, p.url], ['paid', 'upi', 750, 'driver', undefined]);
@@ -2037,7 +2037,6 @@ describe('automation', () => {
       env.store.docs.get('bookings/t1').status = { stringValue: 'completed' };
       touch('t1');
       env.ctx.watchChanges_();
-      assert.equal(get('tripTaps/t1').amount, 5200);
       assert.deepEqual([get('bookings/t1').payment.status, get('bookings/t1').payment.method, get('bookings/t1').payment.amount], ['paid', 'cash', 5200]);
       assert.equal(get('offers/t1').cashCollected, 5200);
     });
@@ -2171,6 +2170,149 @@ describe('automation', () => {
       assert.equal(env.telegram.filter((m) => /over the ₹2,000 limit/.test(m.text)).length, 1);
       env.ctx.dailyReport();
       assert.equal(env.telegram.filter((m) => /over the ₹2,000 limit/.test(m.text)).length, 1, 'once, not every night');
+    });
+  });
+
+  describe('call to confirm the driver who took a job', () => {
+    // The Driver app's take: the booking assigned to him, updatedBy his login (firestore.rules).
+    const took = (id = 'b1', extra = {}) => {
+      booking(id, { status: 'assigned', assignedDriver: RAJU, updatedBy: `driver-${RAJU.phone}`, updatedAt: new Date(), preferredTime: '2026-11-22T15:30', customerUid: 'u1', ...extra });
+      takenOffer(id);
+    };
+    const press = (updateId, data, chatId = 555) => {
+      env.tg.updates.push({ update_id: updateId, callback_query: { id: `cq${updateId}`, data, message: { message_id: 40 + updateId, chat: { id: chatId }, text: 'DB-1042: Raju Sahu took it — call him to confirm' } } });
+      env.ctx.telegramCallbacks_();
+    };
+    const asked = () => env.telegram.filter((m) => /took it — call him to confirm/.test(m.text));
+    const answers = () => env.tg.calls.filter((c) => c.method === 'answerCallbackQuery').map((c) => c.body.text);
+    const pendingConfirms = () => JSON.parse(env.props.get('confirmsPending') || '{}');
+
+    test('pure: the callbacks and the short time', () => {
+      assert.deepEqual(plain(env.ctx.parseConfirmCallback('conf:b1')), { action: 'conf', bookingId: 'b1' });
+      assert.deepEqual(plain(env.ctx.parseConfirmCallback('redo:AbC_12-x')), { action: 'redo', bookingId: 'AbC_12-x' });
+      for (const bad of ['conf:', 'conf:../x', 'yes:b1', 'paid:d1:2026-11-23', null]) assert.equal(env.ctx.parseConfirmCallback(bad), null);
+      assert.ok(new TextEncoder().encode('redo:' + 'x'.repeat(20)).length <= 64);
+      assert.equal(env.ctx.shortWhen('2026-11-22T15:30'), 'Sun 3:30 pm');
+      assert.equal(env.ctx.shortWhen(''), 'ASAP');
+    });
+
+    test('a take in the app: Telegram asks the office to call him, once, with the two buttons', () => {
+      took();
+      env.ctx.watchChanges_();
+      env.ctx.watchChanges_();
+      assert.equal(asked().length, 1);
+      assert.equal(asked()[0].text, '<b>DB-1042</b>: Raju Sahu took it — call him to confirm · <a href="tel:+919893302783">98933 02783</a> · 3 hours · Sun 3:30 pm · Shankar Nagar, Raipur');
+      assert.deepEqual(plain(asked()[0].reply_markup), { inline_keyboard: [[{ text: 'Confirmed ✓', callback_data: 'conf:b1' }, { text: 'Give to someone else', callback_data: 'redo:b1' }]] });
+      assert.deepEqual(Object.keys(pendingConfirms()), ['b1']);
+    });
+
+    test('a driver the office assigned itself is not asked about', () => {
+      booking('b2', { status: 'assigned', assignedDriver: RAJU, updatedBy: 'admin1', updatedAt: new Date() });
+      env.ctx.watchChanges_();
+      assert.equal(asked().length, 0);
+    });
+
+    test('CONFIRM_BY_CALL = off: nothing is sent', () => {
+      env.props.set('CONFIRM_BY_CALL', 'Off');
+      took();
+      env.ctx.watchChanges_();
+      assert.equal(asked().length, 0);
+      assert.deepEqual(pendingConfirms(), {});
+      env.ctx.telegramCallbacks_();
+      assert.equal(env.tg.calls.length, 0, 'nothing waits: Telegram is not polled');
+    });
+
+    test('Confirmed ✓: the booking records it, the message says so; then nothing waits', () => {
+      took();
+      env.ctx.watchChanges_();
+      press(20, 'conf:b1');
+      const c = get('bookings/b1').driverConfirmed;
+      assert.deepEqual([c.by, c.driverId], ['telegram', 'd1']);
+      assert.ok(c.at);
+      assert.deepEqual(answers(), ['Confirmed ✓']);
+      assert.match(env.tg.calls.find((x) => x.method === 'editMessageText').body.text, /\n\nConfirmed ✓ /);
+      assert.deepEqual(pendingConfirms(), {});
+      const n = env.tg.calls.length;
+      env.ctx.telegramCallbacks_();
+      assert.equal(env.tg.calls.length, n, 'no more polling');
+    });
+
+    test('a press from any other chat is ignored', () => {
+      took();
+      env.ctx.watchChanges_();
+      press(21, 'conf:b1', 999);
+      press(22, 'redo:b1', 999);
+      assert.equal(get('bookings/b1').driverConfirmed, undefined);
+      assert.equal(get('bookings/b1').status, 'assigned');
+      assert.deepEqual(answers(), []);
+      assert.deepEqual(Object.keys(pendingConfirms()), ['b1'], 'still waiting');
+    });
+
+    test('Give to someone else: back to confirmed, offered again from the start never to him, no strike, his phone hears', () => {
+      put('availability/d1', { online: true, city: 'Raipur', name: 'Raju Sahu', phone: RAJU.phone, lat: 21.252, lng: 81.63, pushToken: 'ExponentPushToken[raju]', at: ago(MIN) });
+      put('availability/d2', { online: true, city: 'Raipur', name: 'Sonu', phone: '9425212345', lat: 21.26, lng: 81.63, pushToken: 'ExponentPushToken[d2]', at: ago(MIN) });
+      took();
+      env.ctx.watchChanges_();
+      press(23, 'redo:b1');
+      const b = get('bookings/b1');
+      assert.deepEqual([b.status, b.assignedDriver, b.updatedBy], ['confirmed', null, 'robot']);
+      assert.ok(events('b1').some((e) => e.from === 'assigned' && e.to === 'confirmed' && e.note === 'Office gave it to another driver' && e.by === 'robot'));
+      const o = get('offers/b1');
+      assert.deepEqual([o.status, o.takenBy, o.by, o.cutPercent, o.done], ['open', null, 'robot', 30, false]);
+      assert.deepEqual([...get('offerAlerts/b1').skipIds], ['d1']);
+      assert.equal(get('drivers/d1').strikes, 1, 'no strike: it was the office’s call');
+      const gone = env.pushes.filter((p) => p.to === 'ExponentPushToken[raju]');
+      assert.equal(gone.length, 1);
+      assert.equal(gone[0].body, 'DriveBuddy gave this job to another driver · यह काम किसी दूसरे ड्राइवर को दिया गया');
+      assert.deepEqual(answers(), ['Offered again ✓']);
+      assert.match(env.tg.calls.find((x) => x.method === 'editMessageText').body.text, /\n\nOffered again ✓ /);
+      // The next minute's dispatch: the others hear, he does not.
+      env.ctx.dispatchOffers_();
+      assert.deepEqual(env.pushes.filter((p) => p.data.offerId === 'b1').map((p) => p.to), ['ExponentPushToken[d2]']);
+      // A second press does nothing: once something else waits (a payout), it is read and answered.
+      env.props.set('payoutsPending', JSON.stringify({ 'd9:2026-11-23': { ids: [], amount: 0, at: Date.now() } }));
+      press(24, 'redo:b1');
+      assert.equal(answers().at(-1), 'Already handled.');
+      assert.equal(get('bookings/b1').status, 'confirmed');
+    });
+
+    test('Give to someone else after he tapped Start: refused with the reason; Confirmed ✓ still works', () => {
+      took();
+      env.ctx.watchChanges_();
+      put('tripTaps/b1', { driverPhone: RAJU.phone, leftAt: ago(MIN) });
+      press(25, 'redo:b1');
+      assert.equal(get('bookings/b1').status, 'assigned');
+      assert.equal(get('offers/b1').status, 'taken');
+      assert.match(answers()[0], /already tapped Start/);
+      assert.equal(env.tg.calls.filter((x) => x.method === 'editMessageText').length, 0);
+      press(26, 'conf:b1');
+      assert.equal(get('bookings/b1').driverConfirmed.driverId, 'd1');
+    });
+
+    test('the job changed meanwhile (assigned to someone else in /admin): nothing is done', () => {
+      took();
+      env.ctx.watchChanges_();
+      env.store.docs.get('bookings/b1').assignedDriver = env.ctx.toValue({ id: 'd2', name: 'Sonu Verma', phone: '9425212345' });
+      press(27, 'redo:b1');
+      assert.equal(get('bookings/b1').assignedDriver.id, 'd2');
+      assert.equal(get('offers/b1').status, 'taken');
+      assert.match(answers()[0], /The job has changed/);
+    });
+
+    test('not confirmed 15 minutes after the take: one reminder', () => {
+      took();
+      env.ctx.watchChanges_();
+      env.ctx.telegramCallbacks_();
+      const reminders = () => env.telegram.filter((m) => /not confirmed by call yet/.test(m.text));
+      assert.equal(reminders().length, 0, 'not yet');
+      const p = pendingConfirms();
+      p.b1.at = Date.now() - 15 * MIN - 1000;
+      env.props.set('confirmsPending', JSON.stringify(p));
+      env.ctx.telegramCallbacks_();
+      env.ctx.telegramCallbacks_();
+      assert.equal(reminders().length, 1);
+      assert.equal(reminders()[0].text, '⏰ <b>DB-1042</b>: Raju Sahu is not confirmed by call yet (15 minutes since he took it) · +91 98933 02783');
+      assert.equal(reminders()[0].reply_markup.inline_keyboard[0][0].callback_data, 'conf:b1');
     });
   });
 

@@ -71,6 +71,8 @@
  *                        in the customer's app instead (no gateway, no fee); the driver
  *                        taps "Paid by UPI" / "Paid in cash" in the Driver app.
  *   UPI_NAME             the name on that UPI link, default DriveBuddy
+ *   CONFIRM_BY_CALL      "off" stops the Telegram that asks the office to call a driver
+ *                        who took a job in the app (Confirmed ✓ / Give to someone else)
  *
  * Also automatic (see "automation" below): job reminders an hour before, the
  * Driver app's Start / Arrived / Job done taps (tripTaps), the bill and the end
@@ -1499,17 +1501,22 @@ function dispatchOffers_() {
    • "Can't make it": a driver may give back a job he took, before he taps
      Start (firestore.rules). The offer goes out again from the first step,
      never to him, and his drivers/{id}.strikes goes up.
+   • A driver takes a job in the app: Telegram asks the office to call him
+     and confirm (Confirmed ✓ → booking.driverConfirmed; Give to someone
+     else → offered again, never to him, no strike), and reminds once after
+     15 minutes. CONFIRM_BY_CALL = off.
    • An hour before the job: a reminder to the customer and the driver.
    • The Driver app's taps (tripTaps/{bookingId}: Start, Arrived, Job done,
      Reached home): a trip's times go to the booking's clock and Telegram, as
      with the trip link (the office still saves the bill); a local job gets
      its bill (localBill) at Job done and is completed.
    • A completed job with a bill gets a payment link: Razorpay's once its keys
-     are set, else a UPI pay link to DriveBuddy's own UPI_ID (no gateway). The
-     bill also goes to the driver (tripTaps/{id}.amount): he collects it and
-     taps "Paid by UPI" or "Paid in cash" (tripTaps paidBy / paidAt); the
-     booking is then paid, and cash he kept is noted on his offer
-     (cashCollected). Then a request to rate the driver; the ratings make
+     are set, else a UPI pay link to DriveBuddy's own UPI_ID (no gateway).
+     The driver collects it and taps "Paid by UPI" or "Paid in cash" (tripTaps
+     paidBy / paidAt) — he is never sent the customer's price (nor
+     DriveBuddy's cut); the amount comes from the bill. The booking is then
+     paid, and cash he kept is noted on his offer (cashCollected). Then a
+     request to rate the driver; the ratings make
      drivers/{id}.ratingAvg and ratingCount, which push poorly rated drivers
      (and those with 3 strikes) to the back of the queue for new jobs.
    • Monday ~9:30: what each driver earned minus the cash he kept — pay him,
@@ -1712,16 +1719,16 @@ function upiPayment(b, id, amount, upiId, name, now) {
   return { status: 'pending', method: 'upi', amount: amount, url: upiPayUrl(upiId, name || 'DriveBuddy', amount, b.ref || id), at: now };
 }
 
-/** What the driver collected: the amount he was shown (tripTaps.amount), else the bill, else the pending link's; 0 = not known yet. */
-function paidAmountOf(b, taps) {
-  var n = Number((taps && taps.amount) || billAmountOf(b) || (b.payment && b.payment.amount) || 0);
+/** What the driver collected: the bill (local bill, else the trip's final bill), else the pending link's; 0 = not known yet. */
+function paidAmountOf(b) {
+  var n = Number(billAmountOf(b) || (b.payment && b.payment.amount) || 0);
   return n >= 1 && n <= 1000000 ? Math.round(n) : 0;
 }
 
 /** The booking's payment once the driver tapped "Paid by UPI" / "Paid in cash"; null when it cannot be told yet. */
 function driverPaidPayment(b, taps, now) {
   var method = taps && taps.paidBy;
-  var amount = paidAmountOf(b, taps);
+  var amount = paidAmountOf(b);
   if ((method !== 'upi' && method !== 'cash') || !amount) return null;
   return { status: 'paid', method: method, amount: amount, paidAt: taps.paidAt || now, by: 'driver', at: now };
 }
@@ -2001,13 +2008,15 @@ function watchChanges_() {
 }
 
 /**
- * Bookings that changed: confirm the simple ones, send a new bill to the
- * driver's job screen, and take completed ones on (payment link, rating
- * request). All safe to repeat.
+ * Bookings that changed: confirm the simple ones, ask the office to call a
+ * driver who just took a job, record a payment the driver
+ * confirmed before the bill was saved, and take completed ones on (payment
+ * link, rating request). All safe to repeat.
  */
 function changedBookings_(rows) {
   instantConfirm_(rows);
-  billsToDrivers_(rows);
+  askToConfirm_(rows);
+  paymentsAwaitingBill_(rows);
   completedBookings_(rows);
 }
 
@@ -2133,6 +2142,207 @@ function releasedOffers_(rows) {
   });
 }
 
+/* ------------------------------------------------- call to confirm a take */
+
+/** Minutes after a take before Telegram reminds that nobody confirmed the driver by call; and how long a question waits at most. */
+var CONFIRM_REMIND_MIN = 15;
+var CONFIRM_KEEP_MS = 24 * 3600 * 1000;
+
+/** "conf:<bookingId>" / "redo:<bookingId>" → { action, bookingId }, or null. */
+function parseConfirmCallback(data) {
+  var m = /^(conf|redo):([A-Za-z0-9_-]{1,59})$/.exec(String(data == null ? '' : data));
+  return m ? { action: m[1], bookingId: m[2] } : null;
+}
+
+/** "2026-11-22T15:30" → "Sun 3:30 pm" (India time, as written); no time → "ASAP". */
+function shortWhen(raw) {
+  var m = String(raw == null ? '' : raw).match(/^(\d{4})-(\d{2})-(\d{2})[T ]\d{2}:\d{2}/);
+  if (!m) return 'ASAP';
+  return DAYS[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])).getUTCDay()] + ' ' + clockText(raw);
+}
+
+function confirmButtons(id) {
+  return { inline_keyboard: [[{ text: 'Confirmed ✓', callback_data: 'conf:' + id }, { text: 'Give to someone else', callback_data: 'redo:' + id }]] };
+}
+
+/**
+ * The office's question when a driver takes a job in the app:
+ * "<b>DB-1042</b>: Raju Sahu took it — call him to confirm · 98933 02783 · 3 hours · Sun 3:30 pm · Shankar Nagar",
+ * the number a tel: link. plainPhone: the number as "+91 98933 02783"
+ * instead (Telegram makes that tap-to-call by itself), for a chat that
+ * refuses the link.
+ */
+function confirmTelegram(b, id, plainPhone) {
+  var d = b.assignedDriver || {};
+  var digits = String(d.phone == null ? '' : d.phone).replace(/\D/g, '').slice(-10);
+  var phone = plainPhone ? escapeHtml(prettyPhone(digits)) : '<a href="tel:+91' + digits + '">' + escapeHtml(sheetPhone(digits)) + '</a>';
+  return {
+    text: '<b>' + escapeHtml(b.ref || id) + '</b>: ' + escapeHtml(d.name || 'A driver') + ' took it — call him to confirm · ' + phone + ' · ' +
+      escapeHtml(packageName(b.package)) + ' · ' + escapeHtml(shortWhen(b.preferredTime)) + ' · ' + escapeHtml(offerAreaOf(b.pickup) || b.city || ''),
+    reply_markup: confirmButtons(id),
+  };
+}
+
+/** Once, 15 minutes after the take, if nobody pressed a button. */
+function confirmReminderTelegram(e, id) {
+  return {
+    text: '⏰ <b>' + escapeHtml(e.ref || id) + '</b>: ' + escapeHtml(e.name || 'the driver') + ' is not confirmed by call yet (' + CONFIRM_REMIND_MIN +
+      ' minutes since he took it) · ' + escapeHtml(prettyPhone(e.phone)),
+    reply_markup: confirmButtons(id),
+  };
+}
+
+/** The driver's phone, when the office gave his job to someone else (English and Hindi, as job alerts). */
+function givenAwayPush(token, id) {
+  return pushMsg_(token, {
+    title: 'Job given to another driver · काम दूसरे ड्राइवर को',
+    body: 'DriveBuddy gave this job to another driver · यह काम किसी दूसरे ड्राइवर को दिया गया',
+  }, { bookingId: id, action: 'given-away' }, 'jobs');
+}
+
+function confirmByCallOn_() {
+  return String(prop_('CONFIRM_BY_CALL')).trim().toLowerCase() !== 'off';
+}
+
+/** Takes waiting for Confirmed ✓ / Give to someone else: { bookingId: { key, driverId, name, phone, ref, at, reminded } }. */
+function confirmsPending_() {
+  try {
+    return JSON.parse(PropertiesService.getScriptProperties().getProperty('confirmsPending') || '{}') || {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function saveConfirmsPending_(pending) {
+  PropertiesService.getScriptProperties().setProperty('confirmsPending', JSON.stringify(pending));
+}
+
+/**
+ * Jobs a driver just took in the Driver app — the take writes the booking
+ * as assigned, updatedBy "driver-<phone>" (firestore.rules), which is how
+ * the robot's changed-bookings check sees it without reading the offers:
+ * Telegram asks the office to call him, once per take.
+ */
+function askToConfirm_(rows) {
+  if (!confirmByCallOn_()) return;
+  var pending = null;
+  rows.forEach(function (row) {
+    var b = row.data;
+    var d = b.assignedDriver;
+    if (b.status !== 'assigned' || !d || !d.id || String(b.updatedBy || '').indexOf('driver-') !== 0 || !b.updatedAt) return;
+    var key = d.id + '@' + b.updatedAt.getTime();
+    pending = pending || confirmsPending_();
+    if (pending[row.id] && pending[row.id].key === key) return;
+    if (bookOf_(row.id).confirmAskedFor === key) return;
+    var sent = sendTelegram_(confirmTelegram(b, row.id, false));
+    if (sent === 'failed') sent = sendTelegram_(confirmTelegram(b, row.id, true));
+    if (sent === 'off') return;
+    pending[row.id] = { key: key, driverId: d.id, name: d.name || '', phone: String(d.phone || ''), ref: b.ref || '', at: b.updatedAt.getTime(), reminded: false };
+    saveBook_(row.id, { confirmAskedFor: key });
+  });
+  if (pending) saveConfirmsPending_(pending);
+}
+
+/** Is this booking still the job this question is about: assigned to that driver? */
+function stillHisJob_(b, e) {
+  return Boolean(b && b.status === 'assigned' && b.assignedDriver && b.assignedDriver.id === e.driverId);
+}
+
+/** Every minute (with the button presses): one reminder 15 minutes after a take nobody confirmed; questions about changed jobs are dropped. */
+function confirmReminders_(pending, now) {
+  var changed = false;
+  Object.keys(pending).forEach(function (id) {
+    var e = pending[id];
+    if (now - (e.at || 0) > CONFIRM_KEEP_MS) {
+      delete pending[id];
+      changed = true;
+      return;
+    }
+    if (e.reminded || now - (e.at || 0) < CONFIRM_REMIND_MIN * 60000) return;
+    changed = true;
+    if (!stillHisJob_(fsGet_('bookings/' + id), e)) {
+      delete pending[id]; // given to someone else in /admin, cancelled …: nothing to ask
+      return;
+    }
+    e.reminded = true;
+    sendTelegramSafe_(confirmReminderTelegram(e, id));
+  });
+  return changed;
+}
+
+/**
+ * Give to someone else: the booking back to confirmed with no driver and the
+ * offer out again as a fresh automatic cycle, never to him — like a job he
+ * gave back, but no strike (it was the office's call). Not once he has
+ * tapped Start. → '' when done, else why not.
+ */
+function giveToAnother_(id, b, e) {
+  var taps = fsGet_('tripTaps/' + id);
+  if (taps && taps.leftAt) return 'He has already tapped Start — call him, or change the driver in /admin.';
+  var o = fsGet_('offers/' + id);
+  if (!o || o.status !== 'taken' || !o.takenBy || o.takenBy.id !== e.driverId) return 'There is no job offer of his to send out again — change the driver in /admin.';
+  var alert = fsGet_('offerAlerts/' + id) || {};
+  var skip = (alert.skipIds || []).slice();
+  if (skip.indexOf(e.driverId) < 0) skip.push(e.driverId);
+  var now = new Date();
+  var fields = reopenedOffer(o, autoCuts(prop_('AUTO_OFFER_CUTS'))[0], now);
+  fsCommit_([
+    {
+      // driverConfirmed is in the mask but not the fields: removed, it was about him.
+      update: { name: docName_('bookings/' + id), fields: toFields({ status: 'confirmed', assignedDriver: null, updatedAt: now, updatedBy: 'robot' }) },
+      updateMask: { fieldPaths: ['status', 'assignedDriver', 'updatedAt', 'updatedBy', 'driverConfirmed'] },
+      currentDocument: { exists: true },
+    },
+    robotEvent_(id, 'assigned', 'confirmed', 'Office gave it to another driver', now),
+    {
+      update: { name: docName_('offers/' + id), fields: toFields(fields) },
+      updateMask: { fieldPaths: Object.keys(fields) },
+      currentDocument: { exists: true },
+    },
+    {
+      update: {
+        name: docName_('offerAlerts/' + id),
+        fields: toFields({ stage: 0, stageAt: now, alerted: [], skipIds: skip, widenedAt: null, stillPushedAt: null }),
+      },
+    },
+  ]);
+  var av = fsGet_('availability/' + e.driverId);
+  if (av && av.pushToken) sendPush_([givenAwayPush(av.pushToken, id)]);
+  return '';
+}
+
+/** A Confirmed ✓ / Give to someone else press from the office's chat. Changes `pending`. */
+function confirmPress_(cq, c, pending) {
+  var answer = function (text) { telegramApi_('answerCallbackQuery', { callback_query_id: cq.id, text: text }); };
+  var e = pending[c.bookingId];
+  if (!e) return answer('Already handled.');
+  var b = fsGet_('bookings/' + c.bookingId);
+  if (!stillHisJob_(b, e)) {
+    delete pending[c.bookingId];
+    return answer('The job has changed (it is not ' + firstName(e.name) + '\'s any more) — nothing done.');
+  }
+  var word;
+  if (c.action === 'conf') {
+    fsCommit_([{
+      update: { name: docName_('bookings/' + c.bookingId), fields: toFields({ driverConfirmed: { at: new Date(), by: 'telegram', driverId: e.driverId } }) },
+      updateMask: { fieldPaths: ['driverConfirmed'] },
+      currentDocument: { exists: true },
+    }]);
+    word = 'Confirmed ✓';
+  } else {
+    var why = giveToAnother_(c.bookingId, b, e);
+    if (why) return answer(why);
+    word = 'Offered again ✓';
+  }
+  delete pending[c.bookingId];
+  answer(word);
+  telegramApi_('editMessageText', {
+    chat_id: cq.message.chat.id,
+    message_id: cq.message.message_id,
+    text: String(cq.message.text || '') + '\n\n' + word + ' ' + formatIst(new Date()),
+  });
+}
+
 /* ------------------------------------------------------- the driver's taps */
 
 function syncTripTaps_(rows) {
@@ -2198,8 +2408,6 @@ function syncTaps_(id, taps) {
       currentDocument: { exists: true },
     });
   }
-  // The amount to collect, on his job screen (he can still read his taps once the booking is completed).
-  writes.push(tapsAmountWrite_(id, bill.amount));
   fsCommit_(writes);
   telegramLine_('✅ <b>' + escapeHtml(b.ref || id) + ' done</b> — ' + escapeHtml((b.assignedDriver && b.assignedDriver.name) || 'the driver') + ': ' + escapeHtml(note.replace('Completed automatically: ', '')));
 }
@@ -2319,35 +2527,23 @@ function pollPayments_() {
   });
 }
 
-/* ------------------------------------------- the driver collects the bill */
-
-/** The write that puts the amount to collect on the driver's job screen (tripTaps/{id}.amount, robot-only). */
-function tapsAmountWrite_(id, amount) {
-  return {
-    update: { name: docName_('tripTaps/' + id), fields: toFields({ amount: amount }) },
-    updateMask: { fieldPaths: ['amount'] },
-    currentDocument: { exists: true },
-  };
-}
+/* ------------------------------------------- the driver collects the bill
+   The driver is never sent the customer's price or DriveBuddy's cut: his
+   taps hold only his own times and "payment received"; the amount of a
+   payment comes from the booking's bill. */
 
 /**
- * A booking whose bill is known (the office saved a trip's final bill; a
- * local job's bill is sent with its completion): the amount goes to the
- * driver's taps, if he has any and it changed. If he already tapped "payment
- * received" before the amount was known, the booking is paid now.
+ * A booking whose bill is now known (the office saved a trip's final bill)
+ * and not paid yet: if the driver already tapped "payment received" before
+ * there was an amount, the booking is paid now.
  */
-function billsToDrivers_(rows) {
+function paymentsAwaitingBill_(rows) {
   rows.forEach(function (row) {
     var b = row.data;
     if ((b.status !== 'assigned' && b.status !== 'completed') || !b.assignedDriver) return;
-    var amount = billAmountOf(b);
-    if (!amount) return;
+    if (!billAmountOf(b) || (b.payment && b.payment.status === 'paid')) return;
     var taps = fsGet_('tripTaps/' + row.id);
     if (!taps || String(taps.driverPhone || '') !== String(b.assignedDriver.phone || '')) return;
-    if (taps.amount !== amount) {
-      fsCommit_([tapsAmountWrite_(row.id, amount)]);
-      taps.amount = amount;
-    }
     if (taps.paidBy) {
       var p = takePayment_(row.id, b, taps, false);
       if (p) b.payment = p; // completedBookings_ (next) sees it paid: no link, and the rating request
@@ -2368,7 +2564,7 @@ function paidTaps_(rows) {
  * kept goes on his offer (cashCollected) and into his cash total, Telegram
  * hears, and the customer is asked for a rating. → the payment, or null when
  * nothing was done (not his job any more, already paid, or no amount yet —
- * billsToDrivers_ comes back to it once the bill is saved).
+ * paymentsAwaitingBill_ comes back to it once the bill is saved).
  */
 function takePayment_(id, b, taps, fromTap) {
   if (!b || b.status === 'cancelled' || !b.assignedDriver) return null;
@@ -2640,16 +2836,20 @@ function markPaid_(driverId, ids) {
 }
 
 /**
- * While a payout waits for its Paid ✓ press: read the bot's updates
- * (getUpdates, from the last update_id seen), and for a press in the office's
- * own chat (TELEGRAM_CHAT_ID; any other chat is ignored) mark those jobs paid,
- * answer the button and change the message to "Paid ✓". Chats that wrote to
- * the bot meanwhile are remembered for setup().
+ * While a payout waits for its Paid ✓ / Settled ✓ press, or a take for its
+ * Confirmed ✓ / Give to someone else (confirmsPending; the 15-minute
+ * reminder goes from here too): read the bot's updates (getUpdates, from the
+ * last update_id seen), and for a press in the office's own chat
+ * (TELEGRAM_CHAT_ID; any other chat is ignored) do it, answer the button and
+ * add the outcome to the message. Chats that wrote to the bot meanwhile are
+ * remembered for setup().
  */
 function telegramCallbacks_() {
   var props = PropertiesService.getScriptProperties();
   var pending = JSON.parse(props.getProperty('payoutsPending') || '{}');
-  if (!Object.keys(pending).length || !prop_('TELEGRAM_BOT_TOKEN')) return;
+  var confirms = confirmsPending_();
+  if (Object.keys(confirms).length && confirmReminders_(confirms, Date.now())) saveConfirmsPending_(confirms);
+  if ((!Object.keys(pending).length && !Object.keys(confirms).length) || !prop_('TELEGRAM_BOT_TOKEN')) return;
   var last = Number(props.getProperty('telegramUpdateId') || 0);
   var got = telegramApi_('getUpdates', { offset: last ? last + 1 : 0, timeout: 0, allowed_updates: ['message', 'my_chat_member', 'callback_query'] });
   if (!got || !got.ok) return;
@@ -2662,6 +2862,12 @@ function telegramCallbacks_() {
     var cq = u.callback_query;
     if (!cq || !cq.message || !cq.message.chat) return;
     if (office.indexOf(String(cq.message.chat.id)) < 0) return; // not the office's chat: never counts
+    var c = parseConfirmCallback(cq.data);
+    if (c) {
+      confirmPress_(cq, c, confirms);
+      saveConfirmsPending_(confirms);
+      return;
+    }
     var p = parsePaidCallback(cq.data);
     if (!p) return;
     var key = p.driverId + ':' + p.week;
@@ -3710,6 +3916,7 @@ if (typeof module !== 'undefined') {
     tripClockOf: tripClockOf, tripClockNews: tripClockNews, sameClock: sameClock, hoursText: hoursText, tripTelegram: tripTelegram,
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
+    parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen,
     UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
   };
 }

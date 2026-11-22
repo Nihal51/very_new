@@ -4,7 +4,15 @@ import { useEffect, useState } from 'react';
 
 import { Detail, SectionTitle } from '@/components/admin/kit';
 import { watchRating, watchTripTaps } from '@/lib/admin';
-import { type Booking, type BookingPayment, type Rating, type TripTaps, formatDateTime, isInstantBooking } from '@/lib/bookings';
+import {
+  type Booking,
+  type BookingPayment,
+  type Rating,
+  type TripTaps,
+  formatDateTime,
+  isDriverConfirmed,
+  isInstantBooking,
+} from '@/lib/bookings';
 import { rupees } from '@/lib/settings';
 
 /** How a paid job was paid, and who said so. */
@@ -51,8 +59,11 @@ export function AppActivity({ b }: { b: Booking }) {
     : [];
   const bill = b.localBill;
   const pay = b.payment;
+  // The call to the driver who took it: asked for in Telegram, confirmed there.
+  const confirmed = isDriverConfirmed(b);
+  const showConfirm = confirmed || (b.status === 'assigned' && Boolean(b.assignedDriver));
 
-  if (!instant && !b.acceptedPrice && !tapRows.length && !bill && !pay && !rating) return null;
+  if (!instant && !b.acceptedPrice && !showConfirm && !tapRows.length && !bill && !pay && !rating) return null;
 
   return (
     <div className="border-border mt-5 border-t pt-5">
@@ -69,6 +80,17 @@ export function AppActivity({ b }: { b: Booking }) {
           <Detail label="Price accepted in the app" wide>
             {rupees(b.acceptedPrice.amount)}
             {b.acceptedPrice.at ? ` · ${formatDateTime(b.acceptedPrice.at)}` : ''}
+          </Detail>
+        )}
+        {showConfirm && (
+          <Detail label="Driver" wide>
+            {confirmed ? (
+              <span className="text-success font-semibold">
+                Driver confirmed by call ✓{b.driverConfirmed?.at ? ` (${formatDateTime(b.driverConfirmed.at)})` : ''}
+              </span>
+            ) : (
+              'Not confirmed by call yet (Telegram: Confirmed ✓ or Give to someone else)'
+            )}
           </Detail>
         )}
         {tapRows.map(([label, at]) => (

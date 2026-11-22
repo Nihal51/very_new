@@ -1026,12 +1026,12 @@ describe('trip taps — "payment received" (UPI spec 4)', () => {
     await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1' });
   });
 
-  test('after Job done, even once the robot completed the booking: he still reads his taps (with the amount) and taps paid', async () => {
+  test('after Job done, even once the robot completed the booking: he still reads his taps and taps paid', async () => {
     await seedBooking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'cust1', localBill: { amount: 750 } });
-    await seedAs('tripTaps/b1', done({ amount: 750 }));
+    await seedAs('tripTaps/b1', done());
     const db = drvDb(RAJU);
-    const snap = await assertSucceeds(getDoc(ref(db)));
-    assert.equal(snap.data().amount, 750);
+    await assertSucceeds(getDoc(ref(db)));
+    await assertFails(getDoc(doc(db, 'bookings', 'b1'))); // the completed booking (and its price) he no longer reads
     await assertSucceeds(paid(db, 'upi'));
     let t;
     await env.withSecurityRulesDisabled(async (ctx) => {
@@ -1069,7 +1069,7 @@ describe('trip taps — "payment received" (UPI spec 4)', () => {
     await assertFails(updateDoc(ref(db), { paidBy: 'upi', paidAt: new Date() })); // his own clock
     await assertFails(updateDoc(ref(db), { paidBy: 'upi' })); // no time
     await assertFails(updateDoc(ref(db), { paidAt: serverTimestamp() })); // no method
-    await assertFails(paid(db, 'cash', { amount: 1 })); // the amount is the robot's
+    await assertFails(paid(db, 'cash', { amount: 1 })); // no amount on his taps
     await assertFails(paid(db, 'cash', { note: 'paid' }));
     await assertFails(paid(db, 'cash', { homeAt: serverTimestamp() }));
     await assertFails(updateDoc(ref(db), { amount: 1 }));
@@ -1139,6 +1139,42 @@ describe('offers — cash the driver kept (UPI spec 7)', () => {
     await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date(), done: true }));
     await assertFails(updateDoc(doc(drvDb(RAJU), 'offers', 'b1'), { cashCollected: 0, updatedAt: serverTimestamp() }));
     await assertFails(updateDoc(doc(drvDb(RAJU), 'offers', 'b1'), { cashCollected: 750, updatedAt: serverTimestamp() }));
+  });
+});
+
+describe('bookings — driverConfirmed is the robot’s (call to confirm)', () => {
+  const confirmed = { at: new Date(), by: 'telegram', driverId: 'd1' };
+  const giveBack = (db, who) =>
+    runTransaction(db, async (tx) => {
+      const ref = doc(db, 'offers', 'b1');
+      await tx.get(ref);
+      tx.update(ref, { status: 'released', updatedAt: serverTimestamp() });
+      tx.update(doc(db, 'bookings', 'b1'), { status: 'confirmed', assignedDriver: null, updatedAt: serverTimestamp(), updatedBy: `driver-${who.phone}` });
+    });
+
+  beforeEach(async () => {
+    await seedDriversRB();
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1', driverConfirmed: confirmed });
+    await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date() }));
+  });
+
+  test('no browser writes it: not an admin, the driver, the customer, nor a new booking', async () => {
+    const mine = { at: serverTimestamp(), by: 'telegram', driverId: 'd1' };
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'b1'), { driverConfirmed: mine, updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'b1'), { driverConfirmed: deleteField(), updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'b1'), { driverConfirmed: null, updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
+    await assertFails(updateDoc(doc(drvDb(RAJU), 'bookings', 'b1'), { driverConfirmed: mine }));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { driverConfirmed: mine }));
+    await seedBooking('b2', { status: 'assigned', assignedDriver: RAJU });
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'b2'), { driverConfirmed: mine, updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
+    await assertFails(addDoc(collection(guest(), 'bookings'), booking({ driverConfirmed: { by: 'telegram', driverId: 'd1' } })));
+  });
+
+  test('a booking that has it still takes the usual admin and driver changes', async () => {
+    await assertSucceeds(getDoc(doc(drvDb(RAJU), 'bookings', 'b1'))); // he can see he was confirmed
+    await assertSucceeds(giveBack(drvDb(RAJU), RAJU));
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1', driverConfirmed: confirmed });
+    await assertSucceeds(updateDoc(doc(admin(), 'bookings', 'b1'), { status: 'completed', updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
   });
 });
 

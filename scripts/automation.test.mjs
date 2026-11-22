@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
-import { PACKAGE_NAMES, UPI_ID, isInstantBooking, isUpiPayUrl, toLocalBill, toPayment, toAcceptedPrice, toTripTaps } from '../lib/bookings.ts';
+import { PACKAGE_NAMES, UPI_ID, isDriverConfirmed, isInstantBooking, isUpiPayUrl, toDriverConfirmed, toLocalBill, toPayment, toAcceptedPrice, toTripTaps } from '../lib/bookings.ts';
 import { offerCitiesFor, offerSettlement } from '../lib/offers.ts';
 import { checkSettings } from '../lib/settings-schema.ts';
 import { settings } from '../site-settings.ts';
@@ -93,8 +93,9 @@ test('UPI pay links: the robot makes what the admin panel and the apps accept; o
   const cash = toPayment({ status: 'paid', method: 'cash', amount: 750, by: 'driver', paidAt: new Date(), at: new Date() });
   assert.deepEqual([cash.status, cash.method, cash.by, cash.url], ['paid', 'cash', 'driver', ''], 'a payment the driver confirmed has no link');
   assert.equal(toPayment({ status: 'paid', method: 'bitcoin', amount: 750 }).method, undefined);
-  const taps = toTripTaps({ driverPhone: '9893302783', doneAt: new Date(), amount: 750, paidBy: 'cash', paidAt: new Date() });
-  assert.deepEqual([taps.amount, taps.paidBy], [750, 'cash']);
+  const taps = toTripTaps({ driverPhone: '9893302783', doneAt: new Date(), paidBy: 'cash', paidAt: new Date() });
+  assert.equal(taps.paidBy, 'cash');
+  assert.ok(taps.paidAt);
   assert.equal(toTripTaps({ driverPhone: '9893302783', paidBy: 'card' }).paidBy, undefined);
 });
 
@@ -106,4 +107,16 @@ test('one job’s settlement in /admin adds up like the robot’s weekly payout'
     assert.deepEqual([s.earned, s.cash, s.net], [g.amount, g.cash, g.net], `${driverPay} / ${cashCollected}`);
   }
   assert.ok(read('firestore.rules').includes("'cashCollected'"), 'the rules allow cashCollected on an offer');
+});
+
+test('call to confirm: the confirmation counts only for the driver it was about; no browser may write it', () => {
+  const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+  const c = toDriverConfirmed({ at: new Date(), by: 'telegram', driverId: 'd1' });
+  assert.equal(isDriverConfirmed({ assignedDriver: RAJU, driverConfirmed: c }), true);
+  assert.equal(isDriverConfirmed({ assignedDriver: { ...RAJU, id: 'd2' }, driverConfirmed: c }), false, 'another driver since');
+  assert.equal(isDriverConfirmed({ assignedDriver: null, driverConfirmed: c }), false);
+  assert.equal(toDriverConfirmed({ by: 'telegram' }), null);
+  assert.equal(toDriverConfirmed(null), null);
+  assert.ok(!read('firestore.rules').includes("'driverConfirmed'"), 'no rule names it, so no browser write can include it');
+  assert.ok(!read('lib/admin.ts').includes('driverConfirmed'), 'the admin panel never writes it');
 });

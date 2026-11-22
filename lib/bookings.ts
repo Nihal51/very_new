@@ -163,9 +163,9 @@ export type BookingPayment = {
 };
 
 /**
- * The Driver app's taps on a job (tripTaps/{bookingId}, firestore.rules).
- * amount: the bill to collect (the robot's); paidBy / paidAt: the driver's
- * "Paid by UPI" / "Paid in cash".
+ * The Driver app's taps on a job (tripTaps/{bookingId}, firestore.rules):
+ * his times, then paidBy / paidAt — "Paid by UPI" / "Paid in cash". No
+ * amount: the driver is never shown the customer's price.
  */
 export type TripTaps = {
   driverPhone: string;
@@ -173,10 +173,17 @@ export type TripTaps = {
   arrivedAt?: Date;
   doneAt?: Date;
   homeAt?: Date;
-  amount?: number;
   paidBy?: 'upi' | 'cash';
   paidAt?: Date;
 };
+
+/**
+ * The office confirmed by phone the driver who took the job in the app (the
+ * alerts robot writes it when Confirmed ✓ is pressed in Telegram; no browser
+ * can). It is about driverId only: once the job has another driver it no
+ * longer counts.
+ */
+export type DriverConfirmed = { at?: Date; by: string; driverId: string };
 
 /** The customer's rating of the driver (ratings/{bookingId}). */
 export type Rating = { stars: number; comment: string; driverId: string; customerUid: string; at?: Date };
@@ -204,6 +211,7 @@ export type Booking = {
   acceptedPrice?: BookingAcceptedPrice | null;
   localBill?: BookingLocalBill | null;
   payment?: BookingPayment | null;
+  driverConfirmed?: DriverConfirmed | null;
   ref?: string;
   number?: number;
   isReturning?: boolean;
@@ -460,6 +468,18 @@ export function toPayment(v: unknown): BookingPayment | null {
   };
 }
 
+/** A stored driver confirmation → typed; null when there is none. */
+export function toDriverConfirmed(v: unknown): DriverConfirmed | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  if (typeof c.driverId !== 'string' || !c.driverId) return null;
+  return { at: toDate(c.at), by: String(c.by ?? ''), driverId: c.driverId };
+}
+
+/** Is the booking's current driver the one the office confirmed by call? */
+export const isDriverConfirmed = (b: Pick<Booking, 'assignedDriver' | 'driverConfirmed'>) =>
+  Boolean(b.assignedDriver && b.driverConfirmed && b.driverConfirmed.driverId === b.assignedDriver.id);
+
 /** A stored taps document → typed; null when there is none. */
 export function toTripTaps(v: unknown): TripTaps | null {
   if (!v || typeof v !== 'object') return null;
@@ -470,7 +490,6 @@ export function toTripTaps(v: unknown): TripTaps | null {
     arrivedAt: toDate(t.arrivedAt),
     doneAt: toDate(t.doneAt),
     homeAt: toDate(t.homeAt),
-    ...(num(t.amount) > 0 ? { amount: num(t.amount) } : {}),
     ...(t.paidBy === 'upi' || t.paidBy === 'cash' ? { paidBy: t.paidBy } : {}),
     paidAt: toDate(t.paidAt),
   };
