@@ -37,8 +37,8 @@ How a booking travels from a customer's phone to a driver, and how to set it up.
 | `users/{uid}/devices/{id}` | phone with the DriveBuddy app and notifications on | the app (push token + language) | that customer; the robot |
 | `admins/{email}` | admin Google account | robot's `setup` (or the Firebase console) | that admin, to check their own access |
 | `meta/counters` | — | robot only | nobody from a browser |
-| `offers/{bookingId}` | job offered to drivers | admin, robot; the driver who takes it or gives it back | admin; Active drivers of the cities in `cities` (open offers); the driver who took it |
-| `tripTaps/{bookingId}` | job a driver is on | the assigned driver (Start, Arrived, Job done, Reached home) | admin, that driver |
+| `offers/{bookingId}` | job offered to drivers | admin, robot (also `cashCollected`: cash the driver kept); the driver who takes it or gives it back | admin; Active drivers of the cities in `cities` (open offers); the driver who took it |
+| `tripTaps/{bookingId}` | job a driver is on | the assigned driver (Start, Arrived, Job done, Reached home, then *Paid by UPI* / *Paid in cash* once); robot (`amount`: the bill to collect) | admin, that driver (also after the job is completed) |
 | `ratings/{bookingId}` | completed job the customer rated | that customer (once) | admin, that customer |
 | `reminders/{bookingId}`, `offerAlerts/{bookingId}` | the robot's own notes (reminders, payment, rating request; who was alerted) | robot only | nobody from a browser |
 
@@ -106,11 +106,27 @@ The Driver and Customer apps and the robot now handle the simple jobs without a 
 2. **Can't make it.** A driver can give back a job he took, until he taps Start. The robot offers it again from the start (never to him) and adds a strike to his record (Drivers tab: *Jobs given back*).
 3. **Reminders.** An hour before the trip time, the customer ("Your driver Raju arrives at 3:30 pm") and the driver ("Job at 3:30 pm · Shankar Nagar") get one notification.
 4. **Trip taps.** The driver taps **Start → Arrived → Job done** (one-way drops: **→ Reached home**) in the Driver app. For outstation trips and one-way drops the times go to the booking's clock and Telegram, as with the trip link; you still save the final bill. For local jobs (1 hour, 3 hours, full day, night) **Job done** makes the bill — the package price plus each hour over it after 15 minutes' grace, at `prices.localExtraHour` in `site-settings.ts` — and completes the booking.
-5. **Payment link (optional).** With `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` set, a completed job with a bill gets a Razorpay payment link by SMS; the app shows **Pay** / **Paid ✓**, and the robot checks every 5 minutes. Without the keys nothing happens.
+5. **Payment.** A completed job with a bill is paid without a gateway: see *Payments without a gateway* below (script property `UPI_ID`). Razorpay stays available: with `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` set, the robot sends a Razorpay payment link by SMS instead (the app shows **Pay** / **Paid ✓**, the robot checks every 5 minutes).
 6. **Ratings.** After the job (and the payment, when payments are on) the customer is asked once to rate the driver. Ratings make the driver's average in the Drivers tab; a 5-star customer is invited to review you on Google. Drivers rated below 4 (3+ ratings) or with 3+ jobs given back get new jobs after the others. Below 3.5 with 5+ ratings, Telegram asks whether to pause him — the robot never does that itself.
-7. **Payouts.** Mondays around 9:30, Telegram lists each driver to pay (total, UPI ID he set in the app, jobs) with a **Paid ✓** button. Press it after paying: his jobs are marked paid. Only presses in your own chat count.
-8. **9 pm report.** Today's bookings, revenue, DriveBuddy's cut, jobs nobody took, drivers online and payouts due.
+7. **Payouts.** Mondays around 9:30, one Telegram per driver with done, unpaid jobs: what he earned **minus the cash he kept**. *"Pay Raju Sahu ₹450 · UPI raju@okaxis · 3 jobs (earned ₹1,350 − cash he kept ₹900)"* with **Paid ✓** — pay him, then press it. If he kept more cash than he earned: *"Raju Sahu owes DriveBuddy ₹300 … — collect it"* with **Settled ✓**; if it comes out even, *"nothing to pay"* with **Settled ✓**. Either button marks those jobs paid. Only presses in your own chat count.
+8. **9 pm report.** Today's bookings, revenue, DriveBuddy's cut, jobs nobody took, drivers online, payments today (*UPI ₹X (n) · cash ₹Y (n) · unpaid ₹Z (n)*) and payouts due (and cash to collect from drivers).
 9. **Nearby cities.** An automatic offer nobody takes 10 minutes after its pay reached the top goes to Bhilai and Durg drivers too (for Raipur; and the other way round), and the customer hears "Still finding your driver".
+
+### Payments without a gateway (UPI link + the driver confirms)
+
+No payment gateway, no fee. Set it up once: Apps Script → ⚙ Project Settings → Script properties:
+
+- `UPI_ID` — DriveBuddy's own UPI ID, e.g. `drivebuddy@ybl` (the one on your UPI QR). Payments stay off until it is set (or until the Razorpay keys are, which then take priority).
+- `UPI_NAME` — the name shown in the customer's UPI app; default `DriveBuddy`.
+
+How a job is paid:
+
+1. When the bill is known (a local job's bill at **Job done**, or the trip bill you save in `/admin`), the robot puts the amount on the driver's job screen: *"Collect ₹750 from the customer"*.
+2. The booking gets a UPI pay link (`upi://pay?pa=…&am=750.00&tn=DB-1042`): the customer taps **Pay ₹750 by UPI** in the DriveBuddy app, or scans your QR the driver shows, or pays the driver cash.
+3. The driver taps **Paid by UPI** or **Paid in cash** — once. The booking becomes *Paid ✓* (method and "confirmed by the driver" in the booking's *In the apps* panel), Telegram says *"DB-1042: Raju Sahu collected ₹750 in cash"*, and the customer is asked to rate the driver.
+4. Cash he kept is written on his job offer (*Cash kept by driver* in `/admin`) and comes off his Monday payout. Check UPI payments against your UPI app's history: the booking number is in each payment's note.
+
+**Cash limit (like Uber).** A driver who holds more of DriveBuddy's cash than `payments.cashLimit` in `site-settings.ts` (default **2000**: cash he kept minus what he earned, over his unpaid jobs) gets **no new job alerts** until he settles. Telegram tells you once when he crosses it (with a **Settled ✓** button), and his phone gets one reminder a day (9 am–9 pm): *"Settle ₹X with DriveBuddy to get new jobs"*. The Driver app's Earnings screen shows him the same limit (it reads it from `app-config.json`). Once you have collected: press **Settled ✓**, or mark his jobs paid in `/admin` — he gets alerts again within 5 minutes. There is no script property for the limit: change it in `site-settings.ts` only.
 
 After pasting the new `Code.js`, nothing else is needed: the Monday and 9 pm triggers set themselves up on the next minute's run (or run **Connect Telegram and start** again). Publish the new `firestore.rules` at the same time as the apps that use them.
 
