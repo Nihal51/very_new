@@ -1148,11 +1148,13 @@ function driverVerify_(body, now) {
 /* ========================================================== job dispatch
    Job offers (firestore.rules, offers/{bookingId}) reach the drivers' phones:
 
-   • Automatic offers: a booking with a known price is offered to its city's
-     drivers by itself the moment an admin confirms it (status "confirmed", no
-     driver yet): the price agreed on the call (quote) if there is one, else the
-     website's price for 1 hour / 3 hours (SITE_URL/app-config.json). Others
-     (no price yet) are offered by hand from /admin. AUTO_OFFERS = off stops it.
+   • Automatic offers: a booking with a price estimate (estimateOf: the price
+     agreed on the call, the trip price the customer accepted, else the site's
+     own pricing from SITE_URL/app-config.json — 1 hour, 3 hours, full day,
+     night, or the trip estimate) is offered to its zone's drivers by itself
+     once it is confirmed (status "confirmed", no driver yet). Others
+     (emergency, monthly, wedding, a trip without an estimate) are offered by
+     hand from /admin. AUTO_OFFERS = off stops it.
    • Driver pay that rises: an automatic offer starts with DriveBuddy's cut at
      30%; with no taker after AUTO_OFFER_STEP_MIN minutes it drops to 25%, then
      to 20% (AUTO_OFFER_CUTS) — the driver earns more each time, and every
@@ -1169,7 +1171,6 @@ function driverVerify_(body, now) {
    write it), so the offer document keeps exactly the shape the rules check. */
 
 var DISPATCH = { firstWave: 3, wideAfterMs: 60 * 1000, alarmAfterMs: 4 * 60 * 1000, freshMs: 10 * 60 * 1000 };
-var AUTO_PACKAGES = { '1-hour-300': 'oneHour', '3-hours-600': 'threeHours' };
 var AUTO_CUTS = [30, 25, 20];
 var AUTO_STEP_MIN = 2;
 
@@ -1200,13 +1201,47 @@ function agreedPriceOf(b) {
   return 0;
 }
 
-/** The price an offer can go out at by itself: quote → accepted price → the site's fixed price; 0 = none. */
-function autoPriceOf(b, prices) {
-  var agreed = agreedPriceOf(b);
-  if (agreed) return agreed;
-  var key = AUTO_PACKAGES[b.package];
-  var fixed = key && prices && Number(prices[key]);
-  return fixed >= 100 ? Math.round(fixed) : 0;
+/**
+ * The price a job can go to drivers at by itself, from the site's own
+ * pricing (lib/estimate.ts on the website gives the same answer —
+ * scripts/automation.test.mjs checks): → { amount, basis }, in this order:
+ *   the price agreed on the call (quote) → the trip price the customer
+ *   accepted in the app (accepted) → 1 hour / 3 hours: the fixed price
+ *   (fixed) → local full day: the top of its range (fullDay) → night
+ *   driver: its from-price (night) → outstation / one-way drop: the trip
+ *   estimate the customer saw (trip). Anything else — hospital / emergency,
+ *   monthly, wedding / event, a trip without an estimate — has none
+ *   ({ amount: 0, basis: '' }): the office prices it on the call.
+ * Each amount counts only as whole rupees from 100 to 500000; an odd one is
+ * passed over for the next.
+ */
+function estimateOf(b, prices) {
+  b = b || {};
+  prices = prices || {};
+  var whole = function (v) {
+    var n = Number(v);
+    return Number.isInteger(n) && n >= 100 && n <= 500000 ? n : 0;
+  };
+  var steps = [
+    ['quote', b.quote && b.quote.amount],
+    ['accepted', b.acceptedPrice && b.acceptedPrice.amount],
+  ];
+  var pkg = b.package;
+  if (pkg === '1-hour-300') steps.push(['fixed', prices.oneHour]);
+  if (pkg === '3-hours-600') steps.push(['fixed', prices.threeHours]);
+  if (pkg === 'local-full-day') steps.push(['fullDay', prices.fullDay && prices.fullDay.to]);
+  if (pkg === 'night-driver') steps.push(['night', prices.nightFrom]);
+  if (pkg === 'outstation' || pkg === 'one-way-drop') steps.push(['trip', b.trip && b.trip.estTo]);
+  for (var i = 0; i < steps.length; i++) {
+    var amount = whole(steps[i][1]);
+    if (amount) return { amount: amount, basis: steps[i][0] };
+  }
+  return { amount: 0, basis: '' };
+}
+
+/** Does this booking's estimate need the site's prices (a package priced on the site, with no agreed or trip price)? */
+function estimateNeedsPrices(b) {
+  return !estimateOf(b, {}).amount && ['1-hour-300', '3-hours-600', 'local-full-day', 'night-driver'].indexOf(b && b.package) >= 0;
 }
 
 /**
@@ -1329,7 +1364,7 @@ function driverPayOf(price, cutPercent) {
 
 /** The automatic offer for a confirmed booking with a price, in the exact shape firestore.rules checks; null if not one. */
 function autoOfferFor(id, b, prices, cut, now) {
-  var price = autoPriceOf(b, prices);
+  var price = estimateOf(b, prices).amount;
   if (!price || b.status !== 'confirmed' || b.assignedDriver) return null;
   var area = offerAreaOf(b.pickup);
   if (area.length < 2) area = b.city;
@@ -1394,7 +1429,7 @@ function siteCashLimit_() {
   }
 }
 
-/** Confirmed fixed-price bookings → an open offer, once. */
+/** Confirmed bookings with an estimate (estimateOf) → an open offer, once. */
 function autoOffers_() {
   if (prop_('AUTO_OFFERS') === 'off') return;
   changedSince_('bookings', 'autoOfferMs', function (rows) {
@@ -1403,10 +1438,11 @@ function autoOffers_() {
     rows.forEach(function (row) {
       var b = row.data;
       if (b.status !== 'confirmed' || b.assignedDriver) return;
-      if (!AUTO_PACKAGES[b.package] && !agreedPriceOf(b)) return; // no price yet
+      var needsPrices = estimateNeedsPrices(b);
+      if (!needsPrices && !estimateOf(b, {}).amount) return; // no price yet: the office prices it on the call
       if (fsGet_('offers/' + row.id)) return; // already offered (by hand or before)
       // The site's prices only when needed (and once a run).
-      if (!agreedPriceOf(b) && !prices) prices = sitePrices_();
+      if (needsPrices && !prices) prices = sitePrices_();
       var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date());
       if (!offer) return;
       fsCommit_([{ update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } }]);
@@ -3996,6 +4032,7 @@ if (typeof module !== 'undefined') {
     updateKey: updateKey, customerPush: customerPush, whatsappAssigned: whatsappAssigned, floodTelegram: floodTelegram,
     tripClockOf: tripClockOf, tripClockNews: tripClockNews, sameClock: sameClock, hoursText: hoursText, tripTelegram: tripTelegram,
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
+    estimateOf: estimateOf,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
     ZONES: ZONES, zoneOf: zoneOf,
     parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen, confirmedFor: confirmedFor,

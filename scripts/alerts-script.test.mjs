@@ -1209,8 +1209,54 @@ describe('job dispatch', () => {
     assert.equal(env.ctx.fromFields(env.store.docs.get('offers/q2')).price, 700);
   });
 
+  test('a confirmed full-day booking is offered by itself at the estimate (top of the range), starting at a 30% cut', () => {
+    confirm('f1', 'local-full-day');
+    env.ctx.autoOffers_();
+    const o = env.ctx.fromFields(env.store.docs.get('offers/f1'));
+    assert.deepEqual([o.status, o.price, o.cutPercent, o.driverPay, o.by], ['open', 1200, 30, 840, 'robot']);
+    assert.deepEqual([...o.cities], ['Raipur', 'Bhilai', 'Durg']);
+  });
+
+  test('night driver at its from-price; outstation and one-way at the trip estimate; none without one', () => {
+    confirm('n1', 'night-driver');
+    const trip = (estTo) => ({ mapValue: { fields: { to: s('Nagpur'), kind: s('one-way'), estFrom: n(1440), estTo: n(estTo) } } });
+    confirm('t1', 'one-way-drop', { trip: trip(1600) });
+    confirm('t2', 'outstation', { trip: trip(3300) });
+    confirm('t3', 'outstation'); // no estimate: the office prices it on the call
+    confirm('w1', 'wedding-event');
+    confirm('m1', 'monthly-basic');
+    env.ctx.autoOffers_();
+    const price = (id) => (env.store.docs.has(`offers/${id}`) ? env.ctx.fromFields(env.store.docs.get(`offers/${id}`)).price : null);
+    assert.deepEqual(['n1', 't1', 't2', 't3', 'w1', 'm1'].map(price), [500, 1600, 3300, null, null, null]);
+    assert.equal(env.ctx.fromFields(env.store.docs.get('offers/t1')).to, 'Nagpur');
+  });
+
+  test('pure: every basis, the order, and the none cases', () => {
+    const est = (b, prices = { oneHour: 300, threeHours: 600, fullDay: { from: 1000, to: 1200 }, nightFrom: 500 }) => JSON.parse(JSON.stringify(env.ctx.estimateOf(b, prices)));
+    assert.deepEqual(est({ package: '3-hours-600', quote: { amount: 700 } }), { amount: 700, basis: 'quote' });
+    assert.deepEqual(est({ package: 'outstation', quote: { amount: 3100 }, acceptedPrice: { amount: 3300 }, trip: { estTo: 3500 } }), { amount: 3100, basis: 'quote' }, 'the quote beats everything');
+    assert.deepEqual(est({ package: 'outstation', acceptedPrice: { amount: 3300 }, trip: { estTo: 3500 } }), { amount: 3300, basis: 'accepted' });
+    assert.deepEqual(est({ package: '1-hour-300' }), { amount: 300, basis: 'fixed' });
+    assert.deepEqual(est({ package: '3-hours-600' }), { amount: 600, basis: 'fixed' });
+    assert.deepEqual(est({ package: 'local-full-day' }), { amount: 1200, basis: 'fullDay' });
+    assert.deepEqual(est({ package: 'night-driver' }), { amount: 500, basis: 'night' });
+    assert.deepEqual(est({ package: 'one-way-drop', trip: { estTo: 1600 } }), { amount: 1600, basis: 'trip' });
+    assert.deepEqual(est({ package: 'outstation', trip: { estTo: 3500 } }), { amount: 3500, basis: 'trip' });
+    const none = { amount: 0, basis: '' };
+    for (const pkg of ['medical-emergency', 'monthly-basic', 'monthly-premium', 'wedding-event']) assert.deepEqual(est({ package: pkg }), none, pkg);
+    assert.deepEqual(est({ package: 'outstation' }), none, 'a trip without an estimate');
+    assert.deepEqual(est({ package: 'outstation', trip: { estTo: 99 } }), none, 'below 100');
+    assert.deepEqual(est({ package: 'one-way-drop', trip: { estTo: 500001 } }), none, 'above 500000');
+    assert.deepEqual(est({ package: 'one-way-drop', trip: { estTo: 1600.5 } }), none, 'whole rupees only');
+    assert.deepEqual(est({ package: '3-hours-600', quote: { amount: 50 } }), { amount: 600, basis: 'fixed' }, 'an odd quote is passed over');
+    assert.deepEqual(est({ package: 'medical-emergency', quote: { amount: 900 } }), { amount: 900, basis: 'quote' }, 'priced on the call: offered at that');
+    assert.deepEqual(est({ package: 'local-full-day' }, {}), none, 'no site prices');
+    assert.deepEqual(est({ package: 'night-driver' }, { nightFrom: '500' }), { amount: 500, basis: 'night' }, 'a number as text still counts');
+  });
+
   test('pure: the cut steps and the automatic price', () => {
-    const { autoCuts, autoCutAt, autoPriceOf } = env.ctx;
+    const { autoCuts, autoCutAt } = env.ctx;
+    const autoPriceOf = (b, prices) => env.ctx.estimateOf(b, prices).amount;
     assert.deepEqual([...autoCuts('')], [30, 25, 20]);
     assert.deepEqual([...autoCuts('20, 30,25,99')], [30, 25, 20]);
     assert.deepEqual([...autoCuts('nonsense')], [30, 25, 20]);
@@ -1219,7 +1265,7 @@ describe('job dispatch', () => {
     assert.equal(autoCutAt(2 * m + 1, [30, 25, 20], 2 * m), 25);
     assert.equal(autoCutAt(60 * m, [30, 25, 20], 2 * m), 20);
     assert.equal(autoPriceOf({ package: '1-hour-300' }, { oneHour: 300 }), 300);
-    assert.equal(autoPriceOf({ package: 'local-full-day' }, { oneHour: 300 }), 0);
+    assert.equal(autoPriceOf({ package: 'local-full-day' }, { oneHour: 300 }), 0, 'no full-day price on the site: none');
     assert.equal(autoPriceOf({ package: 'local-full-day', quote: { amount: 1100 } }, {}), 1100);
     assert.equal(autoPriceOf({ package: 'outstation', quote: { amount: 50 } }, {}), 0);
   });
@@ -1274,7 +1320,7 @@ describe('job dispatch', () => {
   });
 
   test('not for packages without a price, new or assigned bookings, or when switched off', () => {
-    confirm('b2', 'local-full-day');
+    confirm('b2', 'medical-emergency');
     seedBooking(env.store, 'b3', { extra: { status: s('new'), updatedAt: ts(1000) } });
     confirm('b4', '1-hour-300', { assignedDriver: { mapValue: { fields: { id: s('d1'), name: s('X'), phone: s('9893302783') } } } });
     env.ctx.autoOffers_();
@@ -1374,7 +1420,7 @@ describe('automation', () => {
     });
 
     test('the automatic price: quote, then the accepted price, then the site price', () => {
-      const { autoPriceOf } = env.ctx;
+      const autoPriceOf = (b, prices) => env.ctx.estimateOf(b, prices).amount;
       const prices = { oneHour: 300, threeHours: 600 };
       assert.equal(autoPriceOf({ package: 'outstation', quote: { amount: 3100 }, acceptedPrice: { amount: 3300 } }, prices), 3100);
       assert.equal(autoPriceOf({ package: 'outstation', acceptedPrice: { amount: 3300 } }, prices), 3300);

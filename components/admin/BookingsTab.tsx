@@ -64,6 +64,8 @@ import {
   type DateRange,
   type Driver,
 } from '@/lib/bookings';
+import { estimateBasisText, estimateOf } from '@/lib/estimate';
+import { rupeeRange, rupees, settings } from '@/lib/settings';
 import { cn } from '@/lib/cn';
 import { accuracyText, mapsLink, type PickupGeo } from '@/lib/geo';
 import { downloadCsv, exportName, sheetPhone } from '@/lib/export';
@@ -445,6 +447,17 @@ function Row({
  * For spam or abuse: stop this number from booking or applying again (website
  * and app). Two steps on purpose, with a reason, and undoable.
  */
+/** No price agreed on the call yet: what the site's prices say (the robot offers it to drivers at this). */
+function EstimateLine({ b }: { b: Booking }) {
+  const est = estimateOf(b, settings.prices);
+  if (!est.amount) return null;
+  return (
+    <Detail label="Estimated price" wide>
+      {rupees(est.amount)} ({estimateBasisText(est, settings.prices, rupeeRange)})
+    </Detail>
+  );
+}
+
 function BlockNumber({ phone, user }: { phone: string; user: User }) {
   const [blocked, setBlocked] = useState<boolean | null>(null);
   const [asking, setAsking] = useState(false);
@@ -645,6 +658,7 @@ function BookingDetail({
         <dl className="mt-5 grid grid-cols-2 gap-x-5 gap-y-3">
           <Detail label="Package">{packageName(b.package)}</Detail>
           <Detail label="City">{b.city}</Detail>
+          {!b.quote && <EstimateLine b={b} />}
           <Detail label="Pickup" wide>
             {b.pickup}
             {b.pickupGeo && (

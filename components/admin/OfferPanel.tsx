@@ -10,8 +10,9 @@ import { Input, Select } from '@/components/ui/Field';
 import { markOfferPaid, postOffer, withdrawOffer } from '@/lib/admin';
 import { pingAlerts } from '@/lib/firebase';
 import { type Booking, formatDateTime, prettyPhone } from '@/lib/bookings';
+import { estimateBasisText, estimateOf } from '@/lib/estimate';
 import { CUT, type Offer, citiesText, driverPayFor, offerArea, offerCitiesFor, offerSettlement } from '@/lib/offers';
-import { rupees } from '@/lib/settings';
+import { rupeeRange, rupees, settings } from '@/lib/settings';
 
 const CUTS = Array.from({ length: CUT.max - CUT.min + 1 }, (_, i) => CUT.min + i);
 
@@ -23,7 +24,10 @@ const CUTS = Array.from({ length: CUT.max - CUT.min + 1 }, (_, i) => CUT.min + i
  * never the customer's name, number or address, until they have accepted.
  */
 export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null | undefined; user: User }) {
-  const [price, setPrice] = useState(String(b.quote?.amount ?? offer?.price ?? ''));
+  // Nothing quoted or offered yet: the estimate from the site's prices (the same the robot offers at).
+  const est = estimateOf(b, settings.prices);
+  const fromEstimate = b.quote?.amount == null && offer?.price == null && est.amount > 0;
+  const [price, setPrice] = useState(String(b.quote?.amount ?? offer?.price ?? (est.amount || '')));
   const [cut, setCut] = useState(offer?.cutPercent ?? CUT.default);
   const [area, setArea] = useState(offer?.area ?? offerArea(b.pickup));
   const [busy, setBusy] = useState<'post' | 'withdraw' | 'paid' | null>(null);
@@ -152,11 +156,11 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
 
       {canOffer && (!offer || offer.status === 'withdrawn') && (
         <div className="flex flex-col gap-3">
-          {!offer && (b.package === '1-hour-300' || b.package === '3-hours-600') && (
+          {!offer && est.amount > 0 && (
             <p className="text-fg-muted text-sm">
               {b.status === 'new'
-                ? 'This one goes to drivers by itself when you confirm it (the usual price, 25% cut). Or offer it now:'
-                : 'Going to drivers by itself in a moment (the usual price, 25% cut)…'}
+                ? 'This one goes to drivers by itself when you confirm it, at the estimate below (DriveBuddy’s cut starts at 30%). Or offer it now:'
+                : 'Going to drivers by itself in a moment, at the estimate below…'}
             </p>
           )}
           {offer?.status === 'withdrawn' && <p className="text-fg-muted text-sm">The last offer was withdrawn. Offer it again:</p>}
@@ -176,6 +180,11 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
               </Select>
             </label>
           </div>
+          {fromEstimate && (
+            <p className="text-fg-muted -mt-1 text-sm">
+              Estimate: {rupees(est.amount)} · {estimateBasisText(est, settings.prices, rupeeRange)}
+            </p>
+          )}
           <label className="flex flex-col gap-1 text-sm">
             Area drivers see (not the full address)
             <Input value={area} maxLength={120} onChange={(e) => setArea(e.target.value)} />

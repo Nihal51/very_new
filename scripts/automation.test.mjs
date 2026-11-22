@@ -12,6 +12,7 @@ import test from 'node:test';
 
 import { PACKAGE_NAMES, UPI_ID, isDriverConfirmed, isInstantBooking, isUpiPayUrl, toDriverConfirmed, toLocalBill, toPayment, toAcceptedPrice, toTripTaps } from '../lib/bookings.ts';
 import { ZONES, citiesText, offerCitiesFor, offerSettlement } from '../lib/offers.ts';
+import { estimateBasisText, estimateOf } from '../lib/estimate.ts';
 import { checkSettings } from '../lib/settings-schema.ts';
 import { settings } from '../site-settings.ts';
 
@@ -134,4 +135,44 @@ test('call to confirm: the confirmation counts only for the driver it was about;
   for (const by of ['telegram', 'admin', 'office', 'auto']) assert.ok(read('lib/bookings.ts').includes(`'${by}'`), by);
   assert.ok(robot.confirmedFor({ driverConfirmed: { driverId: 'd1' } }, 'd1'));
   assert.equal(robot.confirmedFor({ driverConfirmed: { driverId: 'd2' } }, 'd1'), false);
+});
+
+test('price estimates: the robot and the admin panel give the same answer from the same booking and settings', () => {
+  const trip = (estTo) => ({ to: 'Nagpur', kind: 'one-way', km: 284, days: 1, returnHours: 6, estFrom: 1440, estTo });
+  const bookings = [
+    ...Object.keys(PACKAGE_NAMES).map((pkg) => ({ package: pkg })),
+    { package: 'outstation', trip: trip(3300) },
+    { package: 'one-way-drop', trip: trip(1600) },
+    { package: 'one-way-drop', trip: trip(50) },
+    { package: 'one-way-drop', trip: trip(1600.5) },
+    { package: 'outstation', acceptedPrice: { amount: 3400 }, trip: trip(3300) },
+    { package: '3-hours-600', quote: { amount: 700 } },
+    { package: 'local-full-day', quote: { amount: 1100.5 } },
+    { package: 'medical-emergency', quote: { amount: 900 } },
+    { package: 'night-driver', acceptedPrice: { amount: 99 } },
+  ];
+  for (const prices of [settings.prices, {}, { ...settings.prices, fullDay: { from: 1000, to: 600000 } }]) {
+    for (const b of bookings) {
+      const site = estimateOf(b, prices);
+      const robo = robot.estimateOf(b, prices);
+      assert.deepEqual({ ...site }, { ...robo }, JSON.stringify(b));
+    }
+  }
+  // With the site's own settings: each basis from its setting.
+  const p = settings.prices;
+  assert.deepEqual(estimateOf({ package: '1-hour-300' }, p), { amount: p.oneHour, basis: 'fixed' });
+  assert.deepEqual(estimateOf({ package: '3-hours-600' }, p), { amount: p.threeHours, basis: 'fixed' });
+  assert.deepEqual(estimateOf({ package: 'local-full-day' }, p), { amount: p.fullDay.to, basis: 'fullDay' });
+  assert.deepEqual(estimateOf({ package: 'night-driver' }, p), { amount: p.nightFrom, basis: 'night' });
+  assert.deepEqual(estimateOf({ package: 'wedding-event' }, p), { amount: 0, basis: '' });
+  // The words in /admin, with the range built from the settings (no typed figure).
+  const range = (a, b) => `${a}-${b}`;
+  assert.equal(estimateBasisText(estimateOf({ package: 'local-full-day' }, p), p, range), `full day (top of the ${p.fullDay.from}-${p.fullDay.to} range)`);
+  assert.equal(estimateBasisText(estimateOf({ package: 'night-driver' }, p), p, range), 'night driver from-price');
+  assert.equal(estimateBasisText(estimateOf({ package: 'one-way-drop', trip: trip(1600) }, p), p, range), 'the trip estimate the customer saw');
+  assert.equal(estimateBasisText(estimateOf({ package: '1-hour-300' }, p), p, range), 'fixed package price');
+  assert.equal(estimateBasisText({ amount: 0, basis: '' }, p, range), '');
+  // Instant confirmation is not widened: a logged-in full-day booking still waits for the office.
+  assert.equal(robot.instantConfirmable({ package: 'local-full-day', customerUid: 'u1', status: 'new', ref: 'DB-1' }, ''), false);
+  assert.equal(isInstantBooking({ package: 'night-driver', customerUid: 'u1' }), false);
 });

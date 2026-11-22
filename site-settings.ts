@@ -89,11 +89,14 @@ export const settings = {
   },
 
   /* ---------------------------------------------------- driver charges -----
-     In rupees. A from/to pair shows as a range, e.g. ₹1,000–1,200. */
+     In rupees. A from/to pair shows as a range, e.g. ₹1,000–1,200.
+     They are also the drivers' offer estimates: a confirmed booking goes to
+     drivers by itself at oneHour, threeHours, fullDay.to or nightFrom (a trip
+     at the estimate the customer saw), unless a price was agreed on the call. */
   prices: {
     oneHour: 300,
     threeHours: 600,
-    fullDay: { from: 1000, to: 1200 }, //     Local Full Day, 8 hours
+    fullDay: { from: 1000, to: 1200 }, //     Local Full Day, 8 hours. "to" is also the price a full-day job goes to drivers at by itself (decide)
     /* Per 24 HOURS of the driver's time on an outstation trip or one-way drop
        (decided 8 Nov 2026). It rises with the distance (one-way road km from
        the pickup city) — see outstation.nearFromKm and dayTopFromKm:
@@ -105,7 +108,7 @@ export const settings = {
     outstationNear: [
       { upToKm: 160, from: 1050, to: 1350 }, //  same-day drops: Bilaspur, Kanker, Janjgir …
     ],
-    nightFrom: 500, //                        Night driver, 8 PM – 6 AM, "from ₹500"
+    nightFrom: 500, //                        Night driver, 8 PM – 6 AM, "from ₹500"; also the price a night job goes to drivers at by itself (decide)
     /* Local jobs (1 hour, 3 hours, full day, night) that run longer than the
        package: each started hour over it, after 15 minutes' grace, from the
        driver's Arrived → Job done taps in the Driver app. The bill is
