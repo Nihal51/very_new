@@ -66,11 +66,19 @@
  *   RAZORPAY_KEY_ID      optional: Razorpay API key id and secret — a payment link
  *   RAZORPAY_KEY_SECRET  goes to the customer when a job is completed with a bill.
  *                        Off until both are set. Never logged or sent anywhere else.
+ *   UPI_ID               optional: DriveBuddy's own UPI ID (e.g. drivebuddy@ybl). Without
+ *                        Razorpay keys, a completed job with a bill gets a UPI pay link
+ *                        in the customer's app instead (no gateway, no fee); the driver
+ *                        taps "Paid by UPI" / "Paid in cash" in the Driver app.
+ *   UPI_NAME             the name on that UPI link, default DriveBuddy
  *
  * Also automatic (see "automation" below): job reminders an hour before, the
  * Driver app's Start / Arrived / Job done taps (tripTaps), the bill and the end
- * of local jobs, a rating request, Monday's driver payouts with a Paid ✓
- * button, a 9 pm report, and nearby drivers when a city has nobody free.
+ * of local jobs, the driver's "payment received" tap, a rating request,
+ * Monday's driver payouts (what he earned minus the cash he kept) with a
+ * Paid ✓ / Settled ✓ button, the cash limit (site-settings.ts
+ * payments.cashLimit), a 9 pm report, and nearby drivers when a city has
+ * nobody free.
  *
  * Your own columns are safe: the robot finds its columns by their heading, only
  * ever writes those, and leaves any column you add (e.g. "Paid?") alone.
@@ -84,6 +92,7 @@ var DEFAULTS = {
   WHATSAPP_TEMPLATE: 'driver_assigned',
   WHATSAPP_LANGUAGE: 'en',
   WHATSAPP_API_VERSION: 'v23.0',
+  UPI_NAME: 'DriveBuddy',
 };
 
 function prop_(key) {
@@ -842,7 +851,7 @@ function driversTable_() {
 function tick() {
   var steps = robotSteps_();
   // Every 5 minutes: things that can wait a few minutes (and cost a query each).
-  if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_, tripReminders_, pollPayments_, processRatingsStep_);
+  if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_, tripReminders_, pollPayments_, processRatingsStep_, cashLimits_);
   steps.push(telegramCallbacks_, ensureRailTrigger_, ensureTimeTriggers_);
   runSteps_(steps, 5000);
 }
@@ -1251,15 +1260,18 @@ function backSeat(q) {
  * online, seen in the last 10 minutes, with a push token. Drivers whose
  * phone sent no spot go last; so do (before that) drivers with a poor
  * rating or many jobs given back (`quality`: { driverId: { ratingAvg,
- * ratingCount, strikes } }, the robot's own copy of those fields).
+ * ratingCount, strikes, owed } }, the robot's own copy of those fields).
+ * A driver holding more of DriveBuddy's cash than `cashLimit` (rupees; 0 =
+ * no limit) is left out until he settles (overCashLimit).
  */
-function rankDrivers(rows, spot, now, quality) {
+function rankDrivers(rows, spot, now, quality, cashLimit) {
   quality = quality || {};
   return (rows || [])
     .filter(function (r) {
       var a = r.data || {};
       return a.online === true && a.pushToken && a.at && now - a.at.getTime() <= DISPATCH.freshMs;
     })
+    .filter(function (r) { return !overCashLimit(quality[r.id], cashLimit); })
     .map(function (r) {
       var a = r.data;
       var km = typeof a.lat === 'number' && typeof a.lng === 'number' ? distanceKm(spot, { lat: a.lat, lng: a.lng }) : Infinity;
@@ -1325,8 +1337,8 @@ function offerPush(offer, token, raised) {
 
 /**
  * The website's public settings (SITE_URL/app-config.json, made from
- * site-settings.ts): { prices, google }, kept for an hour. null when the site
- * cannot be reached.
+ * site-settings.ts): { prices, google, payments }, kept for an hour. null when
+ * the site cannot be reached.
  */
 function siteConfig_() {
   var cache = CacheService.getScriptCache();
@@ -1336,7 +1348,7 @@ function siteConfig_() {
   if (res.getResponseCode() !== 200) return null;
   var all = JSON.parse(res.getContentText()) || {};
   if (!all.prices) return null;
-  var keep = { prices: all.prices, google: all.google || {} };
+  var keep = { prices: all.prices, google: all.google || {}, payments: all.payments || {} };
   cache.put('siteConfig', JSON.stringify(keep), 3600);
   return keep;
 }
@@ -1344,6 +1356,21 @@ function siteConfig_() {
 function sitePrices_() {
   var c = siteConfig_();
   return c ? c.prices : null;
+}
+
+/**
+ * The cash limit in rupees (site-settings.ts payments.cashLimit, the same
+ * number the Driver app shows). 0 = none: the site could not be read, or the
+ * setting is not there yet — then nobody is left out of job alerts.
+ */
+function siteCashLimit_() {
+  try {
+    var c = siteConfig_();
+    return cashLimitOf(c && c.payments);
+  } catch (err) {
+    console.warn('cash limit: the site could not be read: ' + err); // never stops dispatch
+    return 0;
+  }
 }
 
 /** Confirmed fixed-price bookings → an open offer, once. */
@@ -1375,6 +1402,8 @@ function dispatchOffers_() {
   var cuts = autoCuts(prop_('AUTO_OFFER_CUTS'));
   var stepMs = (Number(prop_('AUTO_OFFER_STEP_MIN')) || AUTO_STEP_MIN) * 60000;
   var quality = driverQuality_();
+  // The site's cash limit only when somebody holds cash at all (it is cached for an hour anyway).
+  var cashLimit = Object.keys(quality).some(function (k) { return Number(quality[k].owed) > 0; }) ? siteCashLimit_() : 0;
   offers.forEach(function (row) {
     var o = row.data;
     var alert = fsGet_('offerAlerts/' + row.id);
@@ -1430,7 +1459,7 @@ function dispatchOffers_() {
       pool = pool.concat(byCity[c]);
     });
     var spot = (booking.pickupGeo && typeof booking.pickupGeo.lat === 'number') ? booking.pickupGeo : (CITY_CENTRES[o.city] || CITY_CENTRES.Raipur);
-    var ranked = rankDrivers(pool, spot, now, quality).filter(function (d) { return keep.skipIds.indexOf(d.id) < 0; });
+    var ranked = rankDrivers(pool, spot, now, quality, cashLimit).filter(function (d) { return keep.skipIds.indexOf(d.id) < 0; });
     var step = raised && alert && alert.stage >= 1
       ? { stage: Math.max(2, alert.stage), send: ranked, alarm: false }
       : dispatchStep(alert, ranked, now);
@@ -1475,12 +1504,20 @@ function dispatchOffers_() {
      Reached home): a trip's times go to the booking's clock and Telegram, as
      with the trip link (the office still saves the bill); a local job gets
      its bill (localBill) at Job done and is completed.
-   • A completed job with a bill gets a Razorpay payment link (only once the
-     keys are set), then a request to rate the driver; the ratings make
+   • A completed job with a bill gets a payment link: Razorpay's once its keys
+     are set, else a UPI pay link to DriveBuddy's own UPI_ID (no gateway). The
+     bill also goes to the driver (tripTaps/{id}.amount): he collects it and
+     taps "Paid by UPI" or "Paid in cash" (tripTaps paidBy / paidAt); the
+     booking is then paid, and cash he kept is noted on his offer
+     (cashCollected). Then a request to rate the driver; the ratings make
      drivers/{id}.ratingAvg and ratingCount, which push poorly rated drivers
      (and those with 3 strikes) to the back of the queue for new jobs.
-   • Monday ~9:30: who to pay for the week, with a Paid ✓ button. ~9 pm: the
-     day in numbers.
+   • Monday ~9:30: what each driver earned minus the cash he kept — pay him,
+     or collect from him — with a Paid ✓ / Settled ✓ button. ~9 pm: the day
+     in numbers.
+   • Cash limit: a driver holding more of DriveBuddy's cash than
+     payments.cashLimit (site-settings.ts) gets no new job alerts until he
+     settles; Telegram hears once, he is reminded once a day.
    The robot's own notes per booking live in reminders/{bookingId}, which no
    browser can read or write. */
 
@@ -1643,6 +1680,57 @@ function razorpayLinkRequest(b, amount) {
   };
 }
 
+/* UPI without a gateway: the customer pays DriveBuddy's own UPI ID from the
+   link in the app (or the QR the driver shows), and the driver confirms it.
+   The same ID shape as a driver's UPI ID in firestore.rules. */
+var UPI_ID_RE = /^[a-zA-Z0-9.\-_]{2,64}@[a-zA-Z]{2,32}$/;
+
+/** The UPI_ID property if it is a UPI ID, else '' (payments by UPI link stay off). */
+function upiIdOf(raw) {
+  var s = String(raw == null ? '' : raw).trim();
+  return UPI_ID_RE.test(s) ? s : '';
+}
+
+/**
+ * The UPI deep link ("upi://pay?…") every UPI app opens: DriveBuddy's ID and
+ * name, the exact amount in rupees and the booking number as the note, so the
+ * payment shows up in DriveBuddy's UPI app with its DB-number.
+ */
+function upiPayUrl(upiId, name, amount, ref) {
+  var enc = encodeURIComponent;
+  return 'upi://pay?pa=' + enc(upiId) + '&pn=' + enc(name) + '&am=' + Math.round(amount) + '.00&cu=INR&tn=' + enc(ref);
+}
+
+/** Which link a completed job gets: Razorpay's when its keys are set, else UPI when UPI_ID is, else none (''). */
+function paymentLinkKind(razorpayKeys, upiId) {
+  if (razorpayKeys) return 'razorpay';
+  return upiId ? 'upi' : '';
+}
+
+/** The pending UPI payment on a booking (robot-only field; the customer app shows "Pay ₹750 by UPI"). */
+function upiPayment(b, id, amount, upiId, name, now) {
+  return { status: 'pending', method: 'upi', amount: amount, url: upiPayUrl(upiId, name || 'DriveBuddy', amount, b.ref || id), at: now };
+}
+
+/** What the driver collected: the amount he was shown (tripTaps.amount), else the bill, else the pending link's; 0 = not known yet. */
+function paidAmountOf(b, taps) {
+  var n = Number((taps && taps.amount) || billAmountOf(b) || (b.payment && b.payment.amount) || 0);
+  return n >= 1 && n <= 1000000 ? Math.round(n) : 0;
+}
+
+/** The booking's payment once the driver tapped "Paid by UPI" / "Paid in cash"; null when it cannot be told yet. */
+function driverPaidPayment(b, taps, now) {
+  var method = taps && taps.paidBy;
+  var amount = paidAmountOf(b, taps);
+  if ((method !== 'upi' && method !== 'cash') || !amount) return null;
+  return { status: 'paid', method: method, amount: amount, paidAt: taps.paidAt || now, by: 'driver', at: now };
+}
+
+/** "DB-1042: Raju Sahu collected ₹750 by UPI" / "… in cash". */
+function paidTelegramLine(ref, driverName, p) {
+  return '💰 ' + escapeHtml(ref) + ': ' + escapeHtml(driverName || 'The driver') + ' collected ₹' + inr(p.amount) + (p.method === 'cash' ? ' in cash' : ' by UPI');
+}
+
 /** Ratings → { ratingAvg (1 decimal), ratingCount }. Anything but 1–5 whole stars is left out. */
 function ratingSummary(list) {
   var stars = (list || []).map(function (r) { return r && r.stars; }).filter(function (n) { return Number.isInteger(n) && n >= 1 && n <= 5; });
@@ -1658,14 +1746,27 @@ function lowRatingTelegram(c) {
   };
 }
 
-/** Offers to pay out: taken, done and not paid yet → one group per driver, by name. */
+/** Cash a driver kept for a job (offers cashCollected, the robot's): whole rupees, 0 when none or odd. */
+function cashOf(o) {
+  var n = Number(o && o.cashCollected);
+  return Number.isInteger(n) && n > 0 ? n : 0;
+}
+
+/**
+ * Offers to settle: taken, done and not paid yet → one group per driver, by
+ * name. amount = what he earned (Σ driverPay), cash = what he kept from
+ * customers (Σ cashCollected), net = amount − cash: DriveBuddy pays him net,
+ * or (net < 0) collects −net from him.
+ */
 function payoutGroups(rows) {
   var by = {};
   (rows || []).forEach(function (r) {
     var o = r.data || {};
     if (o.status !== 'taken' || o.done !== true || o.paid === true || !o.takenBy || !o.takenBy.id) return;
-    var g = by[o.takenBy.id] || (by[o.takenBy.id] = { driverId: o.takenBy.id, name: o.takenBy.name || '', amount: 0, jobs: 0, offerIds: [], refs: [] });
+    var g = by[o.takenBy.id] || (by[o.takenBy.id] = { driverId: o.takenBy.id, name: o.takenBy.name || '', amount: 0, cash: 0, net: 0, jobs: 0, offerIds: [], refs: [] });
     g.amount += Number(o.driverPay) || 0;
+    g.cash += cashOf(o);
+    g.net = g.amount - g.cash;
     g.jobs++;
     g.offerIds.push(r.id);
     if (o.ref) g.refs.push(o.ref);
@@ -1673,13 +1774,67 @@ function payoutGroups(rows) {
   return Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
 }
 
-/** "Pay Raju ₹1,350 · UPI raju@okaxis · 3 jobs", with the Paid ✓ button (callback paid:<driverId>:<week>). */
+/** DriveBuddy's cash a driver holds: what he kept beyond what he earned (0 when DriveBuddy owes him). */
+function owedOf(g) {
+  return Math.max(0, -((g && g.net) || 0));
+}
+
+/**
+ * The week's settlement for one driver, with one button (callback
+ * paid:<driverId>:<week>, which marks those jobs paid):
+ *   net > 0  "Pay Raju Sahu ₹450 · UPI raju@okaxis · 3 jobs (earned ₹1,350 − cash he kept ₹900)"  Paid ✓
+ *   net < 0  "Raju Sahu owes DriveBuddy ₹300 (cash he kept ₹1,200, earned ₹900) — collect it"      Settled ✓
+ *   net = 0  "Raju Sahu: earned ₹900 = cash he kept · nothing to pay"                               Settled ✓
+ * Without cash the first is the plain "Pay Raju Sahu ₹1,350 · UPI raju@okaxis · 3 jobs".
+ */
 function payoutTelegram(g, week) {
+  var name = escapeHtml(g.name);
+  var cash = g.cash || 0;
+  var net = g.amount - cash;
+  var jobs = g.jobs + ' job' + (g.jobs === 1 ? '' : 's');
+  var line;
+  if (net > 0) {
+    line = 'Pay ' + name + ' ₹' + inr(net) + ' · ' +
+      (g.upi ? 'UPI ' + escapeHtml(g.upi) : 'no UPI ID yet (he adds it in the Driver app, Earnings)') + ' · ' + jobs +
+      (cash ? ' (earned ₹' + inr(g.amount) + ' − cash he kept ₹' + inr(cash) + ')' : '');
+  } else if (net < 0) {
+    line = name + ' owes DriveBuddy ₹' + inr(-net) + ' (cash he kept ₹' + inr(cash) + ', earned ₹' + inr(g.amount) + ') — collect it';
+  } else {
+    line = name + ': earned ₹' + inr(g.amount) + ' = cash he kept · nothing to pay';
+  }
   return {
-    text: 'Pay ' + escapeHtml(g.name) + ' ₹' + inr(g.amount) + ' · ' +
-      (g.upi ? 'UPI ' + escapeHtml(g.upi) : 'no UPI ID yet (he adds it in the Driver app, Earnings)') +
-      ' · ' + g.jobs + ' job' + (g.jobs === 1 ? '' : 's') + (g.refs.length ? '\n' + escapeHtml(g.refs.join(', ')) : ''),
-    reply_markup: { inline_keyboard: [[{ text: 'Paid ✓', callback_data: 'paid:' + g.driverId + ':' + week }]] },
+    text: line + (g.refs.length ? '\n' + escapeHtml(g.refs.join(', ')) : ''),
+    reply_markup: { inline_keyboard: [[{ text: net > 0 ? 'Paid ✓' : 'Settled ✓', callback_data: 'paid:' + g.driverId + ':' + week }]] },
+  };
+}
+
+/** payments.cashLimit from the site's config → whole rupees; 0 = no limit (not set, or odd). */
+function cashLimitOf(payments) {
+  var n = Math.round(Number(payments && payments.cashLimit));
+  return n > 0 ? n : 0;
+}
+
+/** Is this driver (the robot's quality copy: { owed }) holding more cash than the limit? Never with no limit. */
+function overCashLimit(q, cashLimit) {
+  return cashLimit > 0 && Number(q && q.owed) > cashLimit;
+}
+
+/** The daily reminder to a driver over the limit (English and Hindi, as job alerts). */
+function settlePush(token, owed) {
+  var x = '₹' + inr(owed);
+  return pushMsg_(token, {
+    title: 'Settle your cash · नकद जमा करें',
+    body: 'Settle ' + x + ' with DriveBuddy to get new jobs · नए काम के लिए DriveBuddy को ' + x + ' जमा करें',
+  }, { action: 'earnings' }, 'jobs');
+}
+
+/** Telegram, once, when a driver crosses the cash limit: why he gets no jobs, and his settlement with its Settled ✓ button. */
+function cashLimitTelegram(g, limit, day) {
+  var msg = payoutTelegram(g, day);
+  return {
+    text: '💵 <b>' + escapeHtml(g.name) + ' holds ₹' + inr(owedOf(g)) + ' of DriveBuddy\'s cash</b> — over the ₹' + inr(limit) +
+      ' limit, so he gets no new job alerts until he settles.\n' + msg.text,
+    reply_markup: msg.reply_markup,
   };
 }
 
@@ -1713,6 +1868,27 @@ function dailySummary(q, now) {
     if (o && o.done === true && o.status === 'taken') cut += (Number(o.price) || 0) - (Number(o.driverPay) || 0);
   });
   var payouts = payoutGroups(q.unpaid);
+  var toPay = payouts.filter(function (g) { return g.net > 0; });
+  var toCollect = payouts.filter(function (g) { return g.net < 0; });
+  // Payments taken today (payment.paidAt), by how; completed today and not paid.
+  var midnight = Date.parse(istDay(now) + 'T00:00:00+05:30');
+  var pay = { upi: { amount: 0, n: 0 }, cash: { amount: 0, n: 0 }, online: { amount: 0, n: 0 }, unpaid: { amount: 0, n: 0 } };
+  (q.paidToday || []).forEach(function (r) {
+    var p = r.data.payment;
+    if (!p || p.status !== 'paid' || !p.paidAt || p.paidAt.getTime() < midnight) return;
+    var k = p.method === 'upi' || p.method === 'cash' ? p.method : 'online';
+    pay[k].amount += Number(p.amount) || 0;
+    pay[k].n++;
+  });
+  done.forEach(function (r) {
+    var p = r.data.payment;
+    if (p && p.status === 'paid') return;
+    var o = offers[r.id];
+    var amount = amountOf(r.data, o && o.price);
+    if (!amount) return;
+    pay.unpaid.amount += amount;
+    pay.unpaid.n++;
+  });
   return {
     day: formatIst(new Date(now)).split(',')[0],
     total: q.created.length,
@@ -1722,13 +1898,21 @@ function dailySummary(q, now) {
     cut: cut,
     open: q.open.filter(function (r) { return r.data.status === 'open'; }).map(function (r) { return r.data.ref || r.id; }),
     online: q.online.filter(function (r) { return r.data.online === true && r.data.at && now - r.data.at.getTime() <= DISPATCH.freshMs; }).length,
-    payoutAmount: payouts.reduce(function (a, g) { return a + g.amount; }, 0),
-    payoutDrivers: payouts.length,
+    payments: pay,
+    payoutAmount: toPay.reduce(function (a, g) { return a + g.net; }, 0),
+    payoutDrivers: toPay.length,
+    collectAmount: toCollect.reduce(function (a, g) { return a + owedOf(g); }, 0),
+    collectDrivers: toCollect.length,
   };
 }
 
 function dailyReportText(s) {
   var c = s.counts;
+  var p = s.payments || { upi: { amount: 0, n: 0 }, cash: { amount: 0, n: 0 }, online: { amount: 0, n: 0 }, unpaid: { amount: 0, n: 0 } };
+  var part = function (label, x) { return label + ' ₹' + inr(x.amount) + ' (' + x.n + ')'; };
+  var plural = function (n) { return n + ' driver' + (n === 1 ? '' : 's'); };
+  var payouts = s.payoutDrivers ? '₹' + inr(s.payoutAmount) + ' to ' + plural(s.payoutDrivers) : 'none';
+  if (s.collectDrivers) payouts += ' · ₹' + inr(s.collectAmount) + ' to collect from ' + plural(s.collectDrivers);
   return [
     '📊 <b>DriveBuddy today — ' + escapeHtml(s.day) + '</b>',
     '',
@@ -1738,7 +1922,9 @@ function dailyReportText(s) {
     '<b>DriveBuddy\'s cut:</b> ₹' + inr(s.cut),
     '<b>Jobs nobody took:</b> ' + (s.open.length ? s.open.length + ' still open — ' + escapeHtml(s.open.join(', ')) : 'none'),
     '<b>Drivers online now:</b> ' + s.online,
-    '<b>Payouts due:</b> ' + (s.payoutDrivers ? '₹' + inr(s.payoutAmount) + ' to ' + s.payoutDrivers + ' driver' + (s.payoutDrivers === 1 ? '' : 's') : 'none'),
+    '<b>Payments today:</b> ' + part('UPI', p.upi) + ' · ' + part('cash', p.cash) + (p.online.n ? ' · ' + part('online', p.online) : '') +
+      ' · ' + part('unpaid', p.unpaid),
+    '<b>Payouts due:</b> ' + payouts,
   ].join('\n');
 }
 
@@ -1798,6 +1984,7 @@ function watchChanges_() {
     { spec: sinceSpec_('tripTaps', 'tapsLeftMs', 'leftAt'), run: syncTripTaps_ },
     { spec: sinceSpec_('tripTaps', 'tapsDoneMs', 'doneAt'), run: syncTripTaps_ },
     { spec: sinceSpec_('tripTaps', 'tapsHomeMs', 'homeAt'), run: syncTripTaps_ },
+    { spec: sinceSpec_('tripTaps', 'tapsPaidMs', 'paidAt'), run: paidTaps_ },
     { spec: { collection: 'offers', where: fieldFilter_('status', 'EQUAL', 'released'), field: 'status', limit: 20 }, run: releasedOffers_ },
   ];
   var results = fsQueryAll_(jobs.map(function (j) { return j.spec; }));
@@ -1813,9 +2000,14 @@ function watchChanges_() {
   });
 }
 
-/** Bookings that changed: confirm the simple ones, and take completed ones on (payment link, rating request). Both are safe to repeat. */
+/**
+ * Bookings that changed: confirm the simple ones, send a new bill to the
+ * driver's job screen, and take completed ones on (payment link, rating
+ * request). All safe to repeat.
+ */
 function changedBookings_(rows) {
   instantConfirm_(rows);
+  billsToDrivers_(rows);
   completedBookings_(rows);
 }
 
@@ -2006,6 +2198,8 @@ function syncTaps_(id, taps) {
       currentDocument: { exists: true },
     });
   }
+  // The amount to collect, on his job screen (he can still read his taps once the booking is completed).
+  writes.push(tapsAmountWrite_(id, bill.amount));
   fsCommit_(writes);
   telegramLine_('✅ <b>' + escapeHtml(b.ref || id) + ' done</b> — ' + escapeHtml((b.assignedDriver && b.assignedDriver.name) || 'the driver') + ': ' + escapeHtml(note.replace('Completed automatically: ', '')));
 }
@@ -2042,11 +2236,13 @@ function askReview_(id, b) {
 }
 
 /**
- * Completed bookings: a payment link for the bill (with Razorpay keys), and
- * once paid — or at once without payments — one request to rate the driver.
+ * Completed bookings: a payment link for the bill — Razorpay's with its keys,
+ * else a UPI link to UPI_ID — and once paid (the driver confirms a UPI or
+ * cash payment) — or at once without payments — one request to rate the driver.
  */
 function completedBookings_(rows) {
-  var payments = razorpayReady_();
+  var upiId = upiIdOf(prop_('UPI_ID'));
+  var kind = paymentLinkKind(razorpayReady_(), upiId);
   rows.forEach(function (row) {
     var b = row.data;
     if (b.status !== 'completed') return;
@@ -2054,13 +2250,22 @@ function completedBookings_(rows) {
     var waiting = Boolean(b.payment && b.payment.status === 'pending');
     var book = null;
     var notes = {};
-    if (payments && amount && !b.payment) {
+    if (kind === 'upi' && amount && !b.payment) {
+      // No gateway: the link opens the customer's own UPI app; the driver confirms the payment.
+      fsCommit_([{
+        update: { name: docName_('bookings/' + row.id), fields: toFields({ payment: upiPayment(b, row.id, amount, upiId, prop_('UPI_NAME'), new Date()) }) },
+        updateMask: { fieldPaths: ['payment'] },
+        currentDocument: { exists: true },
+      }]);
+      waiting = true;
+    }
+    if (kind === 'razorpay' && amount && !b.payment) {
       book = bookOf_(row.id);
       if (!book.paymentTriedAt) {
         notes.paymentTriedAt = new Date();
         var r = razorpayFetch_('post', '/payment_links', razorpayLinkRequest(b, amount));
         if (r.code < 300 && r.body.id && r.body.short_url) {
-          var payment = { status: 'pending', amount: amount, url: String(r.body.short_url), linkId: String(r.body.id), at: new Date() };
+          var payment = { status: 'pending', method: 'razorpay', amount: amount, url: String(r.body.short_url), linkId: String(r.body.id), at: new Date() };
           fsCommit_([{
             update: { name: docName_('bookings/' + row.id), fields: toFields({ payment: payment }) },
             updateMask: { fieldPaths: ['payment'] },
@@ -2111,6 +2316,179 @@ function pollPayments_() {
       askReview_(row.id, b);
       saveBook_(row.id, { reviewAt: now });
     }
+  });
+}
+
+/* ------------------------------------------- the driver collects the bill */
+
+/** The write that puts the amount to collect on the driver's job screen (tripTaps/{id}.amount, robot-only). */
+function tapsAmountWrite_(id, amount) {
+  return {
+    update: { name: docName_('tripTaps/' + id), fields: toFields({ amount: amount }) },
+    updateMask: { fieldPaths: ['amount'] },
+    currentDocument: { exists: true },
+  };
+}
+
+/**
+ * A booking whose bill is known (the office saved a trip's final bill; a
+ * local job's bill is sent with its completion): the amount goes to the
+ * driver's taps, if he has any and it changed. If he already tapped "payment
+ * received" before the amount was known, the booking is paid now.
+ */
+function billsToDrivers_(rows) {
+  rows.forEach(function (row) {
+    var b = row.data;
+    if ((b.status !== 'assigned' && b.status !== 'completed') || !b.assignedDriver) return;
+    var amount = billAmountOf(b);
+    if (!amount) return;
+    var taps = fsGet_('tripTaps/' + row.id);
+    if (!taps || String(taps.driverPhone || '') !== String(b.assignedDriver.phone || '')) return;
+    if (taps.amount !== amount) {
+      fsCommit_([tapsAmountWrite_(row.id, amount)]);
+      taps.amount = amount;
+    }
+    if (taps.paidBy) {
+      var p = takePayment_(row.id, b, taps, false);
+      if (p) b.payment = p; // completedBookings_ (next) sees it paid: no link, and the rating request
+    }
+  });
+}
+
+/** The driver tapped "Paid by UPI" / "Paid in cash" (tripTaps paidBy, paidAt). */
+function paidTaps_(rows) {
+  rows.forEach(function (row) {
+    if (row.data.paidBy) takePayment_(row.id, fsGet_('bookings/' + row.id), row.data, true);
+  });
+}
+
+/**
+ * The driver says the customer paid: the booking's payment is "paid" (by UPI
+ * or in cash, confirmed by the driver — over a pending UPI link), cash he
+ * kept goes on his offer (cashCollected) and into his cash total, Telegram
+ * hears, and the customer is asked for a rating. → the payment, or null when
+ * nothing was done (not his job any more, already paid, or no amount yet —
+ * billsToDrivers_ comes back to it once the bill is saved).
+ */
+function takePayment_(id, b, taps, fromTap) {
+  if (!b || b.status === 'cancelled' || !b.assignedDriver) return null;
+  if (String(b.assignedDriver.phone || '') !== String(taps.driverPhone || '')) return null; // a driver who no longer has the job
+  var ref = b.ref || id;
+  var name = b.assignedDriver.name || 'The driver';
+  if (b.payment && b.payment.status === 'paid') {
+    if (fromTap && b.payment.by !== 'driver') {
+      telegramLine_('⚠️ ' + escapeHtml(ref) + ': ' + escapeHtml(name) + ' says he was paid ' + (taps.paidBy === 'cash' ? 'in cash' : 'by UPI') +
+        ', but it was already paid online. Check with the customer — one of them may need a refund.');
+    }
+    return null;
+  }
+  var now = new Date();
+  var p = driverPaidPayment(b, taps, now);
+  if (!p) return null;
+  var writes = [{
+    update: { name: docName_('bookings/' + id), fields: toFields({ payment: p }) },
+    updateMask: { fieldPaths: ['payment'] },
+    currentDocument: { exists: true },
+  }];
+  var cashBy = null;
+  if (p.method === 'cash') {
+    var offer = fsGet_('offers/' + id);
+    if (offer && offer.status === 'taken' && offer.takenBy && offer.takenBy.id && String(offer.takenBy.phone || '') === String(taps.driverPhone || '')) {
+      writes.push({
+        update: { name: docName_('offers/' + id), fields: toFields({ cashCollected: p.amount, updatedAt: now }) },
+        updateMask: { fieldPaths: ['cashCollected', 'updatedAt'] },
+        currentDocument: { exists: true },
+      });
+      cashBy = offer.takenBy;
+    }
+  }
+  fsCommit_(writes);
+  telegramLine_(paidTelegramLine(ref, name, p));
+  // The rating request waits for the payment when payments are on; a trip still open gets it when it is completed.
+  if (b.customerUid && b.status === 'completed' && !bookOf_(id).reviewAt) {
+    askReview_(id, b);
+    saveBook_(id, { reviewAt: now });
+  }
+  if (cashBy) noteDriverCash_(cashBy.id, siteCashLimit_());
+  return p;
+}
+
+/* ------------------------------------------------------------ cash limit */
+
+/** Settle reminders go out between these India hours, never in the night. */
+var SETTLE_PUSH_FROM_HOUR = 9;
+var SETTLE_PUSH_TO_HOUR = 21;
+
+/** One driver's unpaid, done jobs → his settlement group (null = none), from his own offers only. */
+function driverSettlement_(driverId) {
+  var rows = fsQuery_('offers', fieldFilter_('takenBy.id', 'EQUAL', driverId), 'ASCENDING', 500, 'takenBy.id');
+  return payoutGroups(rows).filter(function (g) { return g.driverId === driverId; })[0] || null;
+}
+
+/** Waiting Paid ✓ / Settled ✓ buttons (telegramCallbacks_ reads the presses). */
+function addPendingPayout_(key, entry) {
+  var props = PropertiesService.getScriptProperties();
+  var pending = JSON.parse(props.getProperty('payoutsPending') || '{}');
+  pending[key] = entry;
+  props.setProperty('payoutsPending', JSON.stringify(pending));
+}
+
+/**
+ * The cash fields of a driver's quality copy, from his settlement `g`:
+ * owed, and overLimit — Telegram hears once when he crosses the limit (with
+ * a Settled ✓ button for those jobs). Without a limit (the site could not be
+ * read) the flag stays as it was, so an outage never repeats the message.
+ */
+function owedFields_(g, prev, limit) {
+  prev = prev || {};
+  var owed = owedOf(g);
+  var over = limit ? overCashLimit({ owed: owed }, limit) : Boolean(prev.overLimit) && owed > 0;
+  var f = { owed: owed, overLimit: over };
+  if (prev.settlePushDay) f.settlePushDay = prev.settlePushDay;
+  if (over && !prev.overLimit && g) {
+    var now = Date.now();
+    var day = istDay(now);
+    sendTelegramSafe_(cashLimitTelegram(g, limit, day));
+    addPendingPayout_(g.driverId + ':' + day, { ids: g.offerIds, amount: g.net, at: now, settle: true });
+  }
+  return f;
+}
+
+function sendTelegramSafe_(msg) {
+  try { sendTelegram_(msg); } catch (err) { console.warn('telegram: ' + err); }
+}
+
+/** His cash changed (a cash payment, a settlement): work his total out again from his own offers. → { owed, over } */
+function noteDriverCash_(driverId, limit) {
+  var g = driverSettlement_(driverId);
+  var f = owedFields_(g, driverQuality_()[driverId], limit);
+  saveDriverQuality_(driverId, f);
+  return { owed: f.owed, over: f.overLimit };
+}
+
+/**
+ * Every 5 minutes, only for drivers holding cash over the limit (usually
+ * none): his total again from his own offers (the office may have settled in
+ * /admin), and once a day a reminder on his phone — "Settle ₹X with
+ * DriveBuddy to get new jobs". Settled: he gets job alerts again at once.
+ */
+function cashLimits_() {
+  var quality = driverQuality_();
+  var ids = Object.keys(quality).filter(function (id) { return Number(quality[id].owed) > 0 || quality[id].overLimit; });
+  if (!ids.length) return;
+  var limit = siteCashLimit_();
+  if (!limit) return;
+  var now = Date.now();
+  var day = istDay(now);
+  var hour = new Date(now + 330 * 60000).getUTCHours();
+  ids.forEach(function (id) {
+    if (!overCashLimit(quality[id], limit) && !quality[id].overLimit) return;
+    var r = noteDriverCash_(id, limit);
+    if (!r.over || quality[id].settlePushDay === day || hour < SETTLE_PUSH_FROM_HOUR || hour >= SETTLE_PUSH_TO_HOUR) return;
+    var av = fsGet_('availability/' + id);
+    if (!av || !av.pushToken) return;
+    sendPush_([settlePush(av.pushToken, r.owed)]);
+    saveDriverQuality_(id, { settlePushDay: day });
   });
 }
 
@@ -2206,7 +2584,11 @@ function tripReminders_() {
 
 /* ---------------------------------------------------------- weekly payouts */
 
-/** Mondays ~9:30 (a trigger from setup): one Telegram per driver to pay, with a Paid ✓ button. */
+/**
+ * Mondays ~9:30 (a trigger from setup): one Telegram per driver with done,
+ * unpaid jobs — what he earned minus the cash he kept: pay him (Paid ✓), or
+ * collect from him (Settled ✓).
+ */
 function weeklyPayouts() {
   runSteps_([sendPayouts_], 60000);
 }
@@ -2224,7 +2606,8 @@ function sendPayouts_() {
     var d = fsGet_('drivers/' + g.driverId) || {};
     g.upi = d.upi || '';
     sendTelegram_(payoutTelegram(g, week));
-    pending[g.driverId + ':' + week] = { ids: g.offerIds, amount: g.amount, at: now };
+    // settle: he owes DriveBuddy, or nothing is due either way (the button says Settled ✓).
+    pending[g.driverId + ':' + week] = { ids: g.offerIds, amount: g.net, at: now, settle: g.net <= 0 };
   });
   props.setProperty('payoutsPending', JSON.stringify(pending));
 }
@@ -2290,12 +2673,22 @@ function telegramCallbacks_() {
     var n = markPaid_(p.driverId, entry.ids);
     delete pending[key];
     props.setProperty('payoutsPending', JSON.stringify(pending));
-    telegramApi_('answerCallbackQuery', { callback_query_id: cq.id, text: 'Marked paid ✓' });
+    var word = entry.settle ? 'Settled ✓' : 'Paid ✓';
+    telegramApi_('answerCallbackQuery', { callback_query_id: cq.id, text: 'Marked ' + word.toLowerCase() });
     telegramApi_('editMessageText', {
       chat_id: cq.message.chat.id,
       message_id: cq.message.message_id,
-      text: String(cq.message.text || '') + '\n\nPaid ✓ ' + formatIst(new Date()) + (n < entry.ids.length ? ' (' + (entry.ids.length - n) + ' were already paid)' : ''),
+      text: String(cq.message.text || '') + '\n\n' + word + ' ' + formatIst(new Date()) + (n < entry.ids.length ? ' (' + (entry.ids.length - n) + ' were already paid)' : ''),
     });
+    // Settled: a driver kept out for holding cash gets job alerts again now, not at 9 pm.
+    var q = driverQuality_()[p.driverId];
+    if (q && (Number(q.owed) > 0 || q.overLimit)) {
+      try {
+        noteDriverCash_(p.driverId, siteCashLimit_());
+      } catch (err) {
+        console.warn('cash after settling: ' + err);
+      }
+    }
   });
   props.setProperty('telegramUpdateId', String(last));
   props.setProperty('telegramSeenChats', JSON.stringify(seen.slice(-20)));
@@ -2311,7 +2704,7 @@ function dailyReport() {
 function sendDailyReport_() {
   var now = Date.now();
   var midnight = new Date(Date.parse(istDay(now) + 'T00:00:00+05:30'));
-  var names = ['created', 'changed', 'offersToday', 'open', 'unpaid', 'online', 'drivers'];
+  var names = ['created', 'changed', 'offersToday', 'open', 'unpaid', 'online', 'drivers', 'paidToday'];
   var res = fsQueryAll_([
     { collection: 'bookings', where: fieldFilter_('createdAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'createdAt', limit: 500 },
     { collection: 'bookings', where: fieldFilter_('updatedAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'updatedAt', limit: 500 },
@@ -2320,6 +2713,7 @@ function sendDailyReport_() {
     { collection: 'offers', where: fieldFilter_('paid', 'EQUAL', false), field: 'paid', limit: 500 },
     { collection: 'availability', where: fieldFilter_('online', 'EQUAL', true), field: 'online', limit: 200 },
     { collection: 'drivers', where: fieldFilter_('status', 'EQUAL', 'active'), field: 'status', limit: 500 },
+    { collection: 'bookings', where: fieldFilter_('payment.paidAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'payment.paidAt', limit: 500 },
   ]);
   var q = {};
   res.forEach(function (r, i) {
@@ -2327,11 +2721,18 @@ function sendDailyReport_() {
     q[names[i]] = r.rows;
   });
   sendTelegram_({ text: dailyReportText(dailySummary(q, now)) });
-  // Once a day the ranking's copy of ratings and strikes is made again from the drivers themselves.
+  // Once a day the ranking's copy of ratings and strikes is made again from the
+  // drivers themselves, and the cash each one holds from all unpaid jobs.
+  var prev = driverQuality_();
   var quality = {};
   q.drivers.forEach(function (r) {
     var d = r.data;
     if (d.ratingCount || d.strikes) quality[r.id] = { ratingAvg: Number(d.ratingAvg) || 0, ratingCount: Number(d.ratingCount) || 0, strikes: Number(d.strikes) || 0 };
+  });
+  var groups = payoutGroups(q.unpaid).filter(function (g) { return owedOf(g) > 0; });
+  var limit = groups.length ? siteCashLimit_() : 0;
+  groups.forEach(function (g) {
+    quality[g.driverId] = Object.assign(quality[g.driverId] || {}, owedFields_(g, prev[g.driverId], limit));
   });
   PropertiesService.getScriptProperties().setProperty('driverQuality', JSON.stringify(quality));
 }
@@ -3309,5 +3710,6 @@ if (typeof module !== 'undefined') {
     tripClockOf: tripClockOf, tripClockNews: tripClockNews, sameClock: sameClock, hoursText: hoursText, tripTelegram: tripTelegram,
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
+    UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
   };
 }

@@ -274,6 +274,7 @@ function load() {
           return response(200, {
             prices: { oneHour: 300, threeHours: 600, fullDay: { from: 1000, to: 1200 }, nightFrom: 500, localExtraHour: 150 },
             google: { profile: 'https://maps.app.goo.gl/x', writeReview: 'https://search.google.com/local/writereview?placeid=P1' },
+            payments: { cashLimit: 2000 },
           });
         }
         if (url.startsWith('https://cpaas.messagecentral.com/')) {
@@ -1911,6 +1912,268 @@ describe('automation', () => {
     });
   });
 
+  describe('payments without a gateway (UPI link, the driver confirms, cash settlement)', () => {
+    const tapped = (id, fields) => put(`tripTaps/${id}`, { driverPhone: RAJU.phone, ...fields });
+    const doneTaps = () => ({ leftAt: ago(4 * 3600_000), arrivedAt: ago(3 * 3600_000 + 16 * MIN + 30_000), doneAt: ago(30_000) });
+    const asks = () => env.pushes.filter((p) => p.title === 'How was your driver?');
+    // An office edit: updatedAt moves on (a second later, never the bookmark's own millisecond).
+    const touch = (id) => { env.store.docs.get(`bookings/${id}`).updatedAt = { timestampValue: new Date(Date.now() + 1000).toISOString() }; };
+
+    test('pure: the UPI link, its encoding, the UPI ID check, Razorpay first', () => {
+      const { upiPayUrl, upiIdOf, paymentLinkKind } = env.ctx;
+      assert.equal(upiPayUrl('drivebuddy@ybl', 'DriveBuddy', 750, 'DB-1042'), 'upi://pay?pa=drivebuddy%40ybl&pn=DriveBuddy&am=750.00&cu=INR&tn=DB-1042');
+      assert.equal(upiPayUrl('drive.buddy-1@okaxis', 'Drive Buddy & Co', 1350, 'DB 7/8'), 'upi://pay?pa=drive.buddy-1%40okaxis&pn=Drive%20Buddy%20%26%20Co&am=1350.00&cu=INR&tn=DB%207%2F8');
+      assert.equal(upiIdOf(' drivebuddy@ybl '), 'drivebuddy@ybl');
+      for (const bad of ['', 'drivebuddy', 'd@ybl', 'drivebuddy@y', 'drive buddy@ybl', 'drivebuddy@ybl1', 'a@b@ybl', null]) assert.equal(upiIdOf(bad), '', String(bad));
+      assert.equal(paymentLinkKind(true, 'drivebuddy@ybl'), 'razorpay');
+      assert.equal(paymentLinkKind(false, 'drivebuddy@ybl'), 'upi');
+      assert.equal(paymentLinkKind(false, ''), '');
+    });
+
+    test('UPI_ID set: a local job done → the bill on his taps, a UPI link on the booking, no rating request yet', () => {
+      env.props.set('UPI_ID', 'drivebuddy@ybl');
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      booking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'u1' });
+      takenOffer('b1');
+      tapped('b1', doneTaps());
+      env.ctx.watchChanges_(); // Job done: bill, completed, amount to the driver
+      assert.equal(get('tripTaps/b1').amount, 750);
+      env.ctx.watchChanges_(); // the completed booking: the link
+      const p = get('bookings/b1').payment;
+      assert.deepEqual([p.status, p.method, p.amount, p.url], ['pending', 'upi', 750, 'upi://pay?pa=drivebuddy%40ybl&pn=DriveBuddy&am=750.00&cu=INR&tn=DB-1042']);
+      assert.ok(p.at);
+      assert.equal(asks().length, 0, 'the rating request waits for the payment');
+      assert.equal(env.rzp.calls.length, 0);
+      env.props.set('UPI_NAME', 'DriveBuddy Raipur');
+      booking('b2', { status: 'completed', updatedAt: new Date(), localBill: { amount: 300 } });
+      env.ctx.watchChanges_();
+      assert.match(get('bookings/b2').payment.url, /&pn=DriveBuddy%20Raipur&am=300\.00&/);
+    });
+
+    test('no UPI_ID (or not a UPI ID) and no Razorpay keys: no link, the rating request at once', () => {
+      env.props.set('UPI_ID', 'not a upi id');
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      booking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'u1', updatedAt: ago(MIN), localBill: { amount: 750 } });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/b1').payment, undefined);
+      assert.equal(asks().length, 1);
+    });
+
+    test('Razorpay keys and UPI_ID both set: Razorpay is used', () => {
+      env.props.set('UPI_ID', 'drivebuddy@ybl');
+      env.props.set('RAZORPAY_KEY_ID', 'rzp_live_KEYID');
+      env.props.set('RAZORPAY_KEY_SECRET', 'SECRETsecret123');
+      booking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'u1', updatedAt: ago(MIN), localBill: { amount: 750 } });
+      env.ctx.watchChanges_();
+      const p = get('bookings/b1').payment;
+      assert.deepEqual([p.method, p.url, p.linkId], ['razorpay', 'https://rzp.io/i/plink_1', 'plink_1']);
+      assert.equal(env.rzp.calls.length, 1);
+    });
+
+    test('a trip bill saved by the office goes to his taps; no taps document → none is made', () => {
+      booking('t1', { status: 'completed', assignedDriver: RAJU, package: 'outstation', updatedAt: new Date(), bill: { amount: 5200 } });
+      tapped('t1', { leftAt: ago(3 * 86_400_000), arrivedAt: ago(3 * 86_400_000), doneAt: ago(3600_000) });
+      booking('t2', { status: 'completed', assignedDriver: RAJU, package: 'outstation', updatedAt: new Date(), bill: { amount: 4100 } });
+      env.ctx.watchChanges_();
+      assert.equal(get('tripTaps/t1').amount, 5200);
+      assert.equal(env.store.docs.has('tripTaps/t2'), false);
+      // A corrected bill follows; another driver's old taps are left alone.
+      env.store.docs.get('bookings/t1').bill = env.ctx.toValue({ amount: 5400 });
+      touch('t1');
+      put('tripTaps/t3', { driverPhone: '9425212345', doneAt: ago(MIN) });
+      booking('t3', { status: 'completed', assignedDriver: RAJU, package: 'outstation', updatedAt: new Date(), bill: { amount: 900 } });
+      env.ctx.watchChanges_();
+      assert.equal(get('tripTaps/t1').amount, 5400);
+      assert.equal(get('tripTaps/t3').amount, undefined);
+    });
+
+    test('paid in cash: the booking is paid, the cash goes on his offer, Telegram, then the rating request', () => {
+      env.props.set('UPI_ID', 'drivebuddy@ybl');
+      device('u1', 'p1', 'ExponentPushToken[customer0001]');
+      booking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'u1' });
+      takenOffer('b1');
+      tapped('b1', doneTaps());
+      env.ctx.watchChanges_();
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/b1').payment.status, 'pending');
+      const paidAt = ago(5000);
+      tapped('b1', { ...doneTaps(), amount: 750, paidBy: 'cash', paidAt });
+      env.ctx.watchChanges_();
+      const p = get('bookings/b1').payment;
+      assert.deepEqual([p.status, p.method, p.amount, p.by, p.url], ['paid', 'cash', 750, 'driver', undefined], 'over the pending UPI link');
+      assert.equal(p.paidAt.getTime(), paidAt.getTime());
+      assert.equal(get('offers/b1').cashCollected, 750);
+      assert.equal(env.telegram.filter((m) => m.text === '💰 DB-1042: Raju Sahu collected ₹750 in cash').length, 1);
+      assert.equal(asks().length, 1);
+      assert.equal(JSON.parse(env.props.get('driverQuality')).d1.owed, 300, 'cash he kept 750 − earned 450');
+      env.ctx.watchChanges_();
+      touch('b1');
+      env.ctx.watchChanges_();
+      assert.equal(env.telegram.filter((m) => /collected/.test(m.text)).length, 1, 'once');
+      assert.equal(asks().length, 1, 'asked once');
+    });
+
+    test('paid by UPI: over the pending link, no cash on the offer', () => {
+      booking('b1', {
+        status: 'completed', assignedDriver: RAJU, updatedAt: ago(20 * MIN), localBill: { amount: 750 },
+        payment: { status: 'pending', method: 'upi', amount: 750, url: 'upi://pay?pa=drivebuddy%40ybl', at: ago(20 * MIN) },
+      });
+      takenOffer('b1', { done: true });
+      tapped('b1', { ...doneTaps(), amount: 750, paidBy: 'upi', paidAt: ago(1000) });
+      env.ctx.watchChanges_();
+      const p = get('bookings/b1').payment;
+      assert.deepEqual([p.status, p.method, p.amount, p.by, p.url], ['paid', 'upi', 750, 'driver', undefined]);
+      assert.equal(get('offers/b1').cashCollected, undefined);
+      assert.ok(env.telegram.some((m) => m.text === '💰 DB-1042: Raju Sahu collected ₹750 by UPI'));
+    });
+
+    test('paid before the trip bill: nothing yet; when the office saves the bill, the booking is paid', () => {
+      booking('t1', { status: 'assigned', assignedDriver: RAJU, package: 'outstation' });
+      takenOffer('t1');
+      tapped('t1', { leftAt: ago(3 * 86_400_000), arrivedAt: ago(3 * 86_400_000), doneAt: ago(3600_000), paidBy: 'cash', paidAt: ago(1000) });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/t1').payment, undefined, 'no amount yet');
+      env.store.docs.get('bookings/t1').bill = env.ctx.toValue({ amount: 5200 });
+      env.store.docs.get('bookings/t1').status = { stringValue: 'completed' };
+      touch('t1');
+      env.ctx.watchChanges_();
+      assert.equal(get('tripTaps/t1').amount, 5200);
+      assert.deepEqual([get('bookings/t1').payment.status, get('bookings/t1').payment.method, get('bookings/t1').payment.amount], ['paid', 'cash', 5200]);
+      assert.equal(get('offers/t1').cashCollected, 5200);
+    });
+
+    test("a tap from a driver who no longer has the job, or on a cancelled job, is not a payment", () => {
+      booking('b1', { status: 'completed', assignedDriver: { id: 'd2', name: 'Sonu Verma', phone: '9425212345' }, updatedAt: ago(20 * MIN), localBill: { amount: 750 } });
+      tapped('b1', { ...doneTaps(), paidBy: 'cash', paidAt: ago(1000) });
+      booking('b2', { status: 'cancelled', assignedDriver: RAJU, updatedAt: ago(20 * MIN), localBill: { amount: 750 } });
+      tapped('b2', { ...doneTaps(), paidBy: 'upi', paidAt: ago(1000) });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/b1').payment, undefined);
+      assert.equal(get('bookings/b2').payment, undefined);
+    });
+
+    test('already paid online: the driver’s tap does not change it, Telegram asks to check', () => {
+      booking('b1', {
+        status: 'completed', assignedDriver: RAJU, updatedAt: ago(20 * MIN), localBill: { amount: 750 },
+        payment: { status: 'paid', method: 'razorpay', amount: 750, url: 'https://rzp.io/i/x', linkId: 'x', at: ago(MIN), paidAt: ago(MIN) },
+      });
+      tapped('b1', { ...doneTaps(), paidBy: 'cash', paidAt: ago(1000) });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/b1').payment.method, 'razorpay');
+      assert.ok(env.telegram.some((m) => /says he was paid in cash, but it was already paid online/.test(m.text)));
+    });
+
+    test('pure: the payout is what he earned minus the cash he kept — three wordings', () => {
+      const off = (id, driverPay, cashCollected, ref) => ({ id, data: { status: 'taken', done: true, paid: false, driverPay, cashCollected, takenBy: RAJU, ref } });
+      const msg = (rows) => {
+        const [g] = env.ctx.payoutGroups(rows);
+        return env.ctx.payoutTelegram({ ...g, upi: 'raju@okaxis' }, '2026-11-23');
+      };
+      const pay = msg([off('a', 450, 900, 'DB-1'), off('b', 450, undefined, 'DB-2'), off('c', 450, 0, 'DB-3')]);
+      assert.equal(pay.text, 'Pay Raju Sahu ₹450 · UPI raju@okaxis · 3 jobs (earned ₹1,350 − cash he kept ₹900)\nDB-1, DB-2, DB-3');
+      assert.equal(pay.reply_markup.inline_keyboard[0][0].text, 'Paid ✓');
+      const owes = msg([off('a', 450, 1200), off('b', 450, 0)]);
+      assert.equal(owes.text, 'Raju Sahu owes DriveBuddy ₹300 (cash he kept ₹1,200, earned ₹900) — collect it');
+      assert.deepEqual(plain(owes.reply_markup), { inline_keyboard: [[{ text: 'Settled ✓', callback_data: 'paid:d1:2026-11-23' }]] });
+      const even = msg([off('a', 450, 900), off('b', 450, 0)]);
+      assert.equal(even.text, 'Raju Sahu: earned ₹900 = cash he kept · nothing to pay');
+      assert.equal(even.reply_markup.inline_keyboard[0][0].text, 'Settled ✓');
+      const [g] = env.ctx.payoutGroups([off('a', 450, 1200), off('b', 450, -5), off('c', 450, 2.5)]);
+      assert.deepEqual([g.amount, g.cash, g.net], [1350, 1200, 150], 'odd cash values count as none');
+    });
+
+    test('Monday: a driver who owes gets "collect it" + Settled ✓; pressing it settles his jobs', () => {
+      put('drivers/d1', { name: 'Raju Sahu', phone: RAJU.phone, city: 'Raipur', status: 'active', upi: 'raju@okaxis' });
+      takenOffer('o1', { done: true, driverPay: 450, cashCollected: 1200, ref: 'DB-1041' });
+      takenOffer('o2', { done: true, driverPay: 450, ref: 'DB-1042' });
+      env.ctx.weeklyPayouts();
+      assert.equal(env.telegram[0].text, 'Raju Sahu owes DriveBuddy ₹300 (cash he kept ₹1,200, earned ₹900) — collect it\nDB-1041, DB-1042');
+      const week = env.ctx.istDay(Date.now());
+      env.tg.updates.push({ update_id: 3, callback_query: { id: 'cq3', data: `paid:d1:${week}`, message: { message_id: 9, chat: { id: 555 }, text: env.telegram[0].text } } });
+      env.ctx.telegramCallbacks_();
+      assert.equal(get('offers/o1').paid, true);
+      assert.equal(get('offers/o2').paid, true);
+      const edit = env.tg.calls.find((c) => c.method === 'editMessageText');
+      assert.match(edit.body.text, /\n\nSettled ✓ /);
+      assert.equal(env.tg.calls.find((c) => c.method === 'answerCallbackQuery').body.text, 'Marked settled ✓');
+    });
+
+    test('cash limit: over it, he is left out of job alerts, Telegram once, a reminder once a day; settled, he is back', () => {
+      env.props.set('UPI_ID', 'drivebuddy@ybl');
+      env.ctx.SETTLE_PUSH_FROM_HOUR = 0; // any hour, for the test
+      env.ctx.SETTLE_PUSH_TO_HOUR = 24;
+      const online = (id, lat) => put(`availability/${id}`, { online: true, city: 'Raipur', name: id, phone: '9000000000', lat, lng: 81.63, pushToken: `ExponentPushToken[${id}]`, at: ago(MIN) });
+      online('d1', 21.252); // Raju, nearest
+      online('d2', 21.26);
+      takenOffer('o1', { done: true, driverPay: 450, cashCollected: 2400, ref: 'DB-1040' }); // holds 1,950: under 2,000
+      booking('b1', { status: 'assigned', assignedDriver: RAJU });
+      takenOffer('b1');
+      tapped('b1', { ...doneTaps(), paidBy: 'cash', paidAt: ago(1000) });
+      env.ctx.watchChanges_(); // done and paid in the same minute: 750 more in cash − 450 earned → 2,250
+      assert.equal(get('offers/b1').cashCollected, 750);
+      const q = JSON.parse(env.props.get('driverQuality')).d1;
+      assert.deepEqual([q.owed, q.overLimit], [2250, true]);
+      const over = env.telegram.filter((m) => /holds ₹2,250 of DriveBuddy's cash<\/b> — over the ₹2,000 limit/.test(m.text));
+      assert.equal(over.length, 1);
+      assert.match(over[0].text, /Raju Sahu owes DriveBuddy ₹2,250/);
+      assert.equal(over[0].reply_markup.inline_keyboard[0][0].text, 'Settled ✓');
+
+      booking('n1', { status: 'confirmed', updatedAt: ago(1000) });
+      env.ctx.autoOffers_();
+      env.ctx.dispatchOffers_();
+      assert.deepEqual(env.pushes.filter((p) => p.channelId === 'jobs' && p.data.offerId).map((p) => p.to), ['ExponentPushToken[d2]'], 'not to him');
+
+      env.ctx.cashLimits_();
+      env.ctx.cashLimits_();
+      const settle = env.pushes.filter((p) => p.title === 'Settle your cash · नकद जमा करें');
+      assert.equal(settle.length, 1, 'once a day');
+      assert.equal(settle[0].to, 'ExponentPushToken[d1]');
+      assert.equal(settle[0].body, 'Settle ₹2,250 with DriveBuddy to get new jobs · नए काम के लिए DriveBuddy को ₹2,250 जमा करें');
+      assert.equal(env.telegram.filter((m) => /over the ₹2,000 limit/.test(m.text)).length, 1, 'Telegram once');
+
+      // The office collects and marks his jobs paid in /admin: within 5 minutes he gets alerts again.
+      for (const id of ['o1', 'b1']) env.store.docs.get(`offers/${id}`).paid = { booleanValue: true };
+      env.ctx.cashLimits_();
+      assert.deepEqual([JSON.parse(env.props.get('driverQuality')).d1.owed, JSON.parse(env.props.get('driverQuality')).d1.overLimit], [0, false]);
+      booking('n2', { status: 'confirmed', updatedAt: new Date() });
+      env.ctx.autoOffers_();
+      env.ctx.dispatchOffers_();
+      assert.ok(env.pushes.some((p) => p.to === 'ExponentPushToken[d1]' && p.data.offerId === 'n2'));
+    });
+
+    test('pure: the limit, and only above it', () => {
+      const { cashLimitOf, overCashLimit, rankDrivers } = env.ctx;
+      assert.equal(cashLimitOf({ cashLimit: 2000 }), 2000);
+      assert.equal(cashLimitOf({}), 0);
+      assert.equal(cashLimitOf(null), 0);
+      assert.equal(overCashLimit({ owed: 2000 }, 2000), false, 'at the limit is fine');
+      assert.equal(overCashLimit({ owed: 2001 }, 2000), true);
+      assert.equal(overCashLimit({ owed: 9000 }, 0), false, 'no limit: nobody is left out');
+      const now = Date.now();
+      const rows = [{ id: 'a', data: { online: true, pushToken: 'Ta', at: new Date(now - MIN), lat: 21.252, lng: 81.63 } }, { id: 'b', data: { online: true, pushToken: 'Tb', at: new Date(now - MIN), lat: 21.26, lng: 81.63 } }];
+      assert.deepEqual(rankDrivers(rows, { lat: 21.2514, lng: 81.6296 }, now, { a: { owed: 2500 } }, 2000).map((d) => d.id), ['b']);
+      assert.deepEqual(rankDrivers(rows, { lat: 21.2514, lng: 81.6296 }, now, { a: { owed: 2500 } }, 0).map((d) => d.id), ['a', 'b']);
+    });
+
+    test('9 pm: payments today by UPI, cash and unpaid; the cash each driver holds is worked out again', () => {
+      const today = ago(1000);
+      booking('u1', { createdAt: today, status: 'completed', updatedAt: today, localBill: { amount: 750 }, payment: { status: 'paid', method: 'upi', amount: 750, by: 'driver', paidAt: today, at: today } });
+      booking('c1', { createdAt: today, status: 'completed', updatedAt: today, localBill: { amount: 300 }, payment: { status: 'paid', method: 'cash', amount: 300, by: 'driver', paidAt: today, at: today } });
+      booking('c2', { createdAt: today, status: 'completed', updatedAt: today, localBill: { amount: 600 }, payment: { status: 'paid', method: 'cash', amount: 600, by: 'driver', paidAt: today, at: today } });
+      booking('x1', { createdAt: today, status: 'completed', updatedAt: today, localBill: { amount: 1000 }, payment: { status: 'pending', method: 'upi', amount: 1000, url: 'upi://pay?pa=a%40ybl', at: today } });
+      takenOffer('o1', { done: true, driverPay: 450, cashCollected: 2600, updatedAt: today });
+      env.ctx.dailyReport();
+      const t = env.telegram.find((m) => /DriveBuddy today/.test(m.text)).text;
+      assert.match(t, /<b>Payments today:<\/b> UPI ₹750 \(1\) · cash ₹900 \(2\) · unpaid ₹1,000 \(1\)\n/);
+      assert.match(t, /<b>Payouts due:<\/b> none · ₹2,150 to collect from 1 driver$/);
+      const q = JSON.parse(env.props.get('driverQuality'));
+      assert.deepEqual([q.d1.owed, q.d1.overLimit], [2150, true]);
+      assert.equal(env.telegram.filter((m) => /over the ₹2,000 limit/.test(m.text)).length, 1);
+      env.ctx.dailyReport();
+      assert.equal(env.telegram.filter((m) => /over the ₹2,000 limit/.test(m.text)).length, 1, 'once, not every night');
+    });
+  });
+
   describe('9 pm report (11) and the triggers', () => {
     test('the day in numbers', () => {
       booking('n1', { createdAt: ago(1000) });
@@ -1950,6 +2213,8 @@ describe('automation', () => {
       env.ctx.dailyReport();
       env.ctx.weeklyPayouts();
       env.ctx.dispatchOffers_();
+      env.props.set('driverQuality', JSON.stringify({ d1: { owed: 2500, overLimit: true } }));
+      env.ctx.cashLimits_();
       const fieldsOf = (w) => (!w ? [] : w.compositeFilter ? w.compositeFilter.filters.flatMap(fieldsOf) : [w.fieldFilter.field.fieldPath]);
       assert.ok(env.store.queries.length >= 14);
       for (const q of env.store.queries) assert.equal(new Set([...fieldsOf(q.where), q.orderBy[0].field.fieldPath]).size, 1, JSON.stringify(q));
