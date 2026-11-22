@@ -35,7 +35,25 @@ export type Offer = {
    * have none: their city only.
    */
   cities?: string[];
+  /**
+   * Cash the driver kept from the customer for this job (he tapped "Paid in
+   * cash" in the Driver app). The alerts robot's: it comes off what
+   * DriveBuddy pays him (offerSettlement).
+   */
+  cashCollected?: number;
 };
+
+/**
+ * One job's settlement with the driver: what he earned, the cash he kept,
+ * and net = earned − cash — DriveBuddy pays him net, or (net < 0) collects
+ * −net from him. The same sum as the robot's weekly payout.
+ */
+export function offerSettlement(o: Pick<Offer, 'driverPay' | 'cashCollected'>): { earned: number; cash: number; net: number } {
+  const earned = Math.max(0, Math.round(o.driverPay || 0));
+  const c = Number(o.cashCollected);
+  const cash = Number.isInteger(c) && c > 0 ? c : 0;
+  return { earned, cash, net: earned - cash };
+}
 
 /** The cities an offer is posted to: an admin's offer goes to its own city only (firestore.rules checks it). */
 export const offerCitiesFor = (city: string): string[] => [city];

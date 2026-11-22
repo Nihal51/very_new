@@ -19,7 +19,7 @@ import { site } from '@/lib/site';
 export const dynamic = 'force-static';
 
 export function GET() {
-  const { contact, notice, prices, monthly, google, alerts, app, outstation } = settings;
+  const { contact, notice, prices, monthly, google, alerts, app, outstation, payments } = settings;
   const body = {
     schema: 1,
     generatedAt: new Date().toISOString(),
@@ -86,6 +86,9 @@ export function GET() {
       maxWaitHours: railRules.maxWaitHours,
       maxOptions: railRules.maxOptions,
     },
+    /* Cash a driver may hold before he gets no new jobs: the alerts robot
+       enforces it, the Driver app's Earnings screen warns him. */
+    payments: { cashLimit: payments.cashLimit },
     google: { profile: google.profile, writeReview: google.writeReview },
     alerts: { pingUrl: alerts.pingUrl },
     site: { url: site.url, privacy: `${site.url}/privacy/`, terms: `${site.url}/terms/` },

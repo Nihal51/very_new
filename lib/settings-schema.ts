@@ -44,6 +44,11 @@ export type SiteSettings = {
     /** Each hour a local job runs over its package (the automatic bill from the Driver app's taps). */
     localExtraHour: number;
   };
+  /** Cash on jobs (the alerts robot and the Driver app read it from /app-config.json). */
+  payments: {
+    /** Rupees of DriveBuddy's cash a driver may hold before he gets no new job alerts (until he settles). */
+    cashLimit: number;
+  };
   /** Trip rules for the outstation estimate (lib/outstation.ts). */
   outstation: {
     /** The day price rises with the distance: from the first tier's `from` at nearFromKm … */
@@ -194,6 +199,10 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   price('prices.localExtraHour', s.prices.localExtraHour);
   if (s.prices.localExtraHour > s.prices.threeHours)
     problems.push('prices.localExtraHour (one hour over a package) should not cost more than the 3-hour package — is a 0 too many?');
+
+  price('payments.cashLimit', s.payments.cashLimit);
+  if (s.payments.cashLimit > 50000)
+    problems.push(`payments.cashLimit (${s.payments.cashLimit}) is more than 50000 — is a 0 too many?`);
 
   const o = s.outstation;
   count('outstation.hoursPerDay', o.hoursPerDay, 16);

@@ -10,8 +10,8 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
-import { PACKAGE_NAMES, isInstantBooking, toLocalBill, toPayment, toAcceptedPrice } from '../lib/bookings.ts';
-import { offerCitiesFor } from '../lib/offers.ts';
+import { PACKAGE_NAMES, UPI_ID, isInstantBooking, isUpiPayUrl, toLocalBill, toPayment, toAcceptedPrice, toTripTaps } from '../lib/bookings.ts';
+import { offerCitiesFor, offerSettlement } from '../lib/offers.ts';
 import { checkSettings } from '../lib/settings-schema.ts';
 import { settings } from '../site-settings.ts';
 
@@ -66,4 +66,44 @@ test('offers: an admin posts to its own city; the robot knows the same cities as
   assert.deepEqual(listed, cities, 'an offer may list only served cities');
   for (const [city, near] of Object.entries(robot.NEARBY_CITIES)) for (const n of near) assert.ok(cities.includes(n), `${city} → ${n}`);
   assert.ok(rules.includes("o.status in ['open', 'taken', 'withdrawn', 'released']"));
+});
+
+test('the cash limit is one setting, published to the robot and the apps through app-config.json', () => {
+  assert.equal(typeof settings.payments.cashLimit, 'number');
+  assert.ok(read('app/app-config.json/route.ts').includes('payments: { cashLimit: payments.cashLimit }'));
+  assert.throws(() => checkSettings({ ...settings, payments: { cashLimit: 0 } }), /payments\.cashLimit/);
+  assert.throws(() => checkSettings({ ...settings, payments: { cashLimit: 200000 } }), /payments\.cashLimit/);
+  assert.equal(robot.cashLimitOf(settings.payments), settings.payments.cashLimit);
+  // No CASH_LIMIT script property: the robot reads the site's setting only.
+  assert.ok(!read('apps-script/Code.js').includes("prop_('CASH_LIMIT')"));
+});
+
+test('UPI pay links: the robot makes what the admin panel and the apps accept; one UPI ID shape everywhere', () => {
+  assert.equal(String(UPI_ID), String(robot.UPI_ID_RE));
+  assert.ok(read('firestore.rules').includes("'^[a-zA-Z0-9.\\\\-_]{2,64}@[a-zA-Z]{2,32}$'"), 'the rules use the same pattern');
+  const url = robot.upiPayUrl('drivebuddy@ybl', 'DriveBuddy', 750, 'DB-1042');
+  assert.equal(isUpiPayUrl(url), true);
+  assert.equal(isUpiPayUrl('upi://pay?pa=not-an-id&am=750.00'), false);
+  assert.equal(isUpiPayUrl('upi://pay?pa=drivebuddy%40ybl&pn=Drive Buddy'), false, 'no spaces');
+  assert.equal(isUpiPayUrl(`upi://pay?pa=drivebuddy%40ybl&tn=${'x'.repeat(500)}`), false, 'at most 500 characters');
+  assert.equal(isUpiPayUrl('upi://pay?pa=%E0%A4'), false, 'a broken encoding is not a link');
+  assert.equal(isUpiPayUrl('https://evil.example/?pa=drivebuddy%40ybl'), false);
+  const pending = toPayment({ status: 'pending', method: 'upi', amount: 750, url, at: new Date() });
+  assert.deepEqual([pending.url, pending.method], [url, 'upi']);
+  const cash = toPayment({ status: 'paid', method: 'cash', amount: 750, by: 'driver', paidAt: new Date(), at: new Date() });
+  assert.deepEqual([cash.status, cash.method, cash.by, cash.url], ['paid', 'cash', 'driver', ''], 'a payment the driver confirmed has no link');
+  assert.equal(toPayment({ status: 'paid', method: 'bitcoin', amount: 750 }).method, undefined);
+  const taps = toTripTaps({ driverPhone: '9893302783', doneAt: new Date(), amount: 750, paidBy: 'cash', paidAt: new Date() });
+  assert.deepEqual([taps.amount, taps.paidBy], [750, 'cash']);
+  assert.equal(toTripTaps({ driverPhone: '9893302783', paidBy: 'card' }).paidBy, undefined);
+});
+
+test('one job’s settlement in /admin adds up like the robot’s weekly payout', () => {
+  const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+  for (const [driverPay, cashCollected] of [[450, 750], [450, 0], [450, undefined], [450, 450], [450, -3]]) {
+    const s = offerSettlement({ driverPay, cashCollected });
+    const [g] = robot.payoutGroups([{ id: 'a', data: { status: 'taken', done: true, paid: false, driverPay, cashCollected, takenBy: RAJU } }]);
+    assert.deepEqual([s.earned, s.cash, s.net], [g.amount, g.cash, g.net], `${driverPay} / ${cashCollected}`);
+  }
+  assert.ok(read('firestore.rules').includes("'cashCollected'"), 'the rules allow cashCollected on an offer');
 });

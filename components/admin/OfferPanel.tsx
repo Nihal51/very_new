@@ -10,7 +10,7 @@ import { Input, Select } from '@/components/ui/Field';
 import { markOfferPaid, postOffer, withdrawOffer } from '@/lib/admin';
 import { pingAlerts } from '@/lib/firebase';
 import { type Booking, formatDateTime, prettyPhone } from '@/lib/bookings';
-import { CUT, type Offer, driverPayFor, offerArea } from '@/lib/offers';
+import { CUT, type Offer, driverPayFor, offerArea, offerSettlement } from '@/lib/offers';
 import { rupees } from '@/lib/settings';
 
 const CUTS = Array.from({ length: CUT.max - CUT.min + 1 }, (_, i) => CUT.min + i);
@@ -33,6 +33,8 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
   const canOffer = b.status === 'new' || b.status === 'confirmed';
   if (!offer && !canOffer) return null;
 
+  const settle = offer ? offerSettlement(offer) : null;
+  const firstName = offer?.takenBy?.name.split(' ')[0] ?? 'the driver';
   const priceNum = Math.round(Number(price));
   const priceOk = Number.isFinite(priceNum) && priceNum >= 100 && priceNum <= 500000;
   const pay = priceOk ? driverPayFor(priceNum, cut) : 0;
@@ -111,9 +113,21 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
             Price {rupees(offer.price)} · driver earns {rupees(offer.driverPay)} · DriveBuddy keeps {offer.cutPercent}% (
             {rupees(offer.price - offer.driverPay)}).
           </p>
+          {settle && settle.cash > 0 && (
+            <p className="text-sm">
+              Cash kept by driver <strong>{rupees(settle.cash)}</strong> (he tapped &quot;Paid in cash&quot;) ·{' '}
+              {settle.net > 0
+                ? `DriveBuddy pays him ${rupees(settle.net)} for this job`
+                : settle.net < 0
+                  ? `he owes DriveBuddy ${rupees(-settle.net)} for this job`
+                  : 'nothing to pay either way for this job'}
+              . The Monday payout on Telegram adds up all his jobs the same way.
+            </p>
+          )}
           {offer.paid ? (
             <p className="text-sm">
-              ✓ Paid to the driver{offer.paidAt ? ` on ${formatDateTime(offer.paidAt)}` : ''}.{' '}
+              ✓ {settle && settle.net <= 0 ? 'Settled with the driver' : 'Paid to the driver'}
+              {offer.paidAt ? ` on ${formatDateTime(offer.paidAt)}` : ''}.{' '}
               <button type="button" className="underline" onClick={() => act('paid', () => markOfferPaid(user, b.id, false))}>
                 Undo
               </button>
@@ -125,7 +139,11 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
                 loading={busy === 'paid'}
                 onClick={() => act('paid', () => markOfferPaid(user, b.id))}
               >
-                Mark {rupees(offer.driverPay)} paid to {offer.takenBy.name.split(' ')[0]}
+                {!settle || settle.net > 0
+                  ? `Mark ${rupees(settle?.net ?? offer.driverPay)} paid to ${firstName}`
+                  : settle.net < 0
+                    ? `Mark settled: ${firstName} paid DriveBuddy ${rupees(-settle.net)}`
+                    : 'Mark settled (nothing to pay)'}
               </Button>
               {!offer.done && <span className="text-fg-subtle text-sm">The job is not marked completed yet.</span>}
             </div>

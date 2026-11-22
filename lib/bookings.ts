@@ -140,18 +140,43 @@ export type BookingLocalBill = {
   at?: Date;
 };
 
-/** The Razorpay payment link the robot sent for a completed job (only once its keys are set). */
+/** How a job was paid: a UPI link to DriveBuddy's UPI ID, cash to the driver, or a Razorpay link. */
+export type PaymentMethod = 'upi' | 'cash' | 'razorpay';
+
+/**
+ * A completed job's payment, written by the alerts robot: pending with a link
+ * (a UPI link to DriveBuddy's own UPI ID, or Razorpay's once its keys are
+ * set), then paid — online, or confirmed by the driver ("Paid by UPI" /
+ * "Paid in cash", by: 'driver').
+ */
 export type BookingPayment = {
   status: 'pending' | 'paid';
   amount: number;
+  /** '' when there is none, or it is not a link we trust. */
   url: string;
   linkId: string;
+  method?: PaymentMethod;
+  /** 'driver': the driver confirmed it in the Driver app. */
+  by?: 'driver';
   at?: Date;
   paidAt?: Date;
 };
 
-/** The Driver app's taps on a job (tripTaps/{bookingId}, firestore.rules). */
-export type TripTaps = { driverPhone: string; leftAt?: Date; arrivedAt?: Date; doneAt?: Date; homeAt?: Date };
+/**
+ * The Driver app's taps on a job (tripTaps/{bookingId}, firestore.rules).
+ * amount: the bill to collect (the robot's); paidBy / paidAt: the driver's
+ * "Paid by UPI" / "Paid in cash".
+ */
+export type TripTaps = {
+  driverPhone: string;
+  leftAt?: Date;
+  arrivedAt?: Date;
+  doneAt?: Date;
+  homeAt?: Date;
+  amount?: number;
+  paidBy?: 'upi' | 'cash';
+  paidAt?: Date;
+};
 
 /** The customer's rating of the driver (ratings/{bookingId}). */
 export type Rating = { stars: number; comment: string; driverId: string; customerUid: string; at?: Date };
@@ -394,14 +419,45 @@ export function toLocalBill(v: unknown): BookingLocalBill | null {
   return { ...(Object.fromEntries(keys.map((k) => [k, num(b[k])])) as Record<(typeof keys)[number], number>), at: toDate(b.at) };
 }
 
+/** A UPI ID: the same shape as firestore.rules (drivers' upi) and the robot (UPI_ID). */
+export const UPI_ID = /^[a-zA-Z0-9.\-_]{2,64}@[a-zA-Z]{2,32}$/;
+
+/**
+ * A UPI pay link the robot makes ("upi://pay?pa=…&pn=…&am=…"): its pa= is a
+ * UPI ID (encoded, so "%40" for "@"), at most 500 characters, no spaces.
+ */
+export function isUpiPayUrl(url: string): boolean {
+  if (!url.startsWith('upi://pay?') || url.length > 500 || /\s/.test(url)) return false;
+  const pa = /[?&]pa=([^&]*)/.exec(url)?.[1] ?? '';
+  try {
+    return UPI_ID.test(decodeURIComponent(pa));
+  } catch {
+    return false;
+  }
+}
+
+const PAYMENT_METHODS: readonly PaymentMethod[] = ['upi', 'cash', 'razorpay'];
+
 /** A stored payment → typed; null when there is none or it is odd. */
 export function toPayment(v: unknown): BookingPayment | null {
   if (!v || typeof v !== 'object') return null;
   const p = v as Record<string, unknown>;
-  if ((p.status !== 'pending' && p.status !== 'paid') || !(num(p.amount) > 0) || typeof p.url !== 'string') return null;
-  // Only Razorpay's own links are shown as links.
-  const url = /^https:\/\/(rzp\.io|[a-z0-9-]+\.razorpay\.com)\//.test(p.url) ? p.url : '';
-  return { status: p.status, amount: num(p.amount), url, linkId: String(p.linkId ?? ''), at: toDate(p.at), paidAt: toDate(p.paidAt) };
+  if ((p.status !== 'pending' && p.status !== 'paid') || !(num(p.amount) > 0)) return null;
+  // A payment the driver confirmed has no link at all.
+  const raw = typeof p.url === 'string' ? p.url : '';
+  // Only Razorpay's own links and UPI pay links are shown as links.
+  const url = /^https:\/\/(rzp\.io|[a-z0-9-]+\.razorpay\.com)\//.test(raw) || isUpiPayUrl(raw) ? raw : '';
+  const method = PAYMENT_METHODS.find((m) => m === p.method);
+  return {
+    status: p.status,
+    amount: num(p.amount),
+    url,
+    linkId: String(p.linkId ?? ''),
+    ...(method ? { method } : {}),
+    ...(p.by === 'driver' ? { by: 'driver' as const } : {}),
+    at: toDate(p.at),
+    paidAt: toDate(p.paidAt),
+  };
 }
 
 /** A stored taps document → typed; null when there is none. */
@@ -414,5 +470,8 @@ export function toTripTaps(v: unknown): TripTaps | null {
     arrivedAt: toDate(t.arrivedAt),
     doneAt: toDate(t.doneAt),
     homeAt: toDate(t.homeAt),
+    ...(num(t.amount) > 0 ? { amount: num(t.amount) } : {}),
+    ...(t.paidBy === 'upi' || t.paidBy === 'cash' ? { paidBy: t.paidBy } : {}),
+    paidAt: toDate(t.paidAt),
   };
 }

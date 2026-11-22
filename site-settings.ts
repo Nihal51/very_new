@@ -113,6 +113,17 @@ export const settings = {
     localExtraHour: 150, //                   decide: price of each hour over the package
   },
 
+  /* ---------------------------------------------------------- payments ----
+     Customers pay DriveBuddy's UPI ID (set in the alerts robot's Script
+     Properties as UPI_ID — not here) or pay the driver in cash. Cash the
+     driver keeps is taken off his weekly payout.
+     cashLimit: rupees of DriveBuddy's cash a driver may hold (cash he kept
+     minus what he earned, over his unpaid jobs) before he stops getting new
+     job alerts, until he settles. The Driver app shows him the same limit. */
+  payments: {
+    cashLimit: 2000, //                       decide: cash a driver may hold before new jobs stop
+  },
+
   /* ------------------------------------- outstation trips & one-way drops --
      How the trip estimate is worked out on the booking form and in the app
      (decided 8 Nov 2026 — one rule, the driver's TIME). One-way: from when he

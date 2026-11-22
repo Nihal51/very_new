@@ -4,14 +4,22 @@ import { useEffect, useState } from 'react';
 
 import { Detail, SectionTitle } from '@/components/admin/kit';
 import { watchRating, watchTripTaps } from '@/lib/admin';
-import { type Booking, type Rating, type TripTaps, formatDateTime, isInstantBooking } from '@/lib/bookings';
+import { type Booking, type BookingPayment, type Rating, type TripTaps, formatDateTime, isInstantBooking } from '@/lib/bookings';
 import { rupees } from '@/lib/settings';
+
+/** How a paid job was paid, and who said so. */
+function paidText(pay: BookingPayment, driver: string): string {
+  const who = pay.by === 'driver' ? ` · confirmed by the driver${driver ? ` (${driver})` : ''} in the Driver app` : '';
+  if (pay.method === 'cash') return `Paid ${rupees(pay.amount)} in cash ✓ — the driver kept the cash${who}`;
+  if (pay.method === 'upi') return `Paid ${rupees(pay.amount)} by UPI ✓${who}`;
+  return `Paid online ✓ ${rupees(pay.amount)}${who}`;
+}
 
 /**
  * What happened in the apps without the office: the robot's instant
  * confirmation, the price the customer accepted, the driver's taps, the
- * automatic bill, the payment link and the customer's rating. Shown only
- * when there is something to show.
+ * automatic bill, the payment (link, method, who confirmed it) and the
+ * customer's rating. Shown only when there is something to show.
  */
 export function AppActivity({ b }: { b: Booking }) {
   const [taps, setTaps] = useState<TripTaps | null>(null);
@@ -38,6 +46,7 @@ export function AppActivity({ b }: { b: Booking }) {
         ['Arrived', taps.arrivedAt],
         [b.package === 'one-way-drop' ? 'Job done (car dropped)' : 'Job done', taps.doneAt],
         ['Reached home', taps.homeAt],
+        [taps.paidBy === 'cash' ? 'Payment received (cash, driver)' : 'Payment received (UPI, driver)', taps.paidAt],
       ] as const).filter(([, at]) => at)
     : [];
   const bill = b.localBill;
@@ -82,16 +91,22 @@ export function AppActivity({ b }: { b: Booking }) {
           <Detail label="Payment" wide>
             {pay.status === 'paid' ? (
               <span className="text-success font-semibold">
-                Paid online ✓ {rupees(pay.amount)}
+                {paidText(pay, b.assignedDriver?.name ?? '')}
                 {pay.paidAt ? ` · ${formatDateTime(pay.paidAt)}` : ''}
               </span>
+            ) : pay.method === 'upi' ? (
+              <>
+                UPI pay link in the customer&apos;s app for {rupees(pay.amount)} · not paid yet
+                {pay.at ? ` (since ${formatDateTime(pay.at)})` : ''}. The driver taps &quot;Paid by UPI&quot; or &quot;Paid in cash&quot; once
+                the customer pays.
+              </>
             ) : (
               <>
                 Link sent by SMS for {rupees(pay.amount)} · not paid yet
                 {pay.at ? ` (sent ${formatDateTime(pay.at)})` : ''}
               </>
             )}
-            {pay.url && (
+            {pay.url && pay.method !== 'upi' && (
               <a href={pay.url} target="_blank" rel="noopener noreferrer" className="text-accent-text ml-2 text-sm font-semibold underline">
                 Open the link
               </a>
