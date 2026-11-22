@@ -688,7 +688,7 @@ function BookingDetail({
           )}
         </dl>
 
-        <AppActivity b={b} />
+        <AppActivity b={b} user={user} />
 
         {err && (
           <Alert tone="error" className="mt-5">

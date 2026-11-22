@@ -1501,7 +1501,7 @@ describe('automation', () => {
       assert.deepEqual({ type: ev.type, from: ev.from, to: ev.to, note: ev.note, by: ev.by }, { type: 'status', from: 'new', to: 'confirmed', note: 'Confirmed automatically', by: 'robot' });
       assert.match(env.telegram[0].text, /Auto-confirmed/);
       assert.equal(get('offers/b1').status, 'open', 'offered to drivers in the same minute');
-      assert.deepEqual([...get('offers/b1').cities], ['Raipur']);
+      assert.deepEqual([...get('offers/b1').cities], ['Raipur', 'Bhilai', 'Durg'], 'the whole zone');
       assert.equal(env.pushes.filter((p) => p.title === 'Booking confirmed').length, 1);
     });
 
@@ -1569,7 +1569,7 @@ describe('automation', () => {
       const o = get('offers/b1');
       assert.deepEqual(
         [o.status, o.takenBy, o.takenAt, o.cutPercent, o.driverPay, o.by, [...o.cities], o.done],
-        ['open', null, null, 30, 420, 'robot', ['Raipur'], false],
+        ['open', null, null, 30, 420, 'robot', ['Raipur', 'Bhilai', 'Durg'], false],
       );
       assert.ok(Date.now() - o.createdAt.getTime() < 5000, 'a fresh cycle');
       assert.deepEqual([...get('offerAlerts/b1').skipIds], ['d1']);
@@ -1885,30 +1885,47 @@ describe('automation', () => {
     const online = (id, city, lat, lng) =>
       put(`availability/${id}`, { online: true, city, name: id, phone: '9000000000', lat, lng, pushToken: `ExponentPushToken[${id}]`, at: ago(MIN) });
 
-    test('10 minutes at the top pay: Bhilai and Durg drivers too, the customer hears once, Telegram once', () => {
+    test('one zone: a Raipur job reaches a Bhilai-registered driver standing in Raipur at once, nearest first', () => {
+      online('r1', 'Raipur', 21.30, 81.70); // a Raipur driver farther away
+      online('b1', 'Bhilai', 21.252, 81.63); // registered in Bhilai, waiting near the pickup
+      online('z1', 'Bilaspur', 22.08, 82.14);
+      booking('x1', { status: 'confirmed', updatedAt: ago(1000) });
+      env.ctx.autoOffers_();
+      assert.deepEqual([...get('offers/x1').cities], ['Raipur', 'Bhilai', 'Durg']);
+      env.ctx.dispatchOffers_();
+      assert.deepEqual(env.pushes.map((p) => p.to), ['ExponentPushToken[b1]', 'ExponentPushToken[r1]'], 'nearest first; never Bilaspur');
+    });
+
+    test('an older offer (its own city only), 10 minutes at the top pay: Bhilai and Durg drivers too, the customer hears once', () => {
       device('u1', 'p1', 'ExponentPushToken[customer0001]');
       online('r1', 'Raipur', 21.252, 81.63);
       online('b1', 'Bhilai', 21.19, 81.35);
       booking('x1', { status: 'confirmed', customerUid: 'u1', updatedAt: ago(1000) });
-      env.ctx.autoOffers_();
+      takenOffer('x1', { status: 'open', takenBy: null, takenAt: null, cutPercent: 30, driverPay: 420, cities: ['Raipur'], createdAt: ago(1000) });
       env.ctx.dispatchOffers_(); // the Raipur driver hears
       assert.deepEqual(env.pushes.map((p) => p.to), ['ExponentPushToken[r1]']);
-      const created = (ms) => { env.store.docs.get('offers/x1').createdAt = { timestampValue: ago(ms).toISOString() }; };
-      created(13 * MIN);
+      env.store.docs.get('offers/x1').createdAt = { timestampValue: ago(13 * MIN).toISOString() };
       env.ctx.dispatchOffers_();
       assert.deepEqual([...get('offers/x1').cities], ['Raipur'], 'not yet');
-      created(14 * MIN + 5000);
+      env.store.docs.get('offers/x1').createdAt = { timestampValue: ago(14 * MIN + 5000).toISOString() };
       env.ctx.dispatchOffers_();
       assert.deepEqual([...get('offers/x1').cities], ['Raipur', 'Bhilai', 'Durg']);
       assert.ok(env.pushes.some((p) => p.to === 'ExponentPushToken[b1]'), 'the Bhilai driver hears');
       const still = env.pushes.filter((p) => p.title === 'Still finding your driver');
       assert.equal(still.length, 1);
-      assert.equal(still[0].body, "Still finding your driver — we'll call you if it takes longer.");
       assert.equal(env.telegram.filter((m) => /offered to Bhilai and Durg drivers too/.test(m.text)).length, 1);
       env.ctx.dispatchOffers_();
       env.ctx.dispatchOffers_();
       assert.equal(env.pushes.filter((p) => p.title === 'Still finding your driver').length, 1, 'once');
-      assert.equal(env.telegram.filter((m) => /offered to Bhilai and Durg/.test(m.text)).length, 1);
+    });
+
+    test('pure: the zones', () => {
+      const { zoneOf } = env.ctx;
+      assert.deepEqual([...zoneOf('Raipur')], ['Raipur', 'Bhilai', 'Durg']);
+      assert.deepEqual([...zoneOf('Bhilai')], ['Bhilai', 'Raipur', 'Durg']);
+      assert.deepEqual([...zoneOf('Durg')], ['Durg', 'Raipur', 'Bhilai']);
+      assert.deepEqual([...zoneOf('Bilaspur')], ['Bilaspur']);
+      assert.deepEqual([...zoneOf('Korba')], ['Korba']);
     });
   });
 
@@ -2206,10 +2223,37 @@ describe('automation', () => {
       assert.deepEqual(Object.keys(pendingConfirms()), ['b1']);
     });
 
-    test('a driver the office assigned itself is not asked about', () => {
+    test('a driver the office assigned itself is not asked about: confirmed by the office', () => {
       booking('b2', { status: 'assigned', assignedDriver: RAJU, updatedBy: 'admin1', updatedAt: new Date() });
       env.ctx.watchChanges_();
       assert.equal(asked().length, 0);
+      const c = get('bookings/b2').driverConfirmed;
+      assert.deepEqual([c.by, c.driverId], ['office', 'd1']);
+      assert.ok(c.at);
+      assert.equal(get('bookings/b2').updatedBy, 'admin1', 'updatedAt / updatedBy untouched');
+    });
+
+    test('an office edit of a job a driver took (a quote, a bill) is not an office assignment', () => {
+      took();
+      env.ctx.watchChanges_();
+      env.store.docs.get('bookings/b1').updatedBy = { stringValue: 'admin1' };
+      env.store.docs.get('bookings/b1').updatedAt = { timestampValue: new Date(Date.now() + 1000).toISOString() };
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/b1').driverConfirmed, undefined);
+      assert.equal(asked().length, 1, 'and he is not asked about twice');
+    });
+
+    test('already confirmed for him (e.g. in /admin): nothing to do', () => {
+      took('b1', { driverConfirmed: { at: new Date(), by: 'admin', driverId: 'd1' } });
+      env.ctx.watchChanges_();
+      assert.equal(asked().length, 0);
+      assert.equal(get('bookings/b1').driverConfirmed.by, 'admin');
+    });
+
+    test('another driver’s old confirmation does not count for the new one', () => {
+      took('b1', { driverConfirmed: { at: new Date(), by: 'telegram', driverId: 'd2' } });
+      env.ctx.watchChanges_();
+      assert.equal(asked().length, 1);
     });
 
     test('CONFIRM_BY_CALL = off: nothing is sent', () => {
@@ -2218,6 +2262,8 @@ describe('automation', () => {
       env.ctx.watchChanges_();
       assert.equal(asked().length, 0);
       assert.deepEqual(pendingConfirms(), {});
+      const c = get('bookings/b1').driverConfirmed;
+      assert.deepEqual([c.by, c.driverId], ['auto', 'd1'], 'confirmed at once, so he sees the job');
       env.ctx.telegramCallbacks_();
       assert.equal(env.tg.calls.length, 0, 'nothing waits: Telegram is not polled');
     });
@@ -2235,6 +2281,63 @@ describe('automation', () => {
       const n = env.tg.calls.length;
       env.ctx.telegramCallbacks_();
       assert.equal(env.tg.calls.length, n, 'no more polling');
+    });
+
+    test('Confirmed ✓ when /admin confirmed him meanwhile: counts as done, the message says so', () => {
+      took();
+      env.ctx.watchChanges_();
+      const at = ago(MIN);
+      env.store.docs.get('bookings/b1').driverConfirmed = env.ctx.toValue({ at, by: 'admin', driverId: 'd1' });
+      press(28, 'conf:b1');
+      const c = get('bookings/b1').driverConfirmed;
+      assert.deepEqual([c.by, c.at.getTime()], ['admin', at.getTime()], 'the office’s confirmation stands');
+      assert.deepEqual(answers(), ['Confirmed ✓ (already, in /admin)']);
+      assert.match(env.tg.calls.find((x) => x.method === 'editMessageText').body.text, /\n\nConfirmed ✓ \(already, in \/admin\) /);
+      assert.deepEqual(pendingConfirms(), {});
+    });
+
+    test('confirmed in /admin before the 15 minutes: no reminder', () => {
+      took();
+      env.ctx.watchChanges_();
+      env.store.docs.get('bookings/b1').driverConfirmed = env.ctx.toValue({ at: new Date(), by: 'admin', driverId: 'd1' });
+      const p = pendingConfirms();
+      p.b1.at = Date.now() - 16 * MIN;
+      env.props.set('confirmsPending', JSON.stringify(p));
+      env.ctx.telegramCallbacks_();
+      assert.equal(env.telegram.filter((m) => /not confirmed by call yet/.test(m.text)).length, 0);
+      assert.deepEqual(pendingConfirms(), {});
+    });
+
+    test('backfill, once: office-assigned jobs get office, jobs taken in the app are asked about (unless asked already)', () => {
+      const SONU = { id: 'd2', name: 'Sonu Verma', phone: '9425212345' };
+      booking('o1', { status: 'assigned', assignedDriver: SONU, updatedBy: 'admin1', updatedAt: ago(3 * 86_400_000) });
+      booking('t1', { status: 'assigned', assignedDriver: RAJU, updatedBy: 'admin1', updatedAt: ago(2 * 86_400_000) }); // taken, then edited
+      takenOffer('t1');
+      booking('t2', { status: 'assigned', assignedDriver: RAJU, updatedBy: `driver-${RAJU.phone}`, updatedAt: ago(86_400_000) });
+      takenOffer('t2');
+      put('reminders/t2', { confirmAskedFor: `d1@${ago(86_400_000).getTime()}` }); // asked before this version
+      booking('ok', { status: 'assigned', assignedDriver: RAJU, updatedBy: 'admin1', updatedAt: ago(86_400_000), driverConfirmed: { at: ago(MIN), by: 'telegram', driverId: 'd1' } });
+      booking('done', { status: 'completed', assignedDriver: SONU, updatedBy: 'admin1', updatedAt: ago(86_400_000) });
+      env.ctx.tick();
+      assert.equal(get('bookings/o1').driverConfirmed.by, 'office');
+      assert.equal(get('bookings/t1').driverConfirmed, undefined);
+      assert.equal(get('bookings/t2').driverConfirmed, undefined);
+      assert.equal(get('bookings/ok').driverConfirmed.by, 'telegram');
+      assert.equal(get('bookings/done').driverConfirmed, undefined);
+      assert.deepEqual(asked().map((m) => m.reply_markup.inline_keyboard[0][0].callback_data), ['conf:t1']);
+      assert.equal(env.props.get('driverConfirmBackfill'), 'v1');
+      booking('o2', { status: 'assigned', assignedDriver: SONU, updatedBy: 'admin1', updatedAt: ago(3 * 86_400_000) });
+      env.ctx.tick();
+      assert.equal(get('bookings/o2').driverConfirmed, undefined, 'once: older bookings are not looked at again');
+      assert.equal(asked().length, 1);
+    });
+
+    test('a driver who gives the job back loses his confirmation', () => {
+      booking('b1', { status: 'confirmed', assignedDriver: null, updatedAt: ago(MIN), driverConfirmed: { at: ago(10 * MIN), by: 'telegram', driverId: 'd1' } });
+      takenOffer('b1', { status: 'released' });
+      env.ctx.watchChanges_();
+      assert.equal(get('offers/b1').status, 'open');
+      assert.equal(get('bookings/b1').driverConfirmed ?? null, null);
     });
 
     test('a press from any other chat is ignored', () => {

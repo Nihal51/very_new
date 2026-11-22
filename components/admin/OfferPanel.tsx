@@ -10,7 +10,7 @@ import { Input, Select } from '@/components/ui/Field';
 import { markOfferPaid, postOffer, withdrawOffer } from '@/lib/admin';
 import { pingAlerts } from '@/lib/firebase';
 import { type Booking, formatDateTime, prettyPhone } from '@/lib/bookings';
-import { CUT, type Offer, driverPayFor, offerArea, offerSettlement } from '@/lib/offers';
+import { CUT, type Offer, citiesText, driverPayFor, offerArea, offerCitiesFor, offerSettlement } from '@/lib/offers';
 import { rupees } from '@/lib/settings';
 
 const CUTS = Array.from({ length: CUT.max - CUT.min + 1 }, (_, i) => CUT.min + i);
@@ -84,15 +84,14 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
       {offer?.status === 'open' && (
         <div className="flex flex-col gap-2">
           <p>
-            Offered to {(offer.cities?.length ? offer.cities : [b.city]).join(', ')} drivers at <strong>{rupees(offer.price)}</strong> · driver earns{' '}
+            Offered to {citiesText(offer.cities?.length ? offer.cities : [b.city])} drivers at <strong>{rupees(offer.price)}</strong> · driver earns{' '}
             <strong>{rupees(offer.driverPay)}</strong> · DriveBuddy keeps {offer.cutPercent}%. The nearest online drivers got an
             alert, the rest a minute later. Waiting for one to accept…
           </p>
           {offer.by === 'robot' && (
             <p className="text-fg-muted text-sm">
               Automatic offer: if nobody takes it, the robot lowers DriveBuddy&apos;s cut every 2 minutes (30% → 25% → 20%),
-              so the driver earns more, and tells every online driver. Still nobody 10 minutes after that: drivers in the nearby
-              cities hear about it too.
+              so the driver earns more, and tells every online driver of the zone again, nearest first.
             </p>
           )}
           <div>
@@ -192,7 +191,7 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
           </p>
           <div>
             <Button loading={busy === 'post'} disabled={!priceOk || area.trim().length < 2} onClick={post}>
-              Offer to {b.city} drivers
+              Offer to {citiesText(offerCitiesFor(b.city))} drivers
             </Button>
           </div>
         </div>

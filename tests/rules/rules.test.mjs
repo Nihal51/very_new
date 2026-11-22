@@ -589,13 +589,19 @@ describe('driver app — jobs and live tracking', () => {
   const RAJU = '9893302783';
   const driver = (phone = RAJU, extra = {}) =>
     env.authenticatedContext(`driver-${phone}`, { role: 'driver', driverPhone: phone, driverId: 'd1', ...extra }).firestore();
-  const assigned = (phone = RAJU) => ({ status: 'assigned', assignedDriver: { id: 'd1', name: 'Raju Sahu', phone }, customerUid: 'cust1' });
+  // Confirmed by the office for d1 (the driver() login's id) unless said otherwise.
+  const assigned = (phone = RAJU, confirmedFor = 'd1') => ({
+    status: 'assigned', assignedDriver: { id: 'd1', name: 'Raju Sahu', phone }, customerUid: 'cust1',
+    ...(confirmedFor ? { driverConfirmed: { at: new Date(), by: 'telegram', driverId: confirmedFor } } : {}),
+  });
+  const myJobs = (db, driverId = 'd1') =>
+    query(collection(db, 'bookings'), where('assignedDriver.phone', '==', RAJU), where('status', '==', 'assigned'), where('driverConfirmed.driverId', '==', driverId));
   const point = (extra = {}) => ({
     lat: 21.25, lng: 81.63, acc: 12, heading: 90, speed: 8.5, active: true,
     at: serverTimestamp(), phoneAt: new Date(), driverPhone: RAJU, driverName: 'Raju Sahu', ...extra,
   });
 
-  test('a driver reads and lists only the bookings assigned to his number right now', async () => {
+  test('a driver reads and lists only the bookings assigned to his number right now, once confirmed', async () => {
     await seedBooking('mine', assigned());
     await seedBooking('other', assigned('9111111111'));
     await seedBooking('done', { ...assigned(), status: 'completed' });
@@ -606,11 +612,44 @@ describe('driver app — jobs and live tracking', () => {
     await assertFails(getDoc(doc(driver(), 'bookings', 'done')));
     await assertFails(getDoc(doc(driver(), 'bookings', 'free')));
 
-    const q = query(collection(driver(), 'bookings'), where('assignedDriver.phone', '==', RAJU), where('status', '==', 'assigned'));
-    const snap = await assertSucceeds(getDocs(q));
+    // The Driver app's query: his number, assigned, confirmed for him.
+    const snap = await assertSucceeds(getDocs(myJobs(driver())));
     assert.deepEqual(snap.docs.map((d) => d.id), ['mine']);
+    // Without the confirmation filter the rules cannot be sure: refused.
+    await assertFails(getDocs(query(collection(driver(), 'bookings'), where('assignedDriver.phone', '==', RAJU), where('status', '==', 'assigned'))));
+    await assertFails(getDocs(myJobs(driver(), 'd2'))); // someone else's confirmations
     await assertFails(getDocs(query(collection(driver(), 'bookings'), where('status', '==', 'assigned'))));
     await assertFails(getDocs(collection(driver(), 'bookings')));
+  });
+
+  test('before the office confirms him he has the job but not the customer’s details', async () => {
+    await seedBooking('mine', assigned(RAJU, null));
+    await assertFails(getDoc(doc(driver(), 'bookings', 'mine')));
+    const before = await assertSucceeds(getDocs(myJobs(driver())));
+    assert.equal(before.size, 0, 'his list is empty until then');
+    // Another driver's confirmation (an earlier driver on this booking) does not count for him.
+    await seedBooking('mine', assigned(RAJU, 'd2'));
+    await assertFails(getDoc(doc(driver(), 'bookings', 'mine')));
+    // A confirmation that is not a map (or null) is no confirmation.
+    await seedBooking('mine', { ...assigned(RAJU, null), driverConfirmed: null });
+    await assertFails(getDoc(doc(driver(), 'bookings', 'mine')));
+    // Confirmed: he sees it, and it is in his list.
+    await seedBooking('mine', assigned(RAJU, 'd1'));
+    await assertSucceeds(getDoc(doc(driver(), 'bookings', 'mine')));
+    const after = await assertSucceeds(getDocs(myJobs(driver())));
+    assert.deepEqual(after.docs.map((d) => d.id), ['mine']);
+  });
+
+  test('no live location before he is confirmed', async () => {
+    await seedBooking('mine', assigned(RAJU, null));
+    await assertFails(setDoc(doc(driver(), 'tracking', 'mine'), point()));
+    await seedBooking('mine', assigned(RAJU, 'd2'));
+    await assertFails(setDoc(doc(driver(), 'tracking', 'mine'), point()));
+    await seedBooking('mine', assigned(RAJU, 'd1'));
+    await assertSucceeds(setDoc(doc(driver(), 'tracking', 'mine'), point()));
+    // Confirmed for someone else after that (the office changed drivers): no more updates.
+    await seedBooking('mine', assigned(RAJU, 'd2'));
+    await assertFails(setDoc(doc(driver(), 'tracking', 'mine'), point({ lat: 21.26 })));
   });
 
   test('a driver cannot change a booking, and a customer token with a phone number is not a driver', async () => {
@@ -746,7 +785,13 @@ describe('job offers — admin posts, an Active driver in that city takes it', (
     });
     assert.equal(b.status, 'assigned');
     assert.deepEqual(b.assignedDriver, RAJU);
-    // He now sees the job, and his offer as earnings.
+    // He sees his offer as earnings at once; the job's details once the office has confirmed him.
+    await assertFails(getDoc(doc(drv(RAJU), 'bookings', 'b1')));
+    await assertSucceeds(
+      updateDoc(doc(admin(), 'bookings', 'b1'), {
+        driverConfirmed: { at: serverTimestamp(), by: 'admin', driverId: 'd1' }, updatedAt: serverTimestamp(), updatedBy: 'admin1',
+      }),
+    );
     await assertSucceeds(getDoc(doc(drv(RAJU), 'bookings', 'b1')));
     await assertSucceeds(getDocs(query(collection(drv(RAJU), 'offers'), where('takenBy.phone', '==', RAJU.phone))));
     // A second Raipur driver is too late.
@@ -935,10 +980,12 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
   const ref = (db, id = 'b1') => doc(db, 'tripTaps', id);
   const start = (db, id = 'b1', extra = {}) => setDoc(ref(db, id), { driverPhone: RAJU.phone, leftAt: serverTimestamp(), ...extra });
   const tap = (db, field, id = 'b1') => updateDoc(ref(db, id), { [field]: serverTimestamp() });
+  // The office has confirmed this driver on the job (Start needs it).
+  const ok = (d) => ({ driverConfirmed: { at: new Date(), by: 'office', driverId: d.id } });
 
   beforeEach(async () => {
-    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1' });
-    await seedBooking('t1', { status: 'assigned', assignedDriver: RAJU, package: 'one-way-drop' });
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1', ...ok(RAJU) });
+    await seedBooking('t1', { status: 'assigned', assignedDriver: RAJU, package: 'one-way-drop', ...ok(RAJU) });
   });
 
   test('the assigned driver taps each step once, in order, at the server time', async () => {
@@ -951,6 +998,16 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
     await assertSucceeds(tap(db, 'doneAt'));
     await assertFails(tap(db, 'homeAt')); // only one-way drops get home
     await assertSucceeds(getDoc(ref(db)));
+  });
+
+  test('no Start before the office has confirmed him on the job', async () => {
+    const db = drvDb(RAJU);
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1' });
+    await assertFails(start(db));
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1', ...ok(SONU) }); // someone else's
+    await assertFails(start(db));
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1', ...ok(RAJU) });
+    await assertSucceeds(start(db));
   });
 
   test('a one-way drop ends with Reached home', async () => {
@@ -979,8 +1036,8 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
   });
 
   test('only on his current job; nobody else taps; customers and other drivers cannot read it', async () => {
-    await seedBooking('other', { status: 'assigned', assignedDriver: SONU });
-    await seedBooking('done', { status: 'completed', assignedDriver: RAJU });
+    await seedBooking('other', { status: 'assigned', assignedDriver: SONU, ...ok(SONU) });
+    await seedBooking('done', { status: 'completed', assignedDriver: RAJU, ...ok(RAJU) });
     const db = drvDb(RAJU);
     await assertFails(start(db, 'other'));
     await assertFails(start(db, 'done'));
@@ -1000,7 +1057,7 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
     const db = drvDb(RAJU);
     await start(db);
     await tap(db, 'arrivedAt');
-    await seedBooking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'cust1' });
+    await seedBooking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'cust1', ...ok(RAJU) });
     await assertSucceeds(getDoc(ref(db)));
     await assertFails(tap(db, 'doneAt'));
   });
@@ -1009,7 +1066,7 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
     await start(drvDb(RAJU));
     await assertFails(deleteDoc(ref(drvDb(RAJU))));
     await assertSucceeds(deleteDoc(ref(admin())));
-    await seedBooking('b1', { status: 'assigned', assignedDriver: SONU, customerUid: 'cust1' });
+    await seedBooking('b1', { status: 'assigned', assignedDriver: SONU, customerUid: 'cust1', ...ok(SONU) });
     await assertSucceeds(setDoc(ref(drvDb(SONU)), { driverPhone: SONU.phone, leftAt: serverTimestamp() }));
   });
 });
@@ -1142,7 +1199,7 @@ describe('offers — cash the driver kept (UPI spec 7)', () => {
   });
 });
 
-describe('bookings — driverConfirmed is the robot’s (call to confirm)', () => {
+describe('bookings — driverConfirmed: the customer’s details for the confirmed driver only', () => {
   const confirmed = { at: new Date(), by: 'telegram', driverId: 'd1' };
   const giveBack = (db, who) =>
     runTransaction(db, async (tx) => {
@@ -1151,6 +1208,11 @@ describe('bookings — driverConfirmed is the robot’s (call to confirm)', () =
       tx.update(ref, { status: 'released', updatedAt: serverTimestamp() });
       tx.update(doc(db, 'bookings', 'b1'), { status: 'confirmed', assignedDriver: null, updatedAt: serverTimestamp(), updatedBy: `driver-${who.phone}` });
     });
+  const stamped = (fields) => ({ ...fields, updatedAt: serverTimestamp(), updatedBy: 'admin1' });
+  const event = (db, id, note, from = 'assigned', to = 'assigned') => [
+    doc(collection(db, 'bookings', id, 'events')),
+    { type: 'driver', from, to, note, by: 'owner@example.com', at: serverTimestamp() },
+  ];
 
   beforeEach(async () => {
     await seedDriversRB();
@@ -1158,16 +1220,66 @@ describe('bookings — driverConfirmed is the robot’s (call to confirm)', () =
     await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date() }));
   });
 
-  test('no browser writes it: not an admin, the driver, the customer, nor a new booking', async () => {
-    const mine = { at: serverTimestamp(), by: 'telegram', driverId: 'd1' };
-    await assertFails(updateDoc(doc(admin(), 'bookings', 'b1'), { driverConfirmed: mine, updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
-    await assertFails(updateDoc(doc(admin(), 'bookings', 'b1'), { driverConfirmed: deleteField(), updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
-    await assertFails(updateDoc(doc(admin(), 'bookings', 'b1'), { driverConfirmed: null, updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
-    await assertFails(updateDoc(doc(drvDb(RAJU), 'bookings', 'b1'), { driverConfirmed: mine }));
-    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { driverConfirmed: mine }));
+  test('"Confirm driver ✓" in /admin: by admin, for the booking’s driver, at the server time, with its timeline entry', async () => {
     await seedBooking('b2', { status: 'assigned', assignedDriver: RAJU });
-    await assertFails(updateDoc(doc(admin(), 'bookings', 'b2'), { driverConfirmed: mine, updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
+    const db = admin();
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'bookings', 'b2'), stamped({ driverConfirmed: { at: serverTimestamp(), by: 'admin', driverId: 'd1' } }));
+    batch.set(...event(db, 'b2', 'Driver confirmed: Raju Sahu'));
+    await assertSucceeds(batch.commit());
+    await assertSucceeds(getDoc(doc(drvDb(RAJU), 'bookings', 'b2'))); // now he sees it
+  });
+
+  test('an admin confirms only in that shape', async () => {
+    await seedBooking('b2', { status: 'assigned', assignedDriver: RAJU });
+    const confirm = (c) => updateDoc(doc(admin(), 'bookings', 'b2'), stamped({ driverConfirmed: c }));
+    await assertFails(confirm({ at: serverTimestamp(), by: 'telegram', driverId: 'd1' })); // the robot's kinds
+    await assertFails(confirm({ at: serverTimestamp(), by: 'auto', driverId: 'd1' }));
+    await assertFails(confirm({ at: new Date(), by: 'admin', driverId: 'd1' })); // his own clock
+    await assertFails(confirm({ at: serverTimestamp(), by: 'admin', driverId: 'd2' })); // not the booking's driver
+    await assertFails(confirm({ at: serverTimestamp(), by: 'admin' }));
+    await assertFails(confirm({ at: serverTimestamp(), by: 'admin', driverId: 'd1', note: 'x' }));
+    await assertFails(confirm('yes'));
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'b2'), { driverConfirmed: { at: serverTimestamp(), by: 'admin', driverId: 'd1' } })); // not stamped
+    // A booking with no driver has nobody to confirm.
+    await seedBooking('b3', { status: 'confirmed' });
+    await assertFails(updateDoc(doc(admin(), 'bookings', 'b3'), stamped({ driverConfirmed: { at: serverTimestamp(), by: 'admin', driverId: 'd1' } })));
+    // Clearing it is allowed (the office takes the driver off).
+    await assertSucceeds(updateDoc(doc(admin(), 'bookings', 'b1'), stamped({ driverConfirmed: null })));
+    await assertSucceeds(updateDoc(doc(admin(), 'bookings', 'b1'), stamped({ driverConfirmed: deleteField() })));
+  });
+
+  test('the office assigns a driver itself: confirmed by the office in the same batch, for that driver', async () => {
+    await seedBooking('b3', { status: 'confirmed' });
+    const assign = (driverConfirmed) => {
+      const db = admin();
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'bookings', 'b3'), stamped({ status: 'assigned', assignedDriver: SONU, driverConfirmed }));
+      batch.set(...event(db, 'b3', 'Driver: Sonu Verma', 'confirmed', 'assigned'));
+      return batch.commit();
+    };
+    await assertFails(assign({ at: serverTimestamp(), by: 'office', driverId: 'd1' })); // the old driver, not Sonu
+    await assertSucceeds(assign({ at: serverTimestamp(), by: 'office', driverId: 'd2' }));
+    await assertSucceeds(getDoc(doc(drvDb(SONU), 'bookings', 'b3')));
+    // Changing drivers again: the confirmation follows, or is cleared.
+    await assertSucceeds(updateDoc(doc(admin(), 'bookings', 'b3'), stamped({ assignedDriver: RAJU, driverConfirmed: { at: serverTimestamp(), by: 'office', driverId: 'd1' } })));
+    await assertFails(getDoc(doc(drvDb(SONU), 'bookings', 'b3')));
+    await assertSucceeds(updateDoc(doc(admin(), 'bookings', 'b3'), stamped({ status: 'confirmed', assignedDriver: null, driverConfirmed: null })));
+  });
+
+  test('no other browser writes it: not the driver, the customer, nor a new booking', async () => {
+    const mine = { at: serverTimestamp(), by: 'admin', driverId: 'd1' };
+    await seedBooking('b2', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1' });
+    await assertFails(updateDoc(doc(drvDb(RAJU), 'bookings', 'b2'), { driverConfirmed: mine }));
+    await assertFails(updateDoc(doc(drvDb(RAJU), 'bookings', 'b2'), stamped({ driverConfirmed: mine, updatedBy: `driver-${RAJU.phone}` })));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b2'), { driverConfirmed: mine }));
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ driverConfirmed: { by: 'telegram', driverId: 'd1' } })));
+  });
+
+  test('"Can’t make it" works before he is confirmed (the app updates the booking without reading it)', async () => {
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1' });
+    await assertFails(getDoc(doc(drvDb(RAJU), 'bookings', 'b1')));
+    await assertSucceeds(giveBack(drvDb(RAJU), RAJU));
   });
 
   test('a booking that has it still takes the usual admin and driver changes', async () => {
@@ -1310,14 +1422,24 @@ describe('offers — nearby cities (12)', () => {
     await assertSucceeds(take(drvDb(RAJU), RAJU));
   });
 
-  test('an admin posts with its own city only; cities are served cities with its own among them', async () => {
-    await assertSucceeds(setDoc(doc(admin(), 'offers', 'b1'), adminOffer({ cities: ['Raipur'] })));
-    await seedBooking('b2', { status: 'confirmed' });
-    const post = (extra) => setDoc(doc(admin(), 'offers', 'b2'), adminOffer({ bookingId: 'b2', ...extra }));
-    await assertFails(post({ cities: ['Raipur', 'Bhilai'] })); // widening is the robot's, when nobody takes it
-    await assertFails(post({ cities: ['Bhilai'] }));
-    await assertFails(post({ cities: 'Raipur' }));
-    await assertSucceeds(post({}));
+  test('an admin posts to its zone (Raipur, Bhilai, Durg; Bilaspur alone), its own city among them', async () => {
+    await assertSucceeds(setDoc(doc(admin(), 'offers', 'b1'), adminOffer({ cities: ['Raipur', 'Bhilai', 'Durg'] })));
+    for (const id of ['b2', 'b3', 'b4', 'b5']) await seedBooking(id, { status: 'confirmed' });
+    const post = (id, extra) => setDoc(doc(admin(), 'offers', id), adminOffer({ bookingId: id, ...extra }));
+    await assertFails(post('b2', { cities: ['Raipur', 'Bilaspur'] })); // another zone
+    await assertFails(post('b2', { cities: ['Bhilai', 'Durg'] })); // its own city missing
+    await assertFails(post('b2', { cities: 'Raipur' }));
+    await assertFails(post('b2', { cities: ['Raipur', 'Mumbai'] }));
+    await assertFails(post('b2', { cities: [] }));
+    await assertSucceeds(post('b2', {}));
+    await assertSucceeds(post('b3', { city: 'Bhilai', cities: ['Bhilai', 'Raipur', 'Durg'] }));
+    await assertSucceeds(post('b4', { cities: ['Raipur'] })); // part of the zone is fine
+    await assertFails(post('b5', { city: 'Bilaspur', cities: ['Bilaspur', 'Raipur'] }));
+    await assertSucceeds(post('b5', { city: 'Bilaspur', cities: ['Bilaspur'] }));
+    // A Bhilai driver sees the Raipur zone offer and can take it.
+    const snap = await assertSucceeds(byCities(drvDb(SONU), 'Bhilai'));
+    assert.ok(snap.docs.map((d) => d.id).includes('b1'));
+    await assertSucceeds(take(drvDb(SONU), SONU));
     const patch = (cities) => updateDoc(doc(admin(), 'offers', 'b2'), { cities, updatedAt: serverTimestamp(), by: 'admin1' });
     await assertSucceeds(patch(['Raipur', 'Durg']));
     await assertFails(patch(['Durg']));

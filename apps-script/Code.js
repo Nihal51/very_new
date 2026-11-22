@@ -72,7 +72,10 @@
  *                        taps "Paid by UPI" / "Paid in cash" in the Driver app.
  *   UPI_NAME             the name on that UPI link, default DriveBuddy
  *   CONFIRM_BY_CALL      "off" stops the Telegram that asks the office to call a driver
- *                        who took a job in the app (Confirmed ✓ / Give to someone else)
+ *                        who took a job in the app (Confirmed ✓ / Give to someone else);
+ *                        his take is then confirmed at once (driverConfirmed by 'auto')
+ *   driverConfirmBackfill set to v1 by the robot after its one-time pass that confirms
+ *                        jobs already assigned (delete it to run the pass again)
  *
  * Also automatic (see "automation" below): job reminders an hour before, the
  * Driver app's Start / Arrived / Job done taps (tripTaps), the bill and the end
@@ -854,7 +857,7 @@ function tick() {
   var steps = robotSteps_();
   // Every 5 minutes: things that can wait a few minutes (and cost a query each).
   if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_, tripReminders_, pollPayments_, processRatingsStep_, cashLimits_);
-  steps.push(telegramCallbacks_, ensureRailTrigger_, ensureTimeTriggers_);
+  steps.push(confirmBackfill_, telegramCallbacks_, ensureRailTrigger_, ensureTimeTriggers_);
   runSteps_(steps, 5000);
 }
 
@@ -1207,9 +1210,25 @@ function autoPriceOf(b, prices) {
 }
 
 /**
- * Nearby cities: an automatic offer nobody has taken 10 minutes after its pay
- * reached the top goes to these drivers too (firestore.rules lets a driver
- * see an offer whose `cities` has his city). Bilaspur is too far from the rest.
+ * One zone: Raipur, Bhilai and Durg are one area for drivers — a driver
+ * registered in Bhilai often waits in Raipur. Every offer goes to its whole
+ * zone at once (offers `cities`; firestore.rules lets a driver see an offer
+ * whose `cities` has his city), nearest drivers first by GPS. Bilaspur is too
+ * far: its own zone. lib/offers.ts offerCitiesFor and the rules (isZoneCities)
+ * use the same zones.
+ */
+var ZONES = [['Raipur', 'Bhilai', 'Durg'], ['Bilaspur']];
+
+/** A city's zone, its own city first: "Bhilai" → ["Bhilai", "Raipur", "Durg"]. A city in no zone: only itself. */
+function zoneOf(city) {
+  var zone = ZONES.filter(function (z) { return z.indexOf(city) >= 0; })[0];
+  return [city].concat((zone || []).filter(function (c) { return c !== city; }));
+}
+
+/**
+ * Nearby cities, from before the zones: an older offer (its own city only)
+ * nobody has taken 10 minutes after its pay reached the top goes to these
+ * drivers too. A zone offer already has them all, so this changes nothing.
  */
 var NEARBY_CITIES = { Raipur: ['Bhilai', 'Durg'], Bhilai: ['Durg', 'Raipur'], Durg: ['Bhilai', 'Raipur'], Bilaspur: [] };
 var WIDEN_AFTER_TOP_MS = 10 * 60 * 1000;
@@ -1318,7 +1337,7 @@ function autoOfferFor(id, b, prices, cut, now) {
     bookingId: id, ref: b.ref || '', city: b.city, package: b.package, when: b.preferredTime || '', area: area,
     to: (b.trip && b.trip.to) || '', price: Math.round(price), cutPercent: Math.min(30, Math.max(20, Math.round(cut))),
     driverPay: driverPayOf(price, cut), status: 'open', takenBy: null, takenAt: null, done: false, paid: false,
-    paidAt: null, createdAt: now, updatedAt: now, by: 'robot', cities: [b.city],
+    paidAt: null, createdAt: now, updatedAt: now, by: 'robot', cities: zoneOf(b.city),
   };
 }
 
@@ -1504,7 +1523,9 @@ function dispatchOffers_() {
    • A driver takes a job in the app: Telegram asks the office to call him
      and confirm (Confirmed ✓ → booking.driverConfirmed; Give to someone
      else → offered again, never to him, no strike), and reminds once after
-     15 minutes. CONFIRM_BY_CALL = off.
+     15 minutes. He sees the customer's details only once confirmed (rules).
+     CONFIRM_BY_CALL = off: confirmed at once. A driver the office assigns
+     itself is confirmed by 'office'.
    • An hour before the job: a reminder to the customer and the driver.
    • The Driver app's taps (tripTaps/{bookingId}: Start, Arrived, Job done,
      Reached home): a trip's times go to the booking's clock and Telegram, as
@@ -1657,10 +1678,10 @@ function driverReminderPush(b, id, token) {
   return pushMsg_(token, { title: 'Job reminder · काम की याद', body: 'Job at ' + clockText(b.preferredTime) + ' · ' + area + (b.ref ? ' · ' + b.ref : '') }, { bookingId: id }, 'jobs');
 }
 
-/** A given-back offer, open again as a fresh automatic offer: nobody's, from the first step, its own city first. */
+/** A given-back offer, open again as a fresh automatic offer: nobody's, from the first step, to its whole zone. */
 function reopenedOffer(o, cut, now) {
   return {
-    status: 'open', takenBy: null, takenAt: null, done: false, cities: [o.city], cutPercent: cut,
+    status: 'open', takenBy: null, takenAt: null, done: false, cities: zoneOf(o.city), cutPercent: cut,
     driverPay: driverPayOf(o.price, cut), createdAt: now, updatedAt: now, by: 'robot',
   };
 }
@@ -2008,14 +2029,14 @@ function watchChanges_() {
 }
 
 /**
- * Bookings that changed: confirm the simple ones, ask the office to call a
- * driver who just took a job, record a payment the driver
+ * Bookings that changed: confirm the simple ones, confirm a new driver (or
+ * ask the office to call one who took it in the app), record a payment the driver
  * confirmed before the bill was saved, and take completed ones on (payment
  * link, rating request). All safe to repeat.
  */
 function changedBookings_(rows) {
   instantConfirm_(rows);
-  askToConfirm_(rows);
+  confirmAssignments_(rows, false);
   paymentsAwaitingBill_(rows);
   completedBookings_(rows);
 }
@@ -2105,6 +2126,12 @@ function releasedOffers_(rows) {
         {
           update: { name: docName_('offers/' + row.id), fields: toFields(fields) },
           updateMask: { fieldPaths: Object.keys(fields) },
+          currentDocument: { exists: true },
+        },
+        {
+          // His confirmation goes with him (in the mask, not in the fields: removed), so a later take is asked about afresh.
+          update: { name: docName_('bookings/' + row.id), fields: {} },
+          updateMask: { fieldPaths: ['driverConfirmed'] },
           currentDocument: { exists: true },
         },
         {
@@ -2217,30 +2244,82 @@ function saveConfirmsPending_(pending) {
   PropertiesService.getScriptProperties().setProperty('confirmsPending', JSON.stringify(pending));
 }
 
+/** Has the office (or the robot) confirmed this booking's driver `driverId`? (booking.driverConfirmed) */
+function confirmedFor(b, driverId) {
+  var c = b && b.driverConfirmed;
+  return Boolean(c && driverId && c.driverId === driverId);
+}
+
+/** The booking's driverConfirmed (robot-written; the Driver app sees the customer's details only once it is there). */
+function writeDriverConfirmed_(id, by, driverId) {
+  fsCommit_([{
+    update: { name: docName_('bookings/' + id), fields: toFields({ driverConfirmed: { at: new Date(), by: by, driverId: driverId } }) },
+    updateMask: { fieldPaths: ['driverConfirmed'] },
+    currentDocument: { exists: true },
+  }]);
+}
+
+/** Was this booking's job taken by this driver in the Driver app (his offer)? */
+function takenInApp_(id, b, driverId) {
+  if (String(b.updatedBy || '').indexOf('driver-') === 0) return true;
+  var o = fsGet_('offers/' + id);
+  return Boolean(o && o.status === 'taken' && o.takenBy && o.takenBy.id === driverId);
+}
+
 /**
- * Jobs a driver just took in the Driver app — the take writes the booking
- * as assigned, updatedBy "driver-<phone>" (firestore.rules), which is how
- * the robot's changed-bookings check sees it without reading the offers:
- * Telegram asks the office to call him, once per take.
+ * Assigned bookings without a confirmed driver. The driver sees the
+ * customer's name, number and address only once booking.driverConfirmed is
+ * his (firestore.rules), so:
+ *   • a driver took it in the app — the take writes the booking as assigned,
+ *     updatedBy "driver-<phone>", which the robot's changed-bookings check
+ *     sees without reading the offers: Telegram asks the office to call him,
+ *     once per take (CONFIRM_BY_CALL = off: confirmed at once, by 'auto');
+ *   • the office assigned him itself (/admin normally writes it in the same
+ *     batch; this covers older panels): confirmed, by 'office'.
+ * backfill: the one-time pass over every assigned booking (confirmBackfill_).
  */
-function askToConfirm_(rows) {
-  if (!confirmByCallOn_()) return;
+function confirmAssignments_(rows, backfill) {
+  var askByCall = confirmByCallOn_();
   var pending = null;
   rows.forEach(function (row) {
     var b = row.data;
     var d = b.assignedDriver;
-    if (b.status !== 'assigned' || !d || !d.id || String(b.updatedBy || '').indexOf('driver-') !== 0 || !b.updatedAt) return;
-    var key = d.id + '@' + b.updatedAt.getTime();
+    if (b.status !== 'assigned' || !d || !d.id || confirmedFor(b, d.id)) return;
+    if (!takenInApp_(row.id, b, d.id)) return writeDriverConfirmed_(row.id, 'office', d.id);
+    if (!askByCall) return writeDriverConfirmed_(row.id, 'auto', d.id);
+    var take = String(b.updatedBy || '').indexOf('driver-') === 0 && b.updatedAt && !backfill;
+    var key = d.id + '@' + (take ? b.updatedAt.getTime() : 'seen');
     pending = pending || confirmsPending_();
-    if (pending[row.id] && pending[row.id].key === key) return;
-    if (bookOf_(row.id).confirmAskedFor === key) return;
+    var had = pending[row.id];
+    // An office edit of a taken job (or the backfill): ask only if he was never asked about.
+    if (had && (take ? had.key === key : had.driverId === d.id)) return;
+    var asked = String(bookOf_(row.id).confirmAskedFor || '');
+    if (take ? asked === key : asked.indexOf(d.id + '@') === 0) return;
     var sent = sendTelegram_(confirmTelegram(b, row.id, false));
     if (sent === 'failed') sent = sendTelegram_(confirmTelegram(b, row.id, true));
     if (sent === 'off') return;
-    pending[row.id] = { key: key, driverId: d.id, name: d.name || '', phone: String(d.phone || ''), ref: b.ref || '', at: b.updatedAt.getTime(), reminded: false };
+    var at = take ? b.updatedAt.getTime() : Date.now();
+    pending[row.id] = { key: key, driverId: d.id, name: d.name || '', phone: String(d.phone || ''), ref: b.ref || '', at: at, reminded: false };
     saveBook_(row.id, { confirmAskedFor: key });
   });
   if (pending) saveConfirmsPending_(pending);
+}
+
+/**
+ * Once, after this version is pasted (flag: script property
+ * driverConfirmBackfill = v1; delete it to run again): every booking assigned
+ * now gets its confirmation — office-assigned ones by 'office', so they stay
+ * on the drivers' phones under the new rules; ones taken in the app wait for
+ * the office's call (the Telegram question, if it was not sent already).
+ * Publish the new firestore.rules only after this has run.
+ */
+function confirmBackfill_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('driverConfirmBackfill') === 'v1') return;
+  var rows = fsQuery_('bookings', fieldFilter_('status', 'EQUAL', 'assigned'), 'ASCENDING', 500, 'status');
+  confirmAssignments_(rows, true);
+  props.setProperty('driverConfirmBackfill', 'v1');
+  console.log('driverConfirmed backfill: ' + rows.length + ' assigned bookings checked');
 }
 
 /** Is this booking still the job this question is about: assigned to that driver? */
@@ -2260,8 +2339,9 @@ function confirmReminders_(pending, now) {
     }
     if (e.reminded || now - (e.at || 0) < CONFIRM_REMIND_MIN * 60000) return;
     changed = true;
-    if (!stillHisJob_(fsGet_('bookings/' + id), e)) {
-      delete pending[id]; // given to someone else in /admin, cancelled …: nothing to ask
+    var b = fsGet_('bookings/' + id);
+    if (!stillHisJob_(b, e) || confirmedFor(b, e.driverId)) {
+      delete pending[id]; // confirmed in /admin, given to someone else, cancelled …: nothing to ask
       return;
     }
     e.reminded = true;
@@ -2323,12 +2403,13 @@ function confirmPress_(cq, c, pending) {
   }
   var word;
   if (c.action === 'conf') {
-    fsCommit_([{
-      update: { name: docName_('bookings/' + c.bookingId), fields: toFields({ driverConfirmed: { at: new Date(), by: 'telegram', driverId: e.driverId } }) },
-      updateMask: { fieldPaths: ['driverConfirmed'] },
-      currentDocument: { exists: true },
-    }]);
-    word = 'Confirmed ✓';
+    // Confirmed in /admin meanwhile: that stands (and counts as done here).
+    if (confirmedFor(b, e.driverId)) {
+      word = 'Confirmed ✓ (already' + (b.driverConfirmed.by === 'admin' || b.driverConfirmed.by === 'office' ? ', in /admin' : '') + ')';
+    } else {
+      writeDriverConfirmed_(c.bookingId, 'telegram', e.driverId);
+      word = 'Confirmed ✓';
+    }
   } else {
     var why = giveToAnother_(c.bookingId, b, e);
     if (why) return answer(why);
@@ -3916,7 +3997,8 @@ if (typeof module !== 'undefined') {
     tripClockOf: tripClockOf, tripClockNews: tripClockNews, sameClock: sameClock, hoursText: hoursText, tripTelegram: tripTelegram,
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
-    parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen,
+    ZONES: ZONES, zoneOf: zoneOf,
+    parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen, confirmedFor: confirmedFor,
     UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
   };
 }

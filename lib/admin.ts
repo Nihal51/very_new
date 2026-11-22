@@ -45,6 +45,11 @@ export async function changeBookingStatus(
   batch.update(ref, {
     status: to,
     ...(driver !== undefined && { assignedDriver: driver }),
+    // A driver the office assigns itself is confirmed by the office: he sees
+    // the customer's details at once (firestore.rules). No driver: no confirmation.
+    ...(driver !== undefined && {
+      driverConfirmed: driver ? { at: serverTimestamp(), by: 'office', driverId: driver.id } : null,
+    }),
     ...(cancelReason !== undefined && { cancelReason }),
     updatedAt: serverTimestamp(),
     updatedBy: user.uid,
@@ -57,6 +62,31 @@ export async function changeBookingStatus(
     from,
     to,
     note: (driver ? `Driver: ${driver.name}${note ? ` – ${note}` : ''}` : cancelReason || note).slice(0, 500),
+    by: user.email ?? '',
+    at: serverTimestamp(),
+  });
+  await batch.commit();
+}
+
+/**
+ * "Confirm driver ✓": the office has spoken to the driver who took the job
+ * in the app — he now sees the customer's name, number and address. One batch
+ * with its timeline entry, like every booking change.
+ */
+export async function confirmDriver(user: User, bookingId: string, driver: DriverRef) {
+  const { db, doc, collection, writeBatch, serverTimestamp } = await fs();
+  const ref = doc(db, 'bookings', bookingId);
+  const batch = writeBatch(db);
+  batch.update(ref, {
+    driverConfirmed: { at: serverTimestamp(), by: 'admin', driverId: driver.id },
+    updatedAt: serverTimestamp(),
+    updatedBy: user.uid,
+  });
+  batch.set(doc(collection(ref, 'events')), {
+    type: 'driver',
+    from: 'assigned',
+    to: 'assigned',
+    note: `Driver confirmed: ${driver.name}`.slice(0, 500),
     by: user.email ?? '',
     at: serverTimestamp(),
   });

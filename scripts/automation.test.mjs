@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 
 import { PACKAGE_NAMES, UPI_ID, isDriverConfirmed, isInstantBooking, isUpiPayUrl, toDriverConfirmed, toLocalBill, toPayment, toAcceptedPrice, toTripTaps } from '../lib/bookings.ts';
-import { offerCitiesFor, offerSettlement } from '../lib/offers.ts';
+import { ZONES, citiesText, offerCitiesFor, offerSettlement } from '../lib/offers.ts';
 import { checkSettings } from '../lib/settings-schema.ts';
 import { settings } from '../site-settings.ts';
 
@@ -56,8 +56,16 @@ test('stored bills, payments and accepted prices are read safely', () => {
   assert.equal(toAcceptedPrice({ amount: 0 }), null);
 });
 
-test('offers: an admin posts to its own city; the robot knows the same cities as the rules', () => {
-  assert.deepEqual(offerCitiesFor('Raipur'), ['Raipur']);
+test('offers: one zone for Raipur, Bhilai and Durg — the admin panel, the robot and the rules agree', () => {
+  assert.deepEqual(offerCitiesFor('Raipur'), ['Raipur', 'Bhilai', 'Durg']);
+  assert.deepEqual(offerCitiesFor('Bhilai'), ['Bhilai', 'Raipur', 'Durg']);
+  assert.deepEqual(offerCitiesFor('Bilaspur'), ['Bilaspur']);
+  for (const city of ['Raipur', 'Bhilai', 'Durg', 'Bilaspur', 'Korba']) assert.deepEqual(offerCitiesFor(city), [...robot.zoneOf(city)], city);
+  assert.deepEqual(ZONES.map((z) => [...z]), robot.ZONES.map((z) => [...z]));
+  const zoneRule = read('firestore.rules').match(/function isZoneCities\(o\) \{[\s\S]*?\n    \}/)[0];
+  for (const z of ZONES) assert.ok(zoneRule.includes(`o.cities.hasOnly([${z.map((c) => `'${c}'`).join(', ')}])`), z.join());
+  assert.equal(citiesText(['Raipur', 'Bhilai', 'Durg']), 'Raipur, Bhilai and Durg');
+  assert.equal(citiesText(['Bilaspur']), 'Bilaspur');
   const rules = read('firestore.rules');
   const served = rules.match(/function isServedCity\(value\) \{\s*return value in \[([^\]]*)\]/)[1];
   const cities = [...served.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
@@ -109,7 +117,7 @@ test('one job’s settlement in /admin adds up like the robot’s weekly payout'
   assert.ok(read('firestore.rules').includes("'cashCollected'"), 'the rules allow cashCollected on an offer');
 });
 
-test('call to confirm: the confirmation counts only for the driver it was about; no browser may write it', () => {
+test('call to confirm: the confirmation counts only for the driver it was about; the admin panel writes only its own kinds', () => {
   const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
   const c = toDriverConfirmed({ at: new Date(), by: 'telegram', driverId: 'd1' });
   assert.equal(isDriverConfirmed({ assignedDriver: RAJU, driverConfirmed: c }), true);
@@ -117,6 +125,13 @@ test('call to confirm: the confirmation counts only for the driver it was about;
   assert.equal(isDriverConfirmed({ assignedDriver: null, driverConfirmed: c }), false);
   assert.equal(toDriverConfirmed({ by: 'telegram' }), null);
   assert.equal(toDriverConfirmed(null), null);
-  assert.ok(!read('firestore.rules').includes("'driverConfirmed'"), 'no rule names it, so no browser write can include it');
-  assert.ok(!read('lib/admin.ts').includes('driverConfirmed'), 'the admin panel never writes it');
+  const rules = read('firestore.rules');
+  assert.ok(rules.includes("c.by in ['admin', 'office']"), 'an admin confirms as admin or office only');
+  const admin = read('lib/admin.ts');
+  const kinds = [...admin.matchAll(/driverConfirmed: \{[^}]*by: '([a-z]+)'/g)].map((m) => m[1]).sort();
+  assert.deepEqual(kinds, ['admin'], 'Confirm driver ✓');
+  assert.ok(admin.includes("by: 'office', driverId: driver.id"), 'assigning a driver confirms him as the office');
+  for (const by of ['telegram', 'admin', 'office', 'auto']) assert.ok(read('lib/bookings.ts').includes(`'${by}'`), by);
+  assert.ok(robot.confirmedFor({ driverConfirmed: { driverId: 'd1' } }, 'd1'));
+  assert.equal(robot.confirmedFor({ driverConfirmed: { driverId: 'd2' } }, 'd1'), false);
 });

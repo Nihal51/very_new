@@ -22,11 +22,13 @@ rules_version = '2';
 //    A driver             logged in to the DriveBuddy Driver app (a code by SMS;
 //                         the alerts robot signs his login with role 'driver' and
 //                         his number): read the bookings assigned to his number
-//                         while they are "assigned", and share his live location
-//                         on them (tracking/{bookingId}); an Active driver also
-//                         sees the open job offers in his city (or offered to
-//                         it from a nearby city), takes one (the booking is
-//                         assigned to him), and sees his earnings. He taps
+//                         while they are "assigned" AND the office has confirmed
+//                         him on them (driverConfirmed — the customer's name,
+//                         number and address only then), and share his live
+//                         location on them (tracking/{bookingId}); an Active
+//                         driver also sees the open job offers of his zone
+//                         (Raipur, Bhilai and Durg are one), takes one (the
+//                         booking is assigned to him), and sees his earnings. He taps
 //                         Start / Arrived / Job done on his job (tripTaps),
 //                         then "Paid by UPI" / "Paid in cash" once (even after
 //                         the robot completed the booking), may give a job
@@ -101,6 +103,29 @@ service cloud.firestore {
     function isMyJob(b) {
       return b.status == 'assigned'
         && b.assignedDriver.phone == request.auth.token.driverPhone;
+    }
+
+    // The office has confirmed this driver on the booking (driverConfirmed:
+    // by call in Telegram, in /admin, an office assignment, or by the robot
+    // when calls are off). Until then he has the job but not the customer's
+    // details. Plain comparison, like isMyJob, so the app's query
+    // (… driverConfirmed.driverId == his id) can be checked against it; a
+    // booking without it errors here, which counts as no.
+    function isConfirmedMe(b) {
+      return b.driverConfirmed.driverId == request.auth.token.driverId;
+    }
+
+    // How the office confirms a driver in /admin: "Confirm driver ✓" (admin)
+    // or by assigning him itself (office) — for the driver the booking has
+    // after this change, at the server's time. The robot writes the others.
+    function isOfficeConfirm(c, b) {
+      return c is map
+        && c.keys().hasOnly(['at', 'by', 'driverId'])
+        && c.keys().hasAll(['at', 'by', 'driverId'])
+        && c.at == request.time
+        && c.by in ['admin', 'office']
+        && b.get('assignedDriver', null) != null
+        && c.driverId == b.assignedDriver.id;
     }
 
     function isText(value, minLen, maxLen) {
@@ -301,10 +326,10 @@ service cloud.firestore {
 
     match /bookings/{bookingId} {
       // Admins see everything; a customer sees only bookings tied to their login;
-      // a driver only the jobs assigned to him right now.
+      // a driver only the jobs assigned to him right now, once he is confirmed.
       allow read: if isAdmin()
         || (isSignedIn() && resource.data.get('customerUid', '') == request.auth.uid)
-        || (isDriver() && isMyJob(resource.data));
+        || (isDriver() && isMyJob(resource.data) && isConfirmedMe(resource.data));
 
       allow create: if
         request.resource.data.keys().hasOnly([
@@ -351,8 +376,11 @@ service cloud.firestore {
       // Internal notes do NOT live here — the customer can read this document —
       // they go in the admin-only timeline below.
       allow update: if isAdmin()
-        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'quote', 'clock', 'bill', 'updatedAt', 'updatedBy'])
+        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'quote', 'clock', 'bill', 'driverConfirmed', 'updatedAt', 'updatedBy'])
         && request.resource.data.status in bookingStatuses()
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['driverConfirmed'])
+            || request.resource.data.get('driverConfirmed', null) == null
+            || isOfficeConfirm(request.resource.data.driverConfirmed, request.resource.data))
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['quote'])
             || request.resource.data.get('quote', null) == null
             || isQuote(request.resource.data.quote))
@@ -541,8 +569,9 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (isDriver() && (isMyJob(job()) || resource.data.driverPhone == request.auth.token.driverPhone));
 
-      // Start: the document begins with his number and the time he left.
-      allow create: if isDriver() && isMyJob(job())
+      // Start: the document begins with his number and the time he left —
+      // once the office has confirmed him on the job.
+      allow create: if isDriver() && isMyJob(job()) && isConfirmedMe(job())
         && request.resource.data.keys().hasOnly(['driverPhone', 'leftAt'])
         && request.resource.data.keys().hasAll(['driverPhone', 'leftAt'])
         && request.resource.data.driverPhone == request.auth.token.driverPhone
@@ -678,7 +707,8 @@ service cloud.firestore {
       allow read: if isAdmin()
         || (isSignedIn() && job().get('customerUid', '') == request.auth.uid)
         || (isDriver() && isMyJob(job()));
-      allow create, update: if isDriver() && isMyJob(job()) && isTrack(request.resource.data);
+      // Only once he is confirmed on the job (the customer follows him from then).
+      allow create, update: if isDriver() && isMyJob(job()) && isConfirmedMe(job()) && isTrack(request.resource.data);
       allow delete: if false;
     }
 
@@ -708,16 +738,18 @@ service cloud.firestore {
     }
 
     /* ------------------------------------------------------------ offers -- */
-    //  Job offers: an admin offers a booking to the drivers of its city, with what
-    //  the driver earns (the price minus DriveBuddy's cut, 20–30%). Active drivers
-    //  of that city see open offers in the Driver app — no customer name, number
-    //  or address, only the area — and the first to tap Accept takes it (the
-    //  booking is assigned to him in the same transaction, see bookings). He then
+    //  Job offers: an admin or the robot offers a booking to the drivers of its
+    //  zone, with what the driver earns (the price minus DriveBuddy's cut,
+    //  20–30%). Active drivers of those cities see open offers in the Driver
+    //  app — no customer name, number or address, only the area — and the first
+    //  to tap Accept takes it (the booking is assigned to him in the same
+    //  transaction, see bookings; its details he sees once the office has
+    //  confirmed him, driverConfirmed). He then
     //  sees his taken offers as his earnings: what DriveBuddy owes him, and what
     //  it has paid. The customer never sees this document (the cut is private).
-    //  `cities`: where it is offered — its own city, and (the alerts robot, when
-    //  nobody takes it) the nearby ones. Older offers have no `cities`: their
-    //  city only. He may give a taken job back before Start ("released"); the
+    //  `cities`: where it is offered — its zone (isZoneCities), own city first.
+    //  Older offers have no `cities` (their city only) or their own city only
+    //  (the robot adds the nearby ones when nobody takes it). He may give a taken job back before Start ("released"); the
     //  robot offers it again.
 
     function offerKeys() {
@@ -758,6 +790,17 @@ service cloud.firestore {
         && o.city in o.cities;
     }
 
+    // One zone for drivers: Raipur, Bhilai and Durg (a Bhilai driver often
+    // waits in Raipur); Bilaspur alone. An admin's offer goes to (part of) its
+    // zone, its own city always among them (apps-script/Code.js ZONES,
+    // lib/offers.ts offerCitiesFor).
+    function isZoneCities(o) {
+      return o.cities is list
+        && o.city in o.cities
+        && ((o.city == 'Bilaspur' && o.cities.hasOnly(['Bilaspur']))
+          || (o.city in ['Raipur', 'Bhilai', 'Durg'] && o.cities.hasOnly(['Raipur', 'Bhilai', 'Durg'])));
+    }
+
     // Offered to this driver's city: in `cities` (the Driver app asks with
     // array-contains), or — older offers without `cities` — its city.
     function offeredToMe(o) {
@@ -769,7 +812,7 @@ service cloud.firestore {
         || (isActiveDriver() && resource.data.status == 'open' && offeredToMe(resource.data))
         || (isDriver() && resource.data.takenBy.phone == request.auth.token.driverPhone);
 
-      // An admin posts an offer (open, nobody yet) for a booking that exists.
+      // An admin posts an offer (open, nobody yet) for a booking that exists, to its zone.
       allow create: if isAdmin()
         && isOfferShape(request.resource.data, bookingId)
         && exists(/databases/$(database)/documents/bookings/$(bookingId))
@@ -777,7 +820,7 @@ service cloud.firestore {
         && request.resource.data.takenBy == null && request.resource.data.takenAt == null
         && request.resource.data.done == false && request.resource.data.paid == false
         && request.resource.data.paidAt == null
-        && (!('cities' in request.resource.data) || request.resource.data.cities == [request.resource.data.city])
+        && (!('cities' in request.resource.data) || isZoneCities(request.resource.data))
         && !('cashCollected' in request.resource.data)
         && request.resource.data.createdAt == request.time
         && request.resource.data.by == request.auth.uid;

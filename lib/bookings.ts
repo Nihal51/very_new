@@ -178,12 +178,15 @@ export type TripTaps = {
 };
 
 /**
- * The office confirmed by phone the driver who took the job in the app (the
- * alerts robot writes it when Confirmed ✓ is pressed in Telegram; no browser
- * can). It is about driverId only: once the job has another driver it no
- * longer counts.
+ * The office has confirmed the booking's driver — only then does he see the
+ * customer's name, number and address (firestore.rules). by: 'telegram'
+ * (Confirmed ✓ after the call), 'admin' (Confirm driver ✓ in /admin),
+ * 'office' (the office assigned him itself), 'auto' (the robot, with
+ * CONFIRM_BY_CALL off). It is about driverId only: once the job has another
+ * driver it no longer counts.
  */
-export type DriverConfirmed = { at?: Date; by: string; driverId: string };
+export type DriverConfirmedBy = 'telegram' | 'admin' | 'office' | 'auto';
+export type DriverConfirmed = { at?: Date; by: DriverConfirmedBy | string; driverId: string };
 
 /** The customer's rating of the driver (ratings/{bookingId}). */
 export type Rating = { stars: number; comment: string; driverId: string; customerUid: string; at?: Date };

@@ -1,9 +1,11 @@
 'use client';
 
+import type { User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
 
 import { Detail, SectionTitle } from '@/components/admin/kit';
-import { watchRating, watchTripTaps } from '@/lib/admin';
+import { Button } from '@/components/ui/Button';
+import { confirmDriver, watchRating, watchTripTaps } from '@/lib/admin';
 import {
   type Booking,
   type BookingPayment,
@@ -14,6 +16,14 @@ import {
   isInstantBooking,
 } from '@/lib/bookings';
 import { rupees } from '@/lib/settings';
+
+/** Who confirmed the driver on the booking (driverConfirmed.by). */
+const CONFIRMED_BY: Record<string, string> = {
+  telegram: 'Driver confirmed by call ✓',
+  admin: 'Driver confirmed in /admin ✓',
+  office: 'Driver assigned by the office ✓',
+  auto: 'Driver confirmed automatically ✓ (calls are off: CONFIRM_BY_CALL)',
+};
 
 /** How a paid job was paid, and who said so. */
 function paidText(pay: BookingPayment, driver: string): string {
@@ -29,9 +39,11 @@ function paidText(pay: BookingPayment, driver: string): string {
  * automatic bill, the payment (link, method, who confirmed it) and the
  * customer's rating. Shown only when there is something to show.
  */
-export function AppActivity({ b }: { b: Booking }) {
+export function AppActivity({ b, user }: { b: Booking; user: User }) {
   const [taps, setTaps] = useState<TripTaps | null>(null);
   const [rating, setRating] = useState<Rating | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmErr, setConfirmErr] = useState(false);
   const hasDriver = Boolean(b.assignedDriver);
 
   useEffect(() => {
@@ -59,9 +71,23 @@ export function AppActivity({ b }: { b: Booking }) {
     : [];
   const bill = b.localBill;
   const pay = b.payment;
-  // The call to the driver who took it: asked for in Telegram, confirmed there.
+  // The driver sees the customer's details only once he is confirmed: by the
+  // call (Telegram), here, or because the office assigned him itself.
   const confirmed = isDriverConfirmed(b);
-  const showConfirm = confirmed || (b.status === 'assigned' && Boolean(b.assignedDriver));
+  const driver = b.assignedDriver;
+  const showConfirm = confirmed || (b.status === 'assigned' && Boolean(driver));
+  async function confirmNow() {
+    if (!driver) return;
+    setConfirming(true);
+    setConfirmErr(false);
+    try {
+      await confirmDriver(user, b.id, driver);
+    } catch {
+      setConfirmErr(true);
+    } finally {
+      setConfirming(false);
+    }
+  }
 
   if (!instant && !b.acceptedPrice && !showConfirm && !tapRows.length && !bill && !pay && !rating) return null;
 
@@ -86,10 +112,20 @@ export function AppActivity({ b }: { b: Booking }) {
           <Detail label="Driver" wide>
             {confirmed ? (
               <span className="text-success font-semibold">
-                Driver confirmed by call ✓{b.driverConfirmed?.at ? ` (${formatDateTime(b.driverConfirmed.at)})` : ''}
+                {CONFIRMED_BY[b.driverConfirmed?.by ?? ''] ?? 'Driver confirmed ✓'}
+                {b.driverConfirmed?.at ? ` (${formatDateTime(b.driverConfirmed.at)})` : ''}
               </span>
             ) : (
-              'Not confirmed by call yet (Telegram: Confirmed ✓ or Give to someone else)'
+              <span className="flex flex-col items-start gap-2">
+                <span>
+                  Not confirmed yet: {driver?.name ?? 'the driver'} has the job but does not see the customer&apos;s name, number
+                  or address. Call him, then press Confirmed ✓ in Telegram or here.
+                </span>
+                <Button variant="outline" loading={confirming} onClick={() => void confirmNow()}>
+                  Confirm driver ✓
+                </Button>
+                {confirmErr && <span className="text-sm">Could not save. Check your internet and try again.</span>}
+              </span>
             )}
           </Detail>
         )}

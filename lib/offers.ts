@@ -30,9 +30,9 @@ export type Offer = {
   /** Who posted it: an admin's uid, or 'robot' for an automatic offer (its cut drops 30 → 25 → 20% while nobody takes it). */
   by?: string;
   /**
-   * Where drivers see it: its own city, and the nearby ones once the robot
-   * widens it (nobody took it 10 minutes after the top pay). Older offers
-   * have none: their city only.
+   * Where drivers see it: its zone (offerCitiesFor), own city first. Older
+   * offers have none (their city only) or only their city (the robot adds
+   * the nearby ones if nobody takes it).
    */
   cities?: string[];
   /**
@@ -55,8 +55,24 @@ export function offerSettlement(o: Pick<Offer, 'driverPay' | 'cashCollected'>): 
   return { earned, cash, net: earned - cash };
 }
 
-/** The cities an offer is posted to: an admin's offer goes to its own city only (firestore.rules checks it). */
-export const offerCitiesFor = (city: string): string[] => [city];
+/**
+ * Drivers' zones: Raipur, Bhilai and Durg are one (a driver registered in
+ * Bhilai often waits in Raipur); Bilaspur is its own. The same zones as the
+ * alerts robot (apps-script/Code.js ZONES) and firestore.rules (isZoneCities).
+ */
+export const ZONES: readonly (readonly string[])[] = [['Raipur', 'Bhilai', 'Durg'], ['Bilaspur']];
+
+/** The cities an offer is posted to: its whole zone, its own city first ("Bhilai" → Bhilai, Raipur, Durg). */
+export function offerCitiesFor(city: string): string[] {
+  const zone = ZONES.find((z) => z.includes(city)) ?? [];
+  return [city, ...zone.filter((c) => c !== city)];
+}
+
+/** "Raipur", "Raipur and Bhilai", "Raipur, Bhilai and Durg". */
+export function citiesText(cities: readonly string[]): string {
+  if (cities.length <= 1) return cities[0] ?? '';
+  return `${cities.slice(0, -1).join(', ')} and ${cities[cities.length - 1]}`;
+}
 
 /**
  * DriveBuddy's cut, in whole percent: the same band as the quote calculator
