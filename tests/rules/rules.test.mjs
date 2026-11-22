@@ -31,6 +31,7 @@ import {
   where,
   writeBatch,
   deleteDoc,
+  deleteField,
   runTransaction,
 } from 'firebase/firestore';
 
@@ -1010,6 +1011,134 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
     await assertSucceeds(deleteDoc(ref(admin())));
     await seedBooking('b1', { status: 'assigned', assignedDriver: SONU, customerUid: 'cust1' });
     await assertSucceeds(setDoc(ref(drvDb(SONU)), { driverPhone: SONU.phone, leftAt: serverTimestamp() }));
+  });
+});
+
+describe('trip taps — "payment received" (UPI spec 4)', () => {
+  const ref = (db, id = 'b1') => doc(db, 'tripTaps', id);
+  const paid = (db, paidBy = 'upi', extra = {}, id = 'b1') => updateDoc(ref(db, id), { paidBy, paidAt: serverTimestamp(), ...extra });
+  const done = (extra = {}) => ({
+    driverPhone: RAJU.phone, leftAt: new Date(Date.now() - 4 * 3600_000), arrivedAt: new Date(Date.now() - 3 * 3600_000),
+    doneAt: new Date(Date.now() - 60_000), ...extra,
+  });
+
+  beforeEach(async () => {
+    await seedBooking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1' });
+  });
+
+  test('after Job done, even once the robot completed the booking: he still reads his taps (with the amount) and taps paid', async () => {
+    await seedBooking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'cust1', localBill: { amount: 750 } });
+    await seedAs('tripTaps/b1', done({ amount: 750 }));
+    const db = drvDb(RAJU);
+    const snap = await assertSucceeds(getDoc(ref(db)));
+    assert.equal(snap.data().amount, 750);
+    await assertSucceeds(paid(db, 'upi'));
+    let t;
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      t = (await getDoc(doc(ctx.firestore(), 'tripTaps', 'b1'))).data();
+    });
+    assert.equal(t.paidBy, 'upi');
+    assert.ok(t.paidAt);
+  });
+
+  test('in cash, while the booking is still assigned (a trip waiting for its bill)', async () => {
+    await seedAs('tripTaps/b1', done());
+    await assertSucceeds(paid(drvDb(RAJU), 'cash'));
+  });
+
+  test('not before Job done', async () => {
+    await seedAs('tripTaps/b1', { driverPhone: RAJU.phone, leftAt: new Date(), arrivedAt: new Date() });
+    await assertFails(paid(drvDb(RAJU), 'upi'));
+  });
+
+  test('once: no second tap, no changing his answer', async () => {
+    await seedAs('tripTaps/b1', done());
+    const db = drvDb(RAJU);
+    await assertSucceeds(paid(db, 'cash'));
+    await assertFails(paid(db, 'cash'));
+    await assertFails(paid(db, 'upi'));
+    await assertFails(updateDoc(ref(db), { paidBy: 'upi' }));
+  });
+
+  test('only "upi" or "cash", at the server time, exactly those two fields', async () => {
+    await seedAs('tripTaps/b1', done());
+    const db = drvDb(RAJU);
+    await assertFails(paid(db, 'card'));
+    await assertFails(paid(db, true));
+    await assertFails(paid(db, 'UPI'));
+    await assertFails(updateDoc(ref(db), { paidBy: 'upi', paidAt: new Date() })); // his own clock
+    await assertFails(updateDoc(ref(db), { paidBy: 'upi' })); // no time
+    await assertFails(updateDoc(ref(db), { paidAt: serverTimestamp() })); // no method
+    await assertFails(paid(db, 'cash', { amount: 1 })); // the amount is the robot's
+    await assertFails(paid(db, 'cash', { note: 'paid' }));
+    await assertFails(paid(db, 'cash', { homeAt: serverTimestamp() }));
+    await assertFails(updateDoc(ref(db), { amount: 1 }));
+    await assertSucceeds(paid(db, 'cash'));
+  });
+
+  test('nobody else: another driver, the customer, an admin, a guest; not on a job given to someone else or cancelled', async () => {
+    await seedDriversRB();
+    await seedAs('tripTaps/b1', done());
+    await assertFails(paid(drvDb(SONU), 'upi'));
+    await assertFails(paid(customer('cust1'), 'upi'));
+    await assertFails(paid(admin(), 'upi'));
+    await assertFails(paid(guest(), 'upi'));
+    // Sonu's own taps, but the booking is Raju's: refused too.
+    await seedAs('tripTaps/b1', done({ driverPhone: SONU.phone }));
+    await assertFails(paid(drvDb(SONU), 'upi'));
+    // The office gave the job to Sonu: Raju's old taps take no payment.
+    await seedAs('tripTaps/b1', done());
+    await seedBooking('b1', { status: 'assigned', assignedDriver: SONU, customerUid: 'cust1' });
+    await assertFails(paid(drvDb(RAJU), 'upi'));
+    await seedBooking('b1', { status: 'cancelled', assignedDriver: RAJU, customerUid: 'cust1' });
+    await assertFails(paid(drvDb(RAJU), 'upi'));
+    // No booking at all.
+    await seedAs('tripTaps/nobooking', done());
+    await assertFails(paid(drvDb(RAJU), 'upi', {}, 'nobooking'));
+  });
+});
+
+describe('offers — cash the driver kept (UPI spec 7)', () => {
+  const adminEdit = (fields) => updateDoc(doc(admin(), 'offers', 'b1'), { ...fields, updatedAt: serverTimestamp(), by: 'admin1' });
+
+  beforeEach(async () => {
+    await seedDriversRB();
+    await seedBooking('b1', { status: 'completed', assignedDriver: RAJU, customerUid: 'cust1' });
+  });
+
+  test('an admin can still mark such an offer paid or undo it; the driver still sees it as earnings', async () => {
+    await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date(), done: true, cashCollected: 750 }));
+    await assertSucceeds(adminEdit({ paid: true, paidAt: serverTimestamp() }));
+    await assertSucceeds(adminEdit({ paid: false, paidAt: null }));
+    const snap = await assertSucceeds(getDoc(doc(drvDb(RAJU), 'offers', 'b1')));
+    assert.equal(snap.data().cashCollected, 750);
+  });
+
+  test('zero is a valid amount; the cash itself is the robot’s — an admin cannot change, add or remove it', async () => {
+    await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date(), done: true, cashCollected: 0 }));
+    await assertSucceeds(adminEdit({ paid: true, paidAt: serverTimestamp() }));
+    await assertFails(adminEdit({ cashCollected: 750 }));
+    await assertFails(adminEdit({ cashCollected: deleteField() }));
+    await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date(), done: true }));
+    await assertFails(adminEdit({ cashCollected: 0 }));
+    await assertSucceeds(adminEdit({ paid: true, paidAt: serverTimestamp() }));
+  });
+
+  test('a stored amount that is not a whole number of rupees ≥ 0 is not an offer shape', async () => {
+    for (const bad of [-5, 2.5, '750', null]) {
+      await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date(), done: true, cashCollected: bad }));
+      await assertFails(adminEdit({ paid: true, paidAt: serverTimestamp() }));
+    }
+  });
+
+  test('an admin cannot post an offer with cash on it; a driver cannot write it', async () => {
+    await seedBooking('b2', { status: 'confirmed' });
+    const post = (extra) => setDoc(doc(admin(), 'offers', 'b2'), offerDoc({ bookingId: 'b2', createdAt: serverTimestamp(), updatedAt: serverTimestamp(), by: 'admin1', ...extra }));
+    await assertFails(post({ cashCollected: 0 }));
+    await assertSucceeds(post({}));
+    await seedAs('offers/b1', offerDoc({ status: 'taken', takenBy: RAJU, takenAt: new Date(), done: true }));
+    await assertFails(updateDoc(doc(drvDb(RAJU), 'offers', 'b1'), { cashCollected: 0, updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(drvDb(RAJU), 'offers', 'b1'), { cashCollected: 750, updatedAt: serverTimestamp() }));
   });
 });
 

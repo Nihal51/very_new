@@ -27,8 +27,10 @@ rules_version = '2';
 //                         sees the open job offers in his city (or offered to
 //                         it from a nearby city), takes one (the booking is
 //                         assigned to him), and sees his earnings. He taps
-//                         Start / Arrived / Job done on his job (tripTaps), may
-//                         give a job back before Start, and sets his UPI ID.
+//                         Start / Arrived / Job done on his job (tripTaps),
+//                         then "Paid by UPI" / "Paid in cash" once (even after
+//                         the robot completed the booking), may give a job
+//                         back before Start, and sets his UPI ID.
 //                         Nothing else.
 //    An admin             read everything; move bookings and drivers through
 //                         their statuses; assign drivers; add notes; save the
@@ -519,6 +521,10 @@ service cloud.firestore {
     //  assigned to, while it is "assigned"; each time once, in that order, at
     //  the server's time. The alerts robot copies them to the booking (a trip's
     //  clock, a local job's bill) — the customer sees them there, not here.
+    //  After Job done: "payment received" — paidBy 'upi' or 'cash' and paidAt,
+    //  once, also once the robot has completed the booking (he can no longer
+    //  read the booking then, only this document). `amount` (the bill to
+    //  collect) is the robot's: no branch here lets a browser write it.
 
     function tapIs(next, before) {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly([next])
@@ -547,6 +553,19 @@ service cloud.firestore {
         && (tapIs('arrivedAt', 'leftAt')
           || tapIs('doneAt', 'arrivedAt')
           || (tapIs('homeAt', 'doneAt') && job().package == 'one-way-drop'));
+
+      // "Paid by UPI" / "Paid in cash": the driver whose taps these are, after
+      // Job done, once, exactly these two fields, at the server's time — while
+      // the booking is still his (assigned, or completed by the robot).
+      allow update: if isDriver()
+        && resource.data.driverPhone == request.auth.token.driverPhone
+        && ('doneAt' in resource.data)
+        && !('paidBy' in resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidBy', 'paidAt'])
+        && request.resource.data.paidBy in ['upi', 'cash']
+        && request.resource.data.paidAt == request.time
+        && job().assignedDriver.phone == request.auth.token.driverPhone
+        && job().status in ['assigned', 'completed'];
 
       // An admin clears them when he gives the job to another driver.
       allow delete: if isAdmin();
@@ -706,8 +725,11 @@ service cloud.firestore {
               'status', 'takenBy', 'takenAt', 'done', 'paid', 'paidAt', 'createdAt', 'updatedAt', 'by'];
     }
 
+    // cashCollected (optional): the cash the driver kept from the customer for
+    // this job — the alerts robot's (he tapped "Paid in cash"). Allowed in the
+    // shape so an admin can still edit such an offer, never changed by one.
     function isOfferShape(o, bookingId) {
-      return o.keys().hasOnly(offerKeys().concat(['cities'])) && o.keys().hasAll(offerKeys())
+      return o.keys().hasOnly(offerKeys().concat(['cities', 'cashCollected'])) && o.keys().hasAll(offerKeys())
         && o.bookingId == bookingId
         && isOptionalText(o.ref, 20)
         && isServedCity(o.city)
@@ -720,6 +742,7 @@ service cloud.firestore {
         && o.driverPay is int && o.driverPay > 0 && o.driverPay < o.price
         && o.status in ['open', 'taken', 'withdrawn', 'released']
         && (!('cities' in o) || isOfferCities(o))
+        && (!('cashCollected' in o) || (o.cashCollected is int && o.cashCollected >= 0))
         && (o.takenBy == null || isDriverRef(o.takenBy))
         && (o.takenAt == null || o.takenAt is timestamp)
         && o.done is bool && o.paid is bool
@@ -755,14 +778,17 @@ service cloud.firestore {
         && request.resource.data.done == false && request.resource.data.paid == false
         && request.resource.data.paidAt == null
         && (!('cities' in request.resource.data) || request.resource.data.cities == [request.resource.data.city])
+        && !('cashCollected' in request.resource.data)
         && request.resource.data.createdAt == request.time
         && request.resource.data.by == request.auth.uid;
 
-      // An admin changes it: the price or cut while it is open, withdraws it,
+      // An admin changes it (never the cash the driver kept — the robot's):
+      // the price or cut while it is open, withdraws it,
       // offers it again, marks the job done or the driver paid.
       allow update: if isAdmin()
         && isOfferShape(request.resource.data, bookingId)
         && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.get('cashCollected', null) == resource.data.get('cashCollected', null)
         && request.resource.data.by == request.auth.uid;
 
       // A driver accepts an open offer in his city: it becomes his, now, and the
