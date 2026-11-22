@@ -1449,8 +1449,17 @@ describe('automation', () => {
       assert.deepEqual(bill('3-hours-600', 3 * 60 + 16), { amount: 750, baseHours: 3, usedHours: 4, extraHours: 1, extraHourRate: 150, at: now.toISOString() });
       assert.equal(bill('1-hour-300', 40).amount, 300, 'shorter than the package: the package price');
       assert.equal(bill('1-hour-300', 2 * 60 + 30).amount, 300 + 2 * 150);
-      assert.equal(bill('local-full-day', 9 * 60).amount, 1000 + 150, 'full day: the "from" price');
+      assert.equal(bill('local-full-day', 9 * 60).amount, 1200 + 150, 'full day: the price it is offered at (top of the range)');
       assert.equal(bill('local-full-day', 8 * 60, { quote: { amount: 1150 } }).amount, 1150, 'the agreed price wins');
+      // The price of the offer he took is the base: the bill and his pay agree.
+      const offered = (pkg, min, offerPrice, extra = {}) => env.ctx.localBillOf({ package: pkg, ...extra }, taps(min), prices, now, offerPrice).amount;
+      assert.equal(offered('local-full-day', 8 * 60, 1100), 1100, 'an admin-typed offer price');
+      assert.equal(offered('local-full-day', 9 * 60, 1100), 1100 + 150);
+      assert.equal(offered('local-full-day', 8 * 60, 1100, { quote: { amount: 1150 } }), 1150, 'a quote beats the offer price');
+      assert.equal(offered('night-driver', 10 * 60, 0), 500, 'no offer: the estimate (night from-price)');
+      assert.equal(offered('3-hours-600', 3 * 60, 50), 600, 'an odd offer price is passed over');
+      // Only without any of those: the site's lowest price (no full-day top price set).
+      assert.equal(env.ctx.localBillOf({ package: 'local-full-day' }, taps(8 * 60), { fullDay: { from: 1000 } }, now).amount, 1000);
       assert.equal(bill('night-driver', 10 * 60).baseHours, 10);
       assert.equal(env.ctx.localBillOf({ package: 'outstation' }, taps(60), prices, now), null);
       assert.equal(env.ctx.localBillOf({ package: '1-hour-300' }, { arrivedAt: t0 }, prices, now), null, 'not done yet');
@@ -1687,6 +1696,27 @@ describe('automation', () => {
       env.store.docs.get('tripTaps/b1').doneAt = { timestampValue: new Date().toISOString() }; // even a tap seen again
       env.ctx.watchChanges_();
       assert.equal(env.telegram.length, n, 'billed once');
+    });
+
+    test('a full day offered at the estimate is billed at it, plus the extra hours; an admin-typed offer price too', () => {
+      booking('f1', { status: 'assigned', assignedDriver: RAJU, package: 'local-full-day' });
+      takenOffer('f1', { package: 'local-full-day', price: 1200, driverPay: 840, cutPercent: 30 });
+      tapped('f1', { leftAt: ago(10 * 3600_000), arrivedAt: ago(9 * 3600_000 + 30 * MIN), doneAt: ago(0) }); // 9 h 30 m → 10 h, 2 extra
+      booking('f2', { status: 'assigned', assignedDriver: RAJU, package: 'local-full-day' });
+      takenOffer('f2', { package: 'local-full-day', price: 1100, driverPay: 820, cutPercent: 25, by: 'admin1' });
+      tapped('f2', { leftAt: ago(9 * 3600_000), arrivedAt: ago(8 * 3600_000), doneAt: ago(0) });
+      booking('f3', { status: 'assigned', assignedDriver: RAJU, package: 'local-full-day', quote: { amount: 1150 } });
+      takenOffer('f3', { package: 'local-full-day', price: 1100, driverPay: 820 });
+      tapped('f3', { leftAt: ago(9 * 3600_000), arrivedAt: ago(8 * 3600_000), doneAt: ago(0) });
+      booking('f4', { status: 'assigned', assignedDriver: RAJU, package: 'local-full-day' });
+      takenOffer('f4', { package: 'local-full-day', price: 1100, driverPay: 820, takenBy: { id: 'd2', name: 'Sonu Verma', phone: '9425212345' } });
+      tapped('f4', { leftAt: ago(9 * 3600_000), arrivedAt: ago(8 * 3600_000), doneAt: ago(0) });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/f1').localBill.amount, 1200 + 2 * 150);
+      assert.equal(get('bookings/f2').localBill.amount, 1100);
+      assert.equal(get('bookings/f3').localBill.amount, 1150, 'a quote beats the offer price');
+      assert.equal(get('bookings/f4').localBill.amount, 1200, 'another driver’s offer is not his price: the estimate');
+      assert.equal(get('offers/f1').done, true);
     });
 
     test('within the grace minutes: no extra hour; a quote is the package price', () => {

@@ -128,7 +128,8 @@ export type BookingAcceptedPrice = { amount: number; at?: Date };
 
 /**
  * A local job's bill, worked out by the alerts robot from the Driver app's
- * taps (Arrived → Job done): the package price plus each hour over it.
+ * taps (Arrived → Job done): the price the job was offered to the driver
+ * at, plus each hour over the package.
  * Customer-visible: no costs here.
  */
 export type BookingLocalBill = {

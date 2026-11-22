@@ -1616,10 +1616,20 @@ function usedHours(fromMs, toMs, graceMin) {
   return Math.max(0, Math.ceil((minutes - graceMin) / 60));
 }
 
-/** A local package's price: the agreed price (quote, accepted price), else the site's: 1 hour, 3 hours, full day from, night from. */
-function localPackagePrice(b, prices) {
+/**
+ * A local job's base price: the price it went to the driver at, so the bill
+ * and his pay always agree — the price agreed on the call (quote), the price
+ * the customer accepted, the price of the offer he took (`offerPrice`), else
+ * the estimate it would have been offered at (estimateOf); only with none of
+ * those, the site's lowest price (full day "from" …).
+ */
+function localPackagePrice(b, prices, offerPrice) {
   var agreed = agreedPriceOf(b);
   if (agreed) return agreed;
+  var offered = Number(offerPrice);
+  if (Number.isInteger(offered) && offered >= 100 && offered <= 500000) return offered;
+  var est = estimateOf(b, prices).amount;
+  if (est) return est;
   prices = prices || {};
   var p = {
     '1-hour-300': prices.oneHour,
@@ -1632,15 +1642,16 @@ function localPackagePrice(b, prices) {
 }
 
 /**
- * The bill of a local job from the driver's taps: the package's price, plus
- * each hour past the package (Arrived → Job done, after the grace minutes) at
+ * The bill of a local job from the driver's taps: the package's price (the
+ * price it was offered to him at — localPackagePrice), plus each hour past
+ * the package (Arrived → Job done, after the grace minutes) at
  * prices.localExtraHour. null when it cannot be worked out yet.
  */
-function localBillOf(b, taps, prices, now) {
+function localBillOf(b, taps, prices, now, offerPrice) {
   var base = LOCAL_BASE_HOURS[b && b.package];
   var from = taps && (taps.arrivedAt || taps.leftAt);
   if (!base || !from || !taps.doneAt) return null;
-  var price = localPackagePrice(b, prices);
+  var price = localPackagePrice(b, prices, offerPrice);
   if (!price) return null;
   var used = usedHours(from.getTime(), taps.doneAt.getTime(), LOCAL_GRACE_MIN);
   var extra = Math.max(0, used - base);
@@ -2501,7 +2512,11 @@ function syncTaps_(id, taps) {
   var prices = sitePrices_();
   if (!prices) throw new Error('the website prices could not be read; trying again next minute');
   var now = new Date();
-  var bill = localBillOf(b, taps, prices, now);
+  // The offer he took (read once: its price is the bill's base, and it is marked done below).
+  var offer = fsGet_('offers/' + id);
+  var his = Boolean(offer && offer.status === 'taken' && offer.takenBy &&
+    (offer.takenBy.id === b.assignedDriver.id || String(offer.takenBy.phone || '') === String(b.assignedDriver.phone || '')));
+  var bill = localBillOf(b, taps, prices, now, his ? offer.price : 0);
   if (!bill) {
     console.warn('No price for the bill of ' + (b.ref || id) + ': left for the office.');
     return;
@@ -2517,7 +2532,6 @@ function syncTaps_(id, taps) {
     },
     robotEvent_(id, 'assigned', 'completed', note, now),
   ];
-  var offer = fsGet_('offers/' + id);
   if (offer && offer.status === 'taken') {
     writes.push({
       update: { name: docName_('offers/' + id), fields: toFields({ done: true, updatedAt: now }) },
