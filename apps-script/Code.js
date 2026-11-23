@@ -1374,6 +1374,30 @@ var RATE_KEYS = ['local8h', 'local12h', 'localExtraHour', 'tripDay', 'returnHour
 /** A rate-card offer nobody takes: his pay goes up this much each step (AUTO_OFFER_STEP_MIN), at most `max` in all. */
 var RATE_RAISE = { step: 50, max: 150 };
 
+/**
+ * The rate card's day rule is for long drives. A same-day drop or trip — up
+ * to the site's first nearby tier (prices.outstationNear[0].upToKm, from
+ * app-config.json) — stays on the % cut, as its near-tier price is set for
+ * that. When the site cannot be read: this many km.
+ */
+var NEAR_TRIP_KM_DEFAULT = 160;
+
+/** The km up to which a trip is a same-day one (site prices.outstationNear[0].upToKm), else NEAR_TRIP_KM_DEFAULT. */
+function nearKmOf(prices) {
+  var tier = prices && Array.isArray(prices.outstationNear) ? prices.outstationNear[0] : null;
+  var n = Number(tier && tier.upToKm);
+  return n > 0 ? n : NEAR_TRIP_KM_DEFAULT;
+}
+
+/** nearKmOf from the site's config (cached for an hour); the default when it cannot be read. */
+function siteNearKm_() {
+  try {
+    return nearKmOf(sitePrices_());
+  } catch (err) {
+    return NEAR_TRIP_KM_DEFAULT;
+  }
+}
+
 /** DRIVER_RATES → { local8h, local12h, localExtraHour, tripDay, returnHour }, every one a whole number 1–100000; anything else → null (the % cut). */
 function driverRatesOf(raw) {
   var r;
@@ -1404,14 +1428,18 @@ function driverRates_() {
  *     each full 24 hours a tripDay, the hours left over × returnHour, those
  *     never more than one tripDay;
  *   outstation (round trip) → trip.days × tripDay.
- * Night driver, 1 hour, 3 hours and everything else → null. `price` is not
- * used here: the caller checks the pay stays below it.
+ * Trips only when long: farther than `nearKm` (nearKmOf; same-day ones and
+ * an unknown distance stay on the % cut). Night driver, 1 hour, 3 hours and
+ * everything else → null. `price` is not used here: the caller checks the
+ * pay stays below it.
  */
-function rateCardPayOf(b, price, rates) {
+function rateCardPayOf(b, price, rates, nearKm) {
   if (!rates || !b) return null;
   if (b.package === 'local-full-day') return rates.local8h;
   var t = b.trip;
   if (!t || typeof t !== 'object') return null;
+  var km = Number(t.km);
+  if (!(km > 0) || km <= (nearKm > 0 ? nearKm : NEAR_TRIP_KM_DEFAULT)) return null;
   var days = Math.max(1, Math.floor(Number(t.days) || 0));
   if (b.package === 'outstation') return days * rates.tripDay;
   if (b.package !== 'one-way-drop') return null;
@@ -1440,14 +1468,14 @@ function rateRaiseAt(ageMs, basePay, price, stepMs) {
 }
 
 /** The offer fields that pay by the rate card, or null when the card does not price this booking or its pay is not below the price. */
-function rateCardFields(b, price, rates) {
-  var pay = rateCardPayOf(b, price, rates);
+function rateCardFields(b, price, rates, nearKm) {
+  var pay = rateCardPayOf(b, price, rates, nearKm);
   if (pay === null || !(pay < price)) return null;
   return { driverPay: pay, cutPercent: keepPercentOf(price, pay), payBy: 'rates' };
 }
 
 /** The automatic offer for a confirmed booking with a price, in the exact shape firestore.rules checks; null if not one. */
-function autoOfferFor(id, b, prices, cut, now, rates) {
+function autoOfferFor(id, b, prices, cut, now, rates, nearKm) {
   var price = estimateOf(b, prices).amount;
   if (!price || b.status !== 'confirmed' || b.assignedDriver) return null;
   var area = offerAreaOf(b.pickup);
@@ -1456,10 +1484,10 @@ function autoOfferFor(id, b, prices, cut, now, rates) {
     bookingId: id, ref: b.ref || '', city: b.city, package: b.package, when: b.preferredTime || '', area: area,
     to: (b.trip && b.trip.to) || '', price: Math.round(price), cutPercent: Math.min(30, Math.max(20, Math.round(cut))),
     driverPay: driverPayOf(price, cut), status: 'open', takenBy: null, takenAt: null, done: false, paid: false,
-    paidAt: null, createdAt: now, updatedAt: now, by: 'robot', cities: zoneOf(b.city),
+    paidAt: null, createdAt: now, updatedAt: now, by: 'robot', cities: zoneOf(b.city), payBy: 'cut',
   };
   // The rate card, when it prices this job (autoOffers_ holds a job whose rate is not below its price).
-  var card = rateCardFields(b, offer.price, rates);
+  var card = rateCardFields(b, offer.price, rates, nearKm);
   if (card) Object.keys(card).forEach(function (k) { offer[k] = card[k]; });
   return offer;
 }
@@ -1523,6 +1551,7 @@ function autoOffers_() {
   changedSince_('bookings', 'autoOfferMs', function (rows) {
     var prices = null;
     var rates; // the rate card, read once a run when needed
+    var nearKm; // the site's same-day trip limit, likewise
     var cut = autoCuts(prop_('AUTO_OFFER_CUTS'))[0];
     rows.forEach(function (row) {
       var b = row.data;
@@ -1533,8 +1562,10 @@ function autoOffers_() {
       // The site's prices only when needed (and once a run).
       if (needsPrices && !prices) prices = sitePrices_();
       if (rates === undefined) rates = driverRates_();
+      // How long a same-day trip is, from the site — only for a trip with a rate card (cached for an hour).
+      if (rates && b.trip && nearKm === undefined) nearKm = siteNearKm_();
       var price = estimateOf(b, prices || {}).amount;
-      var ratePay = rateCardPayOf(b, price, rates);
+      var ratePay = rateCardPayOf(b, price, rates, nearKm);
       if (price && ratePay !== null && ratePay >= price) {
         // The price is below what the driver is paid: never offered at a loss. Telegram once per price.
         var key = price + ':' + ratePay;
@@ -1544,7 +1575,7 @@ function autoOffers_() {
         }
         return;
       }
-      var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date(), rates);
+      var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date(), rates, nearKm);
       if (!offer) return;
       fsCommit_([{ update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } }]);
     });
@@ -1850,12 +1881,12 @@ function driverReminderPush(b, id, token) {
  * the first step, to its whole zone — at the rate card's pay when it prices
  * the booking `b` (payBy 'rates'), else at the first % cut (payBy 'cut').
  */
-function reopenedOffer(o, cut, now, b, rates) {
+function reopenedOffer(o, cut, now, b, rates, nearKm) {
   var fields = {
     status: 'open', takenBy: null, takenAt: null, done: false, cities: zoneOf(o.city), cutPercent: cut,
     driverPay: driverPayOf(o.price, cut), createdAt: now, updatedAt: now, by: 'robot', payBy: 'cut',
   };
-  var card = rateCardFields(b, o.price, rates);
+  var card = rateCardFields(b, o.price, rates, nearKm);
   if (card) Object.keys(card).forEach(function (k) { fields[k] = card[k]; });
   return fields;
 }
@@ -2295,7 +2326,8 @@ function releasedOffers_(rows) {
     var now = new Date();
     var reopen = Boolean(b && b.status === 'confirmed' && !b.assignedDriver);
     if (reopen) {
-      var fields = reopenedOffer(o, cut, now, b, driverRates_());
+      var rates = driverRates_();
+      var fields = reopenedOffer(o, cut, now, b, rates, rates && b.trip ? siteNearKm_() : 0);
       fsCommit_([
         {
           update: { name: docName_('offers/' + row.id), fields: toFields(fields) },
@@ -2542,7 +2574,8 @@ function giveToAnother_(id, b, e) {
   var skip = (alert.skipIds || []).slice();
   if (skip.indexOf(e.driverId) < 0) skip.push(e.driverId);
   var now = new Date();
-  var fields = reopenedOffer(o, autoCuts(prop_('AUTO_OFFER_CUTS'))[0], now, b, driverRates_());
+  var rates = driverRates_();
+  var fields = reopenedOffer(o, autoCuts(prop_('AUTO_OFFER_CUTS'))[0], now, b, rates, rates && b.trip ? siteNearKm_() : 0);
   fsCommit_([
     {
       // driverConfirmed is in the mask but not the fields: removed, it was about him.
@@ -4178,7 +4211,7 @@ if (typeof module !== 'undefined') {
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
     estimateOf: estimateOf,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
-    ZONES: ZONES, zoneOf: zoneOf, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt,
+    ZONES: ZONES, zoneOf: zoneOf, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt, nearKmOf: nearKmOf,
     parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen, confirmedFor: confirmedFor,
     UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
   };

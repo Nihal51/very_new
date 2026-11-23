@@ -1311,7 +1311,7 @@ describe('job dispatch', () => {
     // Obviously generic test numbers — the real rates live only in the Script Properties.
     const RATES = { local8h: 500, local12h: 700, localExtraHour: 10, tripDay: 1000, returnHour: 100 };
     const useRates = () => env.props.set('DRIVER_RATES', JSON.stringify(RATES));
-    const trip = (estTo, days, returnHours) => ({ mapValue: { fields: { to: s('Nagpur'), kind: s('one-way'), estFrom: n(estTo), estTo: n(estTo), days: n(days), returnHours: n(returnHours) } } });
+    const trip = (estTo, days, returnHours, km = 284) => ({ mapValue: { fields: { to: s('Nagpur'), kind: s('one-way'), km: n(km), estFrom: n(estTo), estTo: n(estTo), days: n(days), returnHours: n(returnHours) } } });
     const offerOf = (id) => (env.store.docs.has(`offers/${id}`) ? env.ctx.fromFields(env.store.docs.get(`offers/${id}`)) : null);
 
     test('pure: the property is read strictly — anything odd means no rate card', () => {
@@ -1324,15 +1324,25 @@ describe('job dispatch', () => {
     });
 
     test('pure: what the rate card pays — full day, one-way (driving days + his way home), outstation; null otherwise', () => {
-      const pay = (b) => env.ctx.rateCardPayOf(b, 9999, RATES);
+      const pay = (b, nearKm = 160) => env.ctx.rateCardPayOf(b, 9999, RATES, nearKm);
       assert.equal(pay({ package: 'local-full-day' }), 500);
       // 2 driving days; home 27 h = 1 day + 3 hours.
-      assert.equal(pay({ package: 'one-way-drop', trip: { days: 2, returnHours: 27 } }), 2 * 1000 + 1000 + 3 * 100);
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 600, days: 2, returnHours: 27 } }), 2 * 1000 + 1000 + 3 * 100);
       // Home 35 h = 1 day + 11 hours, the 11 hours capped at one day.
-      assert.equal(pay({ package: 'one-way-drop', trip: { days: 2, returnHours: 35 } }), 2 * 1000 + 1000 + 1000);
-      assert.equal(pay({ package: 'one-way-drop', trip: { days: 1, returnHours: 5 } }), 1000 + 500);
-      assert.equal(pay({ package: 'one-way-drop', trip: { days: 0, returnHours: 0 } }), 1000, 'at least one driving day');
-      assert.equal(pay({ package: 'outstation', trip: { days: 3, returnHours: 0 } }), 3000);
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 600, days: 2, returnHours: 35 } }), 2 * 1000 + 1000 + 1000);
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 300, days: 1, returnHours: 5 } }), 1000 + 500);
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 300, days: 0, returnHours: 0 } }), 1000, 'at least one driving day');
+      assert.equal(pay({ package: 'outstation', trip: { km: 400, days: 3, returnHours: 0 } }), 3000);
+      // Same-day drops and trips (up to the site's first nearby tier) and an unknown distance: the % cut.
+      for (const km of [113, 160, 0, undefined]) {
+        assert.equal(pay({ package: 'one-way-drop', trip: { km, days: 1, returnHours: 4 } }), null, `one-way ${km} km`);
+        assert.equal(pay({ package: 'outstation', trip: { km, days: 1, returnHours: 0 } }), null, `outstation ${km} km`);
+      }
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 161, days: 1, returnHours: 4 } }), 1400);
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 180, days: 1, returnHours: 4 } }, 200), null, 'the site’s own limit');
+      assert.equal(env.ctx.nearKmOf({ outstationNear: [{ upToKm: 200, from: 1, to: 2 }] }), 200);
+      assert.equal(env.ctx.nearKmOf({}), 160, 'no site config: 160');
+      assert.equal(env.ctx.nearKmOf(null), 160);
       for (const b of [{ package: 'night-driver' }, { package: '1-hour-300' }, { package: '3-hours-600' }, { package: 'wedding-event' },
         { package: 'medical-emergency' }, { package: 'one-way-drop' }, { package: 'outstation' }]) {
         assert.equal(pay(b), null, b.package);
@@ -1356,7 +1366,7 @@ describe('job dispatch', () => {
       useRates();
       confirm('f1', 'local-full-day');
       confirm('t1', 'one-way-drop', { trip: trip(4000, 2, 27) });
-      confirm('o1', 'outstation', { trip: { mapValue: { fields: { to: s('Puri'), kind: s('round'), estFrom: n(3600), estTo: n(3600), days: n(3), returnHours: n(0) } } } });
+      confirm('o1', 'outstation', { trip: { mapValue: { fields: { to: s('Puri'), kind: s('round'), km: n(500), estFrom: n(3600), estTo: n(3600), days: n(3), returnHours: n(0) } } } });
       confirm('h1', '3-hours-600');
       env.ctx.autoOffers_();
       const f = offerOf('f1');
@@ -1365,7 +1375,19 @@ describe('job dispatch', () => {
       assert.deepEqual([t.price, t.driverPay, t.cutPercent, t.payBy], [4000, 3300, 18, 'rates']);
       assert.deepEqual([offerOf('o1').driverPay, offerOf('o1').payBy], [3000, 'rates']);
       const h = offerOf('h1');
-      assert.deepEqual([h.price, h.driverPay, h.cutPercent, h.payBy], [600, 420, 30, undefined], 'not on the card: the % cut');
+      assert.deepEqual([h.price, h.driverPay, h.cutPercent, h.payBy], [600, 420, 30, 'cut'], 'not on the card: the % cut');
+    });
+
+    test('a short same-day drop stays on the % cut and is offered; a long one uses the rate card', () => {
+      useRates();
+      confirm('s1', 'one-way-drop', { trip: trip(1200, 1, 4, 113) }); // near-tier price, below a day's rate: still offered
+      confirm('l1', 'one-way-drop', { trip: trip(2500, 1, 4, 284) });
+      env.ctx.autoOffers_();
+      const short = offerOf('s1');
+      assert.deepEqual([short.price, short.driverPay, short.cutPercent, short.payBy], [1200, 840, 30, 'cut']);
+      const long = offerOf('l1');
+      assert.deepEqual([long.price, long.driverPay, long.payBy], [2500, 1400, 'rates']);
+      assert.equal(env.telegram.filter((m) => /below the driver/.test(m.text)).length, 0);
     });
 
     test('the price below his rate: no offer, Telegram once — the office checks the price', () => {
@@ -1417,7 +1439,7 @@ describe('job dispatch', () => {
       env.ctx.autoOffers_();
       for (const id of ['f1', 'f2']) {
         const o = offerOf(id);
-        assert.deepEqual([o.price, o.driverPay, o.cutPercent, o.payBy], [1200, 840, 30, undefined], id);
+        assert.deepEqual([o.price, o.driverPay, o.cutPercent, o.payBy], [1200, 840, 30, 'cut'], id);
       }
       env.ctx.dispatchOffers_();
       env.store.docs.get('offers/f1').createdAt = ts(2 * 60_000 + 5000);
