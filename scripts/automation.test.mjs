@@ -13,6 +13,7 @@ import test from 'node:test';
 import { PACKAGE_NAMES, UPI_ID, isDriverConfirmed, isInstantBooking, isUpiPayUrl, toDriverConfirmed, toLocalBill, toPayment, toAcceptedPrice, toTripTaps } from '../lib/bookings.ts';
 import { RATE_RAISE, ZONES, citiesText, offerCitiesFor, offerSettlement } from '../lib/offers.ts';
 import { estimateBasisText, estimateOf } from '../lib/estimate.ts';
+import { LOCAL_BASE_HOURS, LOCAL_GRACE_MINUTES, localHours, usedHours } from '../lib/local-bill.ts';
 import { checkSettings } from '../lib/settings-schema.ts';
 import { settings } from '../site-settings.ts';
 
@@ -40,7 +41,7 @@ test('the extra-hour price is a setting, published to the robot through app-conf
   const bill = robot.localBillOf({ package: '3-hours-600' }, { arrivedAt: t0, doneAt: new Date(+t0 + 250 * 60_000) }, settings.prices, t0);
   assert.equal(bill.amount, settings.prices.threeHours + settings.prices.localExtraHour);
   // Every local package has its hours; trip packages are billed by the office.
-  assert.deepEqual(Object.keys(robot.LOCAL_BASE_HOURS).sort(), ['1-hour-300', '3-hours-600', 'local-full-day', 'night-driver']);
+  assert.deepEqual(Object.keys(robot.LOCAL_BASE_HOURS).sort(), ['1-hour-300', '3-hours-600', 'local-12-hours', 'local-full-day', 'night-driver']);
 });
 
 test('stored bills, payments and accepted prices are read safely', () => {
@@ -185,4 +186,32 @@ test('the rate card: the same raise steps in /admin and the robot; its values ar
     for (const key of ['DRIVER_RATES', 'local8h', 'local12h', 'tripDay']) assert.ok(!read(f).includes(key), `${key} in ${f}`);
   }
   assert.equal(robot.driverRatesOf(undefined), null, 'no property: the % cut');
+});
+
+test('12 hours in the city: one price setting, published to the apps; billed and estimated by the robot', () => {
+  assert.equal(typeof settings.prices.twelveHours, 'number');
+  assert.ok(read('app/app-config.json/route.ts').includes('twelveHours: prices.twelveHours'));
+  assert.throws(() => checkSettings({ ...settings, prices: { ...settings.prices, twelveHours: 0 } }), /prices\.twelveHours/);
+  assert.throws(() => checkSettings({ ...settings, prices: { ...settings.prices, twelveHours: settings.prices.threeHours } }), /twelveHours/);
+  assert.deepEqual(estimateOf({ package: 'local-12-hours' }, settings.prices), { amount: settings.prices.twelveHours, basis: 'fixed' });
+  assert.deepEqual({ ...robot.estimateOf({ package: 'local-12-hours' }, settings.prices) }, { amount: settings.prices.twelveHours, basis: 'fixed' });
+  assert.equal(isInstantBooking({ package: 'local-12-hours', customerUid: 'u1' }), true);
+  assert.equal(robot.instantConfirmable({ package: 'local-12-hours', customerUid: 'u1', status: 'new', ref: 'DB-1' }, ''), true);
+  assert.equal(PACKAGE_NAMES['local-12-hours'], robot.PACKAGE_NAMES['local-12-hours']);
+});
+
+test('the local bill’s hours: lib/local-bill.ts is the robot’s rule (base hours per package, the 15-minute grace)', () => {
+  assert.deepEqual({ ...LOCAL_BASE_HOURS }, { ...robot.LOCAL_BASE_HOURS });
+  assert.equal(LOCAL_GRACE_MINUTES, robot.LOCAL_GRACE_MIN);
+  const t0 = Date.parse('2026-11-24T04:00:00Z');
+  for (const minutes of [0, 15, 16, 59, 60, 75, 76, 180, 195, 196, 721, 735, 736, 900]) {
+    assert.equal(usedHours(t0, t0 + minutes * 60_000), robot.usedHours(t0, t0 + minutes * 60_000, robot.LOCAL_GRACE_MIN), `${minutes} min`);
+    for (const pkg of Object.keys(LOCAL_BASE_HOURS)) {
+      const bill = robot.localBillOf({ package: pkg }, { arrivedAt: new Date(t0), doneAt: new Date(t0 + minutes * 60_000) }, settings.prices, new Date(t0));
+      const h = localHours(pkg, t0, t0 + minutes * 60_000);
+      assert.deepEqual(h, { baseHours: bill.baseHours, usedHours: bill.usedHours, extraHours: bill.extraHours }, `${pkg} ${minutes} min`);
+    }
+  }
+  assert.equal(localHours('outstation', t0, t0 + 3600_000), null);
+  assert.deepEqual(localHours('local-12-hours', t0, t0 + (12 * 60 + 16) * 60_000), { baseHours: 12, usedHours: 13, extraHours: 1 });
 });

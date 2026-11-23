@@ -35,6 +35,8 @@ export type SiteSettings = {
   prices: {
     oneHour: number;
     threeHours: number;
+    /** 12 hours in the city (package local-12-hours). */
+    twelveHours: number;
     fullDay: Range;
     /** Per 24 h of the driver's time on an outstation trip or one-way drop, farther than the last nearby tier. */
     outstation: Range;
@@ -179,6 +181,9 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
 
   price('prices.oneHour', s.prices.oneHour);
   price('prices.threeHours', s.prices.threeHours);
+  price('prices.twelveHours', s.prices.twelveHours);
+  if (s.prices.twelveHours <= s.prices.threeHours)
+    problems.push('prices.twelveHours (12 hours) should cost more than the 3-hour package');
   range('prices.fullDay', s.prices.fullDay);
   range('prices.outstation', s.prices.outstation);
   /* Nearby tiers: nearest first, each cheaper than (or the same as) the next, none above the long-trip price. */

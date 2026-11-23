@@ -155,6 +155,13 @@ describe('bookings — creating', () => {
     await assertSucceeds(getDoc(doc(admin(), 'blocked', '9111473929')));
   });
 
+  test('12 hours in the city can be booked; an unknown package still cannot', async () => {
+    await assertSucceeds(addDoc(collection(guest(), 'bookings'), booking({ package: 'local-12-hours' })));
+    await assertSucceeds(addDoc(collection(customer(), 'bookings'), booking({ package: 'local-12-hours', customerUid: 'cust1', source: 'app' })));
+    await assertFails(addDoc(collection(guest(), 'bookings'), booking({ package: 'local-24-hours' })));
+    await assertFails(addDoc(collection(guest(), 'bookings'), booking({ package: '12-hours' })));
+  });
+
   test('bad phone, city or package is refused', async () => {
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ phone: '12345' })));
     await assertFails(addDoc(collection(guest(), 'bookings'), booking({ city: 'Mumbai' })));

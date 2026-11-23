@@ -348,6 +348,7 @@ service cloud.firestore {
           '1-hour-300',
           '3-hours-600',
           'local-full-day',
+          'local-12-hours',
           'outstation',
           'night-driver',
           'medical-emergency',

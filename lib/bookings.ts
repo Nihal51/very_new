@@ -14,6 +14,7 @@ export const PACKAGE_NAMES: Record<string, string> = {
   '1-hour-300': '1 hour',
   '3-hours-600': '3 hours',
   'local-full-day': 'Local full day (8 hrs)',
+  'local-12-hours': '12 hours in the city',
   outstation: 'Outstation trip',
   'night-driver': 'Night driver (8 PM – 6 AM)',
   'medical-emergency': 'Hospital / emergency',
@@ -280,7 +281,7 @@ export type Customer = {
 export function isInstantBooking(b: Pick<Booking, 'package' | 'customerUid' | 'acceptedPrice'>): boolean {
   if (b.package === 'medical-emergency') return false;
   if (b.acceptedPrice && b.acceptedPrice.amount > 0) return true;
-  return Boolean(b.customerUid) && (b.package === '1-hour-300' || b.package === '3-hours-600');
+  return Boolean(b.customerUid) && (b.package === '1-hour-300' || b.package === '3-hours-600' || b.package === 'local-12-hours');
 }
 
 /* --------------------------------------------------------------- formatting */

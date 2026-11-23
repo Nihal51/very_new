@@ -39,6 +39,7 @@ const premiumJoiningFee = Math.round((m.premium * m.premiumJoiningFeePercent) / 
 export const priceText = {
   oneHour: rupees(p.oneHour),
   threeHours: rupees(p.threeHours),
+  twelveHours: rupees(p.twelveHours),
   fullDay: rupeeRange(p.fullDay.from, p.fullDay.to),
   /** Per 24 h of the driver's time on an outstation trip or one-way drop farther than the nearby tiers. */
   outstation: rupeeRange(p.outstation.from, p.outstation.to),
@@ -93,8 +94,8 @@ export const priceText = {
 
 /** Whole-rupee bounds of everything sold at a listed price, for JSON-LD priceRange/minPrice. */
 export const priceBounds = {
-  min: Math.min(p.oneHour, p.threeHours, p.fullDay.from, p.outstation.from, ...p.outstationNear.map((t) => t.from), p.nightFrom),
-  max: Math.max(p.oneHour, p.threeHours, p.fullDay.to, p.outstation.to, p.nightFrom),
+  min: Math.min(p.oneHour, p.threeHours, p.twelveHours, p.fullDay.from, p.outstation.from, ...p.outstationNear.map((t) => t.from), p.nightFrom),
+  max: Math.max(p.oneHour, p.threeHours, p.twelveHours, p.fullDay.to, p.outstation.to, p.nightFrom),
 };
 
 export { joiningFee as joiningFeeAmount };

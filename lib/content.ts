@@ -438,6 +438,22 @@ export const plans: Plan[] = [
     ],
   },
   {
+    id: '12-hours',
+    eyebrow: 'Long day',
+    name: '12 Hours',
+    blurb: 'A long day in the city: office, meetings, family visits.',
+    price: priceText.twelveHours,
+    min: settings.prices.twelveHours,
+    max: settings.prices.twelveHours,
+    unit: 'per booking',
+    features: [
+      'Up to 12 hours in the city',
+      'Police-verified driver',
+      '30-minute arrival guarantee',
+      'Your own vehicle',
+    ],
+  },
+  {
     id: 'full-day',
     eyebrow: 'Full day',
     name: 'Local Full Day',
@@ -518,6 +534,7 @@ export const bookingPackages = [
   { value: '1-hour-300', label: `1 Hour — ${priceText.oneHour}` },
   { value: '3-hours-600', label: `3 Hours — ${priceText.threeHours} (most popular)` },
   { value: 'local-full-day', label: `Local Full Day, 8 hrs — ${priceText.fullDay}` },
+  { value: 'local-12-hours', label: `12 Hours in the City — ${priceText.twelveHours}` },
   { value: 'outstation', label: `Outstation Trip — ${priceText.outstationSpan} a day, by distance` },
   { value: 'night-driver', label: `Night Driver, 8 PM – 6 AM — from ${priceText.nightFrom}` },
   { value: 'medical-emergency', label: 'Hospital / Emergency — priority' },
@@ -786,7 +803,7 @@ export const faqs: Faq[] = [
   },
   {
     q: 'How much does it cost to hire a driver?',
-    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours and ${priceText.outstationSpan} a day for outstation trips, by distance (${priceText.outstationByDistance}), with one-way car drops priced by the driver’s time until he is home (${priceText.sameDayDrop} for a same-day drop up to ${priceText.sameDayKm}; farther, ${priceText.timeRule}); the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
+    a: `DriveBuddy charges ${priceText.oneHour} for one hour, ${priceText.threeHours} for three hours, ${priceText.fullDay} for a local full day of eight hours, ${priceText.twelveHours} for twelve hours in the city and ${priceText.outstationSpan} a day for outstation trips, by distance (${priceText.outstationByDistance}), with one-way car drops priced by the driver’s time until he is home (${priceText.sameDayDrop} for a same-day drop up to ${priceText.sameDayKm}; farther, ${priceText.timeRule}); the night driver (8 PM to 6 AM) starts from ${priceText.nightFrom}. A monthly driver is ${priceText.basic} a month on the Basic plan or ${priceText.premium} on Premium; wedding drivers are quoted on the call. These are the driver’s charges only — you provide the car and fuel. For weddings and events we can also bring the car, with our driver, quoted together.`,
   },
   {
     q: 'How quickly will a driver arrive?',

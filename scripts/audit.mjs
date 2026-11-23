@@ -295,7 +295,7 @@ if (missing.length) {
     const https = (v) => typeof v === 'string' && /^https:\/\/\S+$/.test(v);
     if (cfg.schema !== 1) issues.push('schema is not 1');
     for (const k of ['phone', 'phoneAlt', 'whatsapp']) if (!mobile(cfg.contact?.[k])) issues.push(`contact.${k}`);
-    for (const k of ['oneHour', 'threeHours', 'nightFrom']) if (!money(cfg.prices?.[k])) issues.push(`prices.${k}`);
+    for (const k of ['oneHour', 'threeHours', 'twelveHours', 'nightFrom']) if (!money(cfg.prices?.[k])) issues.push(`prices.${k}`);
     for (const k of ['fullDay', 'outstation']) if (!range(cfg.prices?.[k])) issues.push(`prices.${k}`);
     if (!range(cfg.monthly?.basic) || !money(cfg.monthly?.premium)) issues.push('monthly prices');
     for (const k of ['url', 'privacy', 'terms']) if (!https(cfg.site?.[k])) issues.push(`site.${k}`);

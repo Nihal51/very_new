@@ -28,6 +28,8 @@ export function GET() {
     prices: {
       oneHour: prices.oneHour,
       threeHours: prices.threeHours,
+      /* 12 hours in the city (package local-12-hours). */
+      twelveHours: prices.twelveHours,
       fullDay: { from: prices.fullDay.from, to: prices.fullDay.to },
       outstation: { from: prices.outstation.from, to: prices.outstation.to },
       /* Cheaper days for places closer by (one-way road km from the pickup city), nearest first. */

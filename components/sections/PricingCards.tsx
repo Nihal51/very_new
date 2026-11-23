@@ -19,7 +19,7 @@ export function PricingCards({ compact = false }: { compact?: boolean }) {
           // Mobile: full-bleed snap rail. sm and up: a real grid.
           'snap-rail -mx-5 gap-4 px-5 pb-3',
           'sm:mx-0 sm:grid sm:grid-cols-2 sm:overflow-visible sm:px-0 sm:pb-0',
-          'lg:grid-cols-4',
+          'lg:grid-cols-3 xl:grid-cols-5',
         )}
         role="list"
       >

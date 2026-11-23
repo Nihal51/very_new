@@ -61,7 +61,7 @@ const plans = [
   },
   {
     title: 'A whole day out',
-    price: `${priceText.fullDay} for 8 hours`,
+    price: `${priceText.fullDay} for 8 hours · ${priceText.twelveHours} for 12 hours`,
     body: 'Shopping, relatives across town, a day trip: one driver with you for the day.',
     link: { href: '/pricing/', label: 'Full-day rates' },
   },

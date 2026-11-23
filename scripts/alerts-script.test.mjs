@@ -272,7 +272,7 @@ function load() {
         }
         if (url.endsWith('/app-config.json')) {
           return response(200, {
-            prices: { oneHour: 300, threeHours: 600, fullDay: { from: 1000, to: 1200 }, nightFrom: 500, localExtraHour: 150 },
+            prices: { oneHour: 300, threeHours: 600, twelveHours: 1400, fullDay: { from: 1000, to: 1200 }, nightFrom: 500, localExtraHour: 150 },
             google: { profile: 'https://maps.app.goo.gl/x', writeReview: 'https://search.google.com/local/writereview?placeid=P1' },
             payments: { cashLimit: 2000 },
           });
@@ -1238,6 +1238,7 @@ describe('job dispatch', () => {
     assert.deepEqual(est({ package: 'outstation', acceptedPrice: { amount: 3300 }, trip: { estTo: 3500 } }), { amount: 3300, basis: 'accepted' });
     assert.deepEqual(est({ package: '1-hour-300' }), { amount: 300, basis: 'fixed' });
     assert.deepEqual(est({ package: '3-hours-600' }), { amount: 600, basis: 'fixed' });
+    assert.deepEqual(est({ package: 'local-12-hours' }, { twelveHours: 1400 }), { amount: 1400, basis: 'fixed' });
     assert.deepEqual(est({ package: 'local-full-day' }), { amount: 1200, basis: 'fullDay' });
     assert.deepEqual(est({ package: 'night-driver' }), { amount: 500, basis: 'night' });
     assert.deepEqual(est({ package: 'one-way-drop', trip: { estTo: 1600 } }), { amount: 1600, basis: 'trip' });
@@ -1326,6 +1327,7 @@ describe('job dispatch', () => {
     test('pure: what the rate card pays — full day, one-way (driving days + his way home), outstation; null otherwise', () => {
       const pay = (b, nearKm = 160) => env.ctx.rateCardPayOf(b, 9999, RATES, nearKm);
       assert.equal(pay({ package: 'local-full-day' }), 500);
+      assert.equal(pay({ package: 'local-12-hours' }), 700, '12 hours: the 12-hour rate');
       // 2 driving days; home 27 h = 1 day + 3 hours.
       assert.equal(pay({ package: 'one-way-drop', trip: { km: 600, days: 2, returnHours: 27 } }), 2 * 1000 + 1000 + 3 * 100);
       // Home 35 h = 1 day + 11 hours, the 11 hours capped at one day.
@@ -1724,6 +1726,15 @@ describe('automation', () => {
       assert.equal(env.pushes.filter((p) => p.title === 'Booking confirmed').length, 1);
     });
 
+    test('12 hours in the city: confirmed by itself for a logged-in customer and offered at the 12-hour price', () => {
+      seedBooking(env.store, 'b12', { extra: { customerUid: s('u1'), source: s('app'), package: s('local-12-hours') } });
+      env.ctx.tick();
+      assert.equal(get('bookings/b12').status, 'confirmed');
+      const o = get('offers/b12');
+      assert.deepEqual([o.price, o.cutPercent, o.driverPay], [1400, 30, 980]);
+      assert.equal(env.ctx.packageName('local-12-hours'), '12 hours in the city');
+    });
+
     test('not for guests, emergencies, or when INSTANT_BOOKINGS is off', () => {
       seedBooking(env.store, 'guest', { extra: { phone: s('9111473921') } });
       seedBooking(env.store, 'sos', { extra: { customerUid: s('u1'), package: s('medical-emergency'), phone: s('9111473922') } });
@@ -1881,6 +1892,39 @@ describe('automation', () => {
       assert.equal(get('bookings/f3').localBill.amount, 1150, 'a quote beats the offer price');
       assert.equal(get('bookings/f4').localBill.amount, 1200, 'another driver’s offer is not his price: the estimate');
       assert.equal(get('offers/f1').done, true);
+    });
+
+    test('12 hours in the city: the meter starts at Arrived (clock.startAt, once), the bill has 12 hours and the 12-hour price', () => {
+      booking('t12', { status: 'assigned', assignedDriver: RAJU, package: 'local-12-hours' });
+      takenOffer('t12', { package: 'local-12-hours', price: 1400, driverPay: 980, cutPercent: 30 });
+      const arrived = ago(2 * MIN);
+      tapped('t12', { leftAt: ago(20 * MIN), arrivedAt: arrived });
+      env.ctx.watchChanges_();
+      let b = get('bookings/t12');
+      assert.equal(b.clock.startAt.getTime(), arrived.getTime());
+      assert.equal(b.status, 'assigned', 'still on the job');
+      assert.equal(b.localBill, undefined);
+      // Written once: a later change of the tap does not move it.
+      env.store.docs.get('tripTaps/t12').arrivedAt = { timestampValue: ago(MIN).toISOString() };
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/t12').clock.startAt.getTime(), arrived.getTime());
+      // Job done, 12 h 30 m after his Arrived tap (as his taps say).
+      tapped('t12', { leftAt: ago(13 * 3600_000), arrivedAt: ago(12 * 3600_000 + 30 * MIN), doneAt: ago(0) });
+      env.ctx.watchChanges_();
+      b = get('bookings/t12');
+      assert.deepEqual([b.status, b.localBill.baseHours, b.localBill.usedHours, b.localBill.extraHours, b.localBill.amount], ['completed', 12, 13, 1, 1400 + 150]);
+      assert.equal(b.clock.startAt.getTime(), arrived.getTime(), 'the bill marks the end; the clock keeps only its start');
+    });
+
+    test('a trip keeps its own clock (Start); a local job gets no clock before Arrived', () => {
+      booking('t1', { status: 'assigned', assignedDriver: RAJU, package: 'one-way-drop', trip: { to: 'Nagpur', kind: 'one-way' } });
+      const left = ago(10 * MIN);
+      tapped('t1', { leftAt: left, arrivedAt: ago(5 * MIN) });
+      booking('b9', { status: 'assigned', assignedDriver: RAJU, package: '3-hours-600' });
+      tapped('b9', { leftAt: ago(5 * MIN) });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/t1').clock.startAt.getTime(), left.getTime());
+      assert.equal(get('bookings/b9').clock, undefined);
     });
 
     test('within the grace minutes: no extra hour; a quote is the package price', () => {

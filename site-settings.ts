@@ -96,6 +96,7 @@ export const settings = {
   prices: {
     oneHour: 300,
     threeHours: 600,
+    twelveHours: 1400, //                     12 hours in the city (decide); also its drivers' offer estimate
     fullDay: { from: 1000, to: 1200 }, //     Local Full Day, 8 hours. "to" is also the price a full-day job goes to drivers at by itself (decide)
     /* Per 24 HOURS of the driver's time on an outstation trip or one-way drop
        (decided 8 Nov 2026). It rises with the distance (one-way road km from

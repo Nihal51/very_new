@@ -20,7 +20,7 @@ const trail = [{ name: 'Pricing', path: '/pricing/' }];
 export const metadata: Metadata = pageMeta({
   title: 'Driver Charges & Hourly Rates in Chhattisgarh',
   description:
-    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.outstationSpan} a day outstation, from ${priceText.nightFrom} at night. No hidden fees.`,
+    `Driver charges from ${priceText.oneHour} an hour, ${priceText.threeHours} for 3 hours, ${priceText.fullDay} a full day, ${priceText.twelveHours} for 12 hours, ${priceText.outstationSpan} a day outstation, from ${priceText.nightFrom} at night. No hidden fees.`,
   path: '/pricing/',
 });
 

@@ -17,6 +17,7 @@ export type Estimate = { amount: number; basis: EstimateBasis };
 export type EstimatePrices = {
   oneHour?: number;
   threeHours?: number;
+  twelveHours?: number;
   fullDay?: { from?: number; to?: number };
   nightFrom?: number;
 };
@@ -66,7 +67,7 @@ function whole(v: unknown): number {
 
 /**
  * In this order: the price agreed on the call (quote) → the trip price the
- * customer accepted in the app (accepted) → 1 hour / 3 hours: the fixed price
+ * customer accepted in the app (accepted) → 1 hour / 3 hours / 12 hours: the fixed price
  * (fixed) → local full day: the top of its range (fullDay) → night driver:
  * its from-price (night) → outstation / one-way drop: the trip estimate the
  * customer saw (trip). Anything else — hospital / emergency, monthly,
@@ -79,6 +80,7 @@ export function estimateOf(b: EstimateBooking, prices: EstimatePrices): Estimate
   ];
   if (b.package === '1-hour-300') steps.push(['fixed', prices.oneHour]);
   if (b.package === '3-hours-600') steps.push(['fixed', prices.threeHours]);
+  if (b.package === 'local-12-hours') steps.push(['fixed', prices.twelveHours]);
   if (b.package === 'local-full-day') steps.push(['fullDay', prices.fullDay?.to]);
   if (b.package === 'night-driver') steps.push(['night', prices.nightFrom]);
   if (b.package === 'outstation' || b.package === 'one-way-drop') steps.push(['trip', b.trip?.estTo]);

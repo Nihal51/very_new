@@ -61,7 +61,7 @@
  *   REVIEW_PHONE         optional: a number that logs in to the Driver app with
  *   REVIEW_CODE          this fixed code and no SMS (for the Google Play reviewer)
  *   INSTANT_BOOKINGS     "off" stops the robot confirming simple bookings by itself
- *                        (logged-in 1 hour / 3 hours, or a trip price the customer
+ *                        (logged-in 1 hour / 3 hours / 12 hours, or a trip price the customer
  *                        accepted in the app); then every booking waits for a call
  *   RAZORPAY_KEY_ID      optional: Razorpay API key id and secret — a payment link
  *   RAZORPAY_KEY_SECRET  goes to the customer when a job is completed with a bill.
@@ -123,6 +123,7 @@ var PACKAGE_NAMES = {
   '1-hour-300': '1 hour',
   '3-hours-600': '3 hours',
   'local-full-day': 'Local full day (8 hrs)',
+  'local-12-hours': '12 hours in the city',
   outstation: 'Outstation trip',
   'night-driver': 'Night driver (8 PM – 6 AM)',
   'medical-emergency': 'Hospital / emergency',
@@ -1211,7 +1212,7 @@ function agreedPriceOf(b) {
  * pricing (lib/estimate.ts on the website gives the same answer —
  * scripts/automation.test.mjs checks): → { amount, basis }, in this order:
  *   the price agreed on the call (quote) → the trip price the customer
- *   accepted in the app (accepted) → 1 hour / 3 hours: the fixed price
+ *   accepted in the app (accepted) → 1 hour / 3 hours / 12 hours: the fixed price
  *   (fixed) → local full day: the top of its range (fullDay) → night
  *   driver: its from-price (night) → outstation / one-way drop: the trip
  *   estimate the customer saw (trip). Anything else — hospital / emergency,
@@ -1234,6 +1235,7 @@ function estimateOf(b, prices) {
   var pkg = b.package;
   if (pkg === '1-hour-300') steps.push(['fixed', prices.oneHour]);
   if (pkg === '3-hours-600') steps.push(['fixed', prices.threeHours]);
+  if (pkg === 'local-12-hours') steps.push(['fixed', prices.twelveHours]);
   if (pkg === 'local-full-day') steps.push(['fullDay', prices.fullDay && prices.fullDay.to]);
   if (pkg === 'night-driver') steps.push(['night', prices.nightFrom]);
   if (pkg === 'outstation' || pkg === 'one-way-drop') steps.push(['trip', b.trip && b.trip.estTo]);
@@ -1246,7 +1248,7 @@ function estimateOf(b, prices) {
 
 /** Does this booking's estimate need the site's prices (a package priced on the site, with no agreed or trip price)? */
 function estimateNeedsPrices(b) {
-  return !estimateOf(b, {}).amount && ['1-hour-300', '3-hours-600', 'local-full-day', 'night-driver'].indexOf(b && b.package) >= 0;
+  return !estimateOf(b, {}).amount && ['1-hour-300', '3-hours-600', 'local-12-hours', 'local-full-day', 'night-driver'].indexOf(b && b.package) >= 0;
 }
 
 /**
@@ -1422,7 +1424,7 @@ function driverRates_() {
 
 /**
  * What the rate card pays the driver for this booking, or null (= the % cut):
- *   local full day → local8h (the 8-hour package);
+ *   local full day → local8h (the 8-hour package); 12 hours in the city → local12h;
  *   one-way drop → trip.days driving days × tripDay, plus his way home
  *     (trip.returnHours, the booking's estimate of the wait and the ride):
  *     each full 24 hours a tripDay, the hours left over × returnHour, those
@@ -1436,6 +1438,7 @@ function driverRates_() {
 function rateCardPayOf(b, price, rates, nearKm) {
   if (!rates || !b) return null;
   if (b.package === 'local-full-day') return rates.local8h;
+  if (b.package === 'local-12-hours') return rates.local12h;
   var t = b.trip;
   if (!t || typeof t !== 'object') return null;
   var km = Number(t.km);
@@ -1700,7 +1703,7 @@ function dispatchOffers_() {
 /* ============================================================ automation
    What used to need a phone call or a tap in /admin, done by the robot:
 
-   • Instant booking: a logged-in customer's 1 hour / 3 hours booking, or a
+   • Instant booking: a logged-in customer's 1 hour / 3 hours / 12 hours booking, or a
      trip whose estimate the customer accepted in the app (acceptedPrice), is
      confirmed at once and then offered to drivers as usual. Never a hospital
      / emergency booking: those are always a call. INSTANT_BOOKINGS = off.
@@ -1736,9 +1739,9 @@ function dispatchOffers_() {
    The robot's own notes per booking live in reminders/{bookingId}, which no
    browser can read or write. */
 
-var INSTANT_PACKAGES = ['1-hour-300', '3-hours-600'];
+var INSTANT_PACKAGES = ['1-hour-300', '3-hours-600', 'local-12-hours'];
 /** Hours each local package includes; past them each started hour (after LOCAL_GRACE_MIN) is extra. */
-var LOCAL_BASE_HOURS = { '1-hour-300': 1, '3-hours-600': 3, 'local-full-day': 8, 'night-driver': 10 };
+var LOCAL_BASE_HOURS = { '1-hour-300': 1, '3-hours-600': 3, 'local-full-day': 8, 'local-12-hours': 12, 'night-driver': 10 };
 var LOCAL_GRACE_MIN = 15;
 /** Trip packages and their kind, as on the trip link: their taps fill the booking's clock. */
 var TRIP_TAP_KINDS = { outstation: 'round', 'one-way-drop': 'one-way' };
@@ -1751,7 +1754,7 @@ var LOW_RATING = { avg: 3.5, count: 5 };
 
 /**
  * May the robot confirm this booking by itself? New, numbered, not an
- * emergency, and either a logged-in customer's 1 hour / 3 hours, or a
+ * emergency, and either a logged-in customer's 1 hour / 3 hours / 12 hours, or a
  * price the customer accepted. `setting`: INSTANT_BOOKINGS ("off" = never).
  */
 function instantConfirmable(b, setting) {
@@ -1785,6 +1788,7 @@ function localPackagePrice(b, prices, offerPrice) {
   var p = {
     '1-hour-300': prices.oneHour,
     '3-hours-600': prices.threeHours,
+    'local-12-hours': prices.twelveHours,
     'local-full-day': prices.fullDay && prices.fullDay.from,
     'night-driver': prices.nightFrom,
   }[b.package];
@@ -1808,6 +1812,12 @@ function localBillOf(b, taps, prices, now, offerPrice) {
   var extra = Math.max(0, used - base);
   var rate = Math.max(0, Math.round(Number(prices && prices.localExtraHour) || 0));
   return { amount: price + extra * rate, baseHours: base, usedHours: used, extraHours: extra, extraHourRate: rate, at: now };
+}
+
+/** A local job's clock start: his Arrived tap, when the booking has no clock start yet; null otherwise. */
+function localClockStart(b, taps) {
+  if (!b || !LOCAL_BASE_HOURS[b.package] || !taps || !taps.arrivedAt) return null;
+  return b.clock && b.clock.startAt ? null : taps.arrivedAt;
 }
 
 /** A trip's taps → the booking's clock (firestore.rules isClock): Start; one-way: Job done = car dropped, Reached home; round: Job done = back home. */
@@ -2215,6 +2225,7 @@ function watchChanges_() {
     { spec: sinceSpec_('bookings', 'robotBookingsMs'), run: changedBookings_ },
     { spec: sinceSpec_('bookings', 'acceptedPriceMs', 'acceptedPrice.at'), run: acceptedPrices_ },
     { spec: sinceSpec_('tripTaps', 'tapsLeftMs', 'leftAt'), run: syncTripTaps_ },
+    { spec: sinceSpec_('tripTaps', 'tapsArrivedMs', 'arrivedAt'), run: syncTripTaps_ },
     { spec: sinceSpec_('tripTaps', 'tapsDoneMs', 'doneAt'), run: syncTripTaps_ },
     { spec: sinceSpec_('tripTaps', 'tapsHomeMs', 'homeAt'), run: syncTripTaps_ },
     { spec: sinceSpec_('tripTaps', 'tapsPaidMs', 'paidAt'), run: paidTaps_ },
@@ -2643,7 +2654,8 @@ function syncTripTaps_(rows) {
 /**
  * One booking's taps. A trip: Start / Job done / Reached home become the
  * clock (Telegram hears each step once, as with the trip link). A local job:
- * at Job done, the bill, completed, and the offer done. Safe to repeat.
+ * at Arrived the clock's start (the customer's live meter), at Job done the
+ * bill, completed, and the offer done. Safe to repeat.
  */
 function syncTaps_(id, taps) {
   var b = fsGet_('bookings/' + id);
@@ -2671,7 +2683,18 @@ function syncTaps_(id, taps) {
     });
     return;
   }
-  if (!LOCAL_BASE_HOURS[b.package] || !taps.doneAt || b.status !== 'assigned' || b.localBill) return;
+  if (!LOCAL_BASE_HOURS[b.package] || b.status !== 'assigned') return;
+  // A local job's meter for the customer: it starts when the driver taps Arrived
+  // (clock.startAt, once; the bill — localBill — marks the end).
+  var startAt = localClockStart(b, taps);
+  if (startAt) {
+    fsCommit_([{
+      update: { name: docName_('bookings/' + id), fields: toFields({ clock: { startAt: startAt } }) },
+      updateMask: { fieldPaths: ['clock'] },
+      currentDocument: { exists: true },
+    }]);
+  }
+  if (!taps.doneAt || b.localBill) return;
   var prices = sitePrices_();
   if (!prices) throw new Error('the website prices could not be read; trying again next minute');
   var now = new Date();
@@ -4211,7 +4234,7 @@ if (typeof module !== 'undefined') {
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
     estimateOf: estimateOf,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
-    ZONES: ZONES, zoneOf: zoneOf, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt, nearKmOf: nearKmOf,
+    ZONES: ZONES, zoneOf: zoneOf, LOCAL_GRACE_MIN: LOCAL_GRACE_MIN, usedHours: usedHours, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt, nearKmOf: nearKmOf,
     parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen, confirmedFor: confirmedFor,
     UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
   };

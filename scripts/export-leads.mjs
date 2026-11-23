@@ -55,6 +55,7 @@ const SERVICE_LABELS = {
   '1-hour-300': '1 Hour',
   '3-hours-600': '3 Hours',
   'local-full-day': 'Local Full Day (8 hrs)',
+  'local-12-hours': '12 Hours in the City',
   outstation: 'Outstation Trip',
   'night-driver': 'Night Driver (8 PM – 6 AM)',
   'medical-emergency': 'Hospital / Emergency',
