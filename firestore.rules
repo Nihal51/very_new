@@ -760,8 +760,12 @@ service cloud.firestore {
     // cashCollected (optional): the cash the driver kept from the customer for
     // this job — the alerts robot's (he tapped "Paid in cash"). Allowed in the
     // shape so an admin can still edit such an offer, never changed by one.
+    // payBy (optional): 'rates' — the robot pays the driver from the private
+    // rate card (cutPercent is then only DriveBuddy's share, for reference,
+    // 0–80); 'cut' or none — the price minus the cut (20–30 when an admin
+    // posts it).
     function isOfferShape(o, bookingId) {
-      return o.keys().hasOnly(offerKeys().concat(['cities', 'cashCollected'])) && o.keys().hasAll(offerKeys())
+      return o.keys().hasOnly(offerKeys().concat(['cities', 'cashCollected', 'payBy'])) && o.keys().hasAll(offerKeys())
         && o.bookingId == bookingId
         && isOptionalText(o.ref, 20)
         && isServedCity(o.city)
@@ -770,7 +774,8 @@ service cloud.firestore {
         && isText(o.area, 2, 120)
         && isOptionalText(o.to, 60)
         && o.price is int && o.price >= 100 && o.price <= 500000
-        && o.cutPercent is int && o.cutPercent >= 20 && o.cutPercent <= 30
+        && o.cutPercent is int && o.cutPercent >= 0 && o.cutPercent <= 80
+        && (!('payBy' in o) || o.payBy in ['rates', 'cut'])
         && o.driverPay is int && o.driverPay > 0 && o.driverPay < o.price
         && o.status in ['open', 'taken', 'withdrawn', 'released']
         && (!('cities' in o) || isOfferCities(o))
@@ -822,6 +827,9 @@ service cloud.firestore {
         && request.resource.data.paidAt == null
         && (!('cities' in request.resource.data) || isZoneCities(request.resource.data))
         && !('cashCollected' in request.resource.data)
+        // By hand: the price minus a cut from the panel's 20–30% band; the rate card is the robot's.
+        && request.resource.data.cutPercent >= 20 && request.resource.data.cutPercent <= 30
+        && request.resource.data.get('payBy', 'cut') == 'cut'
         && request.resource.data.createdAt == request.time
         && request.resource.data.by == request.auth.uid;
 
@@ -832,6 +840,10 @@ service cloud.firestore {
         && isOfferShape(request.resource.data, bookingId)
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.get('cashCollected', null) == resource.data.get('cashCollected', null)
+        && request.resource.data.get('payBy', null) == resource.data.get('payBy', null)
+        // A cut offer keeps the panel's 20–30% band; a rate-card offer keeps its own share.
+        && (request.resource.data.get('payBy', 'cut') == 'rates'
+            || (request.resource.data.cutPercent >= 20 && request.resource.data.cutPercent <= 30))
         && request.resource.data.by == request.auth.uid;
 
       // A driver accepts an open offer in his city: it becomes his, now, and the

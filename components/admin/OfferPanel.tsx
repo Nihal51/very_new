@@ -11,7 +11,7 @@ import { markOfferPaid, postOffer, withdrawOffer } from '@/lib/admin';
 import { pingAlerts } from '@/lib/firebase';
 import { type Booking, formatDateTime, prettyPhone } from '@/lib/bookings';
 import { estimateBasisText, estimateOf } from '@/lib/estimate';
-import { CUT, type Offer, citiesText, driverPayFor, offerArea, offerCitiesFor, offerSettlement } from '@/lib/offers';
+import { CUT, RATE_RAISE, type Offer, citiesText, driverPayFor, offerArea, offerCitiesFor, offerSettlement } from '@/lib/offers';
 import { rupeeRange, rupees, settings } from '@/lib/settings';
 
 const CUTS = Array.from({ length: CUT.max - CUT.min + 1 }, (_, i) => CUT.min + i);
@@ -38,6 +38,8 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
   if (!offer && !canOffer) return null;
 
   const settle = offer ? offerSettlement(offer) : null;
+  // The robot pays this one from the private rate card (not a % cut).
+  const byRates = offer?.payBy === 'rates' && offer.by === 'robot';
   const firstName = offer?.takenBy?.name.split(' ')[0] ?? 'the driver';
   const priceNum = Math.round(Number(price));
   const priceOk = Number.isFinite(priceNum) && priceNum >= 100 && priceNum <= 500000;
@@ -87,12 +89,27 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
 
       {offer?.status === 'open' && (
         <div className="flex flex-col gap-2">
-          <p>
-            Offered to {citiesText(offer.cities?.length ? offer.cities : [b.city])} drivers at <strong>{rupees(offer.price)}</strong> · driver earns{' '}
-            <strong>{rupees(offer.driverPay)}</strong> · DriveBuddy keeps {offer.cutPercent}%. The nearest online drivers got an
-            alert, the rest a minute later. Waiting for one to accept…
-          </p>
-          {offer.by === 'robot' && (
+          {byRates ? (
+            <p>
+              Offered to {citiesText(offer.cities?.length ? offer.cities : [b.city])} drivers at <strong>{rupees(offer.price)}</strong> ·
+              Driver gets <strong>{rupees(offer.driverPay)}</strong> (his rate) · DriveBuddy keeps{' '}
+              <strong>{rupees(offer.price - offer.driverPay)}</strong> ({offer.cutPercent}%). The nearest online drivers got an
+              alert, the rest a minute later. Waiting for one to accept…
+            </p>
+          ) : (
+            <p>
+              Offered to {citiesText(offer.cities?.length ? offer.cities : [b.city])} drivers at <strong>{rupees(offer.price)}</strong> · driver earns{' '}
+              <strong>{rupees(offer.driverPay)}</strong> · DriveBuddy keeps {offer.cutPercent}%. The nearest online drivers got an
+              alert, the rest a minute later. Waiting for one to accept…
+            </p>
+          )}
+          {byRates && (
+            <p className="text-fg-muted text-sm">
+              Paid from the rate card: if nobody takes it the robot raises his pay by {rupees(RATE_RAISE.step)} a step, up to{' '}
+              {rupees(RATE_RAISE.max)} (never up to the price), and tells every online driver of the zone again.
+            </p>
+          )}
+          {offer.by === 'robot' && !byRates && (
             <p className="text-fg-muted text-sm">
               Automatic offer: if nobody takes it, the robot lowers DriveBuddy&apos;s cut every 2 minutes (30% → 25% → 20%),
               so the driver earns more, and tells every online driver of the zone again, nearest first.
@@ -113,8 +130,9 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
             {offer.takenAt ? ` · ${formatDateTime(offer.takenAt)}` : ''}.
           </p>
           <p className="text-fg-muted text-sm">
-            Price {rupees(offer.price)} · driver earns {rupees(offer.driverPay)} · DriveBuddy keeps {offer.cutPercent}% (
-            {rupees(offer.price - offer.driverPay)}).
+            {byRates
+              ? `Price ${rupees(offer.price)} · Driver gets ${rupees(offer.driverPay)} (his rate) · DriveBuddy keeps ${rupees(offer.price - offer.driverPay)} (${offer.cutPercent}%).`
+              : `Price ${rupees(offer.price)} · driver earns ${rupees(offer.driverPay)} · DriveBuddy keeps ${offer.cutPercent}% (${rupees(offer.price - offer.driverPay)}).`}
           </p>
           {settle && settle.cash > 0 && (
             <p className="text-sm">

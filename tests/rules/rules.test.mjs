@@ -1377,6 +1377,62 @@ describe('drivers — his UPI ID; ratings and strikes are the robot’s (8, 10)'
   });
 });
 
+describe('offers — paid from the rate card (payBy)', () => {
+  const adminEdit = (fields) => updateDoc(doc(admin(), 'offers', 'b1'), { ...fields, updatedAt: serverTimestamp(), by: 'admin1' });
+  const rateOffer = (extra = {}) => offerDoc({ price: 1200, driverPay: 500, cutPercent: 58, payBy: 'rates', cities: ['Raipur', 'Bhilai', 'Durg'], ...extra });
+  const take = (db, who) =>
+    runTransaction(db, async (tx) => {
+      const ref = doc(db, 'offers', 'b1');
+      await tx.get(ref);
+      tx.update(ref, { status: 'taken', takenBy: who, takenAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      tx.update(doc(db, 'bookings', 'b1'), { status: 'assigned', assignedDriver: who, updatedAt: serverTimestamp(), updatedBy: `driver-${who.phone}` });
+    });
+
+  beforeEach(async () => {
+    await seedDriversRB();
+    await seedBooking('b1', { status: 'confirmed', customerUid: 'cust1' });
+  });
+
+  test('a rate-card offer (DriveBuddy keeps more than 30%) is a valid offer: drivers see and take it, an admin edits it', async () => {
+    await seedAs('offers/b1', rateOffer());
+    await assertSucceeds(getDoc(doc(drvDb(RAJU), 'offers', 'b1')));
+    await assertSucceeds(take(drvDb(RAJU), RAJU));
+    await assertSucceeds(adminEdit({ done: true }));
+    await assertSucceeds(adminEdit({ paid: true, paidAt: serverTimestamp() }));
+  });
+
+  test('its share stays 0–80% in whole numbers; payBy is rates or cut', async () => {
+    for (const bad of [{ cutPercent: 81 }, { cutPercent: -1 }, { cutPercent: 45.5 }, { payBy: 'x' }, { payBy: true }]) {
+      await seedAs('offers/b1', rateOffer(bad));
+      await assertFails(adminEdit({ area: 'Telibandha' }));
+    }
+    await seedAs('offers/b1', rateOffer({ cutPercent: 0, driverPay: 1190 }));
+    await assertSucceeds(adminEdit({ area: 'Telibandha' }));
+  });
+
+  test('an admin never changes how it is paid, and keeps a cut offer in the 20–30% band', async () => {
+    await seedAs('offers/b1', rateOffer());
+    await assertFails(adminEdit({ payBy: 'cut' }));
+    await assertFails(adminEdit({ payBy: deleteField() }));
+    await assertSucceeds(adminEdit({ cutPercent: 45, driverPay: 660 })); // a rate-card offer keeps its own share
+    await seedAs('offers/b1', offerDoc({ payBy: 'cut' }));
+    await assertFails(adminEdit({ payBy: 'rates' }));
+    await assertFails(adminEdit({ cutPercent: 45, driverPay: 330 }));
+    await assertSucceeds(adminEdit({ cutPercent: 20, driverPay: 480 }));
+    await seedAs('offers/b1', offerDoc());
+    await assertFails(adminEdit({ payBy: 'rates', cutPercent: 58, driverPay: 250 }));
+    await assertFails(adminEdit({ cutPercent: 10, driverPay: 540 }));
+  });
+
+  test('an admin posts by the cut only: 20–30%, never payBy rates', async () => {
+    const post = (extra) => setDoc(doc(admin(), 'offers', 'b1'), offerDoc({ createdAt: serverTimestamp(), updatedAt: serverTimestamp(), by: 'admin1', ...extra }));
+    await assertFails(post({ payBy: 'rates', cutPercent: 58, driverPay: 250 }));
+    await assertFails(post({ cutPercent: 45, driverPay: 330 }));
+    await assertFails(post({ cutPercent: 10, driverPay: 540 }));
+    await assertSucceeds(post({ payBy: 'cut' }));
+  });
+});
+
 describe('offers — nearby cities (12)', () => {
   const take = (db, who) =>
     runTransaction(db, async (tx) => {

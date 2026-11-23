@@ -1307,6 +1307,148 @@ describe('job dispatch', () => {
     assert.ok(env.telegram.at(-1).text.includes('₹480'));
   });
 
+  describe('the private rate card (DRIVER_RATES)', () => {
+    // Obviously generic test numbers — the real rates live only in the Script Properties.
+    const RATES = { local8h: 500, local12h: 700, localExtraHour: 10, tripDay: 1000, returnHour: 100 };
+    const useRates = () => env.props.set('DRIVER_RATES', JSON.stringify(RATES));
+    const trip = (estTo, days, returnHours) => ({ mapValue: { fields: { to: s('Nagpur'), kind: s('one-way'), estFrom: n(estTo), estTo: n(estTo), days: n(days), returnHours: n(returnHours) } } });
+    const offerOf = (id) => (env.store.docs.has(`offers/${id}`) ? env.ctx.fromFields(env.store.docs.get(`offers/${id}`)) : null);
+
+    test('pure: the property is read strictly — anything odd means no rate card', () => {
+      const { driverRatesOf } = env.ctx;
+      assert.deepEqual({ ...driverRatesOf(JSON.stringify(RATES)) }, RATES);
+      for (const bad of [null, '', 'nonsense', '[]', '{}', JSON.stringify({ ...RATES, tripDay: undefined }), JSON.stringify({ ...RATES, tripDay: 0 }),
+        JSON.stringify({ ...RATES, tripDay: 100001 }), JSON.stringify({ ...RATES, tripDay: 999.5 }), JSON.stringify({ ...RATES, tripDay: '1000' })]) {
+        assert.equal(driverRatesOf(bad), null, String(bad));
+      }
+    });
+
+    test('pure: what the rate card pays — full day, one-way (driving days + his way home), outstation; null otherwise', () => {
+      const pay = (b) => env.ctx.rateCardPayOf(b, 9999, RATES);
+      assert.equal(pay({ package: 'local-full-day' }), 500);
+      // 2 driving days; home 27 h = 1 day + 3 hours.
+      assert.equal(pay({ package: 'one-way-drop', trip: { days: 2, returnHours: 27 } }), 2 * 1000 + 1000 + 3 * 100);
+      // Home 35 h = 1 day + 11 hours, the 11 hours capped at one day.
+      assert.equal(pay({ package: 'one-way-drop', trip: { days: 2, returnHours: 35 } }), 2 * 1000 + 1000 + 1000);
+      assert.equal(pay({ package: 'one-way-drop', trip: { days: 1, returnHours: 5 } }), 1000 + 500);
+      assert.equal(pay({ package: 'one-way-drop', trip: { days: 0, returnHours: 0 } }), 1000, 'at least one driving day');
+      assert.equal(pay({ package: 'outstation', trip: { days: 3, returnHours: 0 } }), 3000);
+      for (const b of [{ package: 'night-driver' }, { package: '1-hour-300' }, { package: '3-hours-600' }, { package: 'wedding-event' },
+        { package: 'medical-emergency' }, { package: 'one-way-drop' }, { package: 'outstation' }]) {
+        assert.equal(pay(b), null, b.package);
+      }
+      assert.equal(env.ctx.rateCardPayOf({ package: 'local-full-day' }, 1200, null), null, 'no rate card');
+    });
+
+    test('pure: the raise — a step at a time, at most the cap, never up to the price', () => {
+      const up = (min, base, price) => JSON.parse(JSON.stringify(env.ctx.rateRaiseAt(min * 60_000, base, price, 2 * 60_000)));
+      assert.deepEqual(up(0, 500, 1200), { pay: 500, top: false });
+      assert.deepEqual(up(2, 500, 1200), { pay: 550, top: false });
+      assert.deepEqual(up(4, 500, 1200), { pay: 600, top: false });
+      assert.deepEqual(up(6, 500, 1200), { pay: 650, top: true });
+      assert.deepEqual(up(60, 500, 1200), { pay: 650, top: true }, 'capped');
+      assert.deepEqual(up(60, 1100, 1200), { pay: 1150, top: true }, 'never up to the price');
+      assert.deepEqual(up(60, 1180, 1200), { pay: 1180, top: true });
+      assert.deepEqual({ ...env.ctx.RATE_RAISE }, { step: 50, max: 150 });
+    });
+
+    test('a full day and a one-way drop go out at the driver’s rate (payBy rates, DriveBuddy’s share for reference)', () => {
+      useRates();
+      confirm('f1', 'local-full-day');
+      confirm('t1', 'one-way-drop', { trip: trip(4000, 2, 27) });
+      confirm('o1', 'outstation', { trip: { mapValue: { fields: { to: s('Puri'), kind: s('round'), estFrom: n(3600), estTo: n(3600), days: n(3), returnHours: n(0) } } } });
+      confirm('h1', '3-hours-600');
+      env.ctx.autoOffers_();
+      const f = offerOf('f1');
+      assert.deepEqual([f.price, f.driverPay, f.cutPercent, f.payBy], [1200, 500, 58, 'rates']);
+      const t = offerOf('t1');
+      assert.deepEqual([t.price, t.driverPay, t.cutPercent, t.payBy], [4000, 3300, 18, 'rates']);
+      assert.deepEqual([offerOf('o1').driverPay, offerOf('o1').payBy], [3000, 'rates']);
+      const h = offerOf('h1');
+      assert.deepEqual([h.price, h.driverPay, h.cutPercent, h.payBy], [600, 420, 30, undefined], 'not on the card: the % cut');
+    });
+
+    test('the price below his rate: no offer, Telegram once — the office checks the price', () => {
+      useRates();
+      confirm('t2', 'one-way-drop', { trip: trip(3000, 2, 35) }); // his rate 4000
+      env.ctx.autoOffers_();
+      env.store.docs.get('bookings/t2').updatedAt = ts(-1000);
+      env.ctx.autoOffers_();
+      assert.equal(offerOf('t2'), null);
+      const warned = env.telegram.filter((m) => /below the driver/.test(m.text));
+      assert.equal(warned.length, 1);
+      assert.equal(warned[0].text, "⚠️ DB-1042: the price ₹3,000 is below the driver's rate ₹4,000 — check the price");
+      confirm('t3', 'one-way-drop', { trip: trip(4000, 2, 35) }); // equal: still not below his rate
+      env.ctx.autoOffers_();
+      assert.equal(offerOf('t3'), null);
+    });
+
+    test('nobody takes it: his pay goes up by the step (Pay raised), up to the cap; then Telegram', () => {
+      useRates();
+      confirm('f1', 'local-full-day');
+      env.ctx.autoOffers_();
+      env.ctx.dispatchOffers_();
+      assert.ok(env.pushes[0].body.includes('₹500'));
+      const created = (msAgo) => { env.store.docs.get('offers/f1').createdAt = ts(msAgo); };
+      const pays = [];
+      for (const min of [2, 4, 6, 8]) {
+        created(min * 60_000 + 5000);
+        env.ctx.dispatchOffers_();
+        const o = offerOf('f1');
+        pays.push([o.driverPay, o.cutPercent]);
+      }
+      assert.deepEqual(pays, [[550, 54], [600, 50], [650, 46], [650, 46]]);
+      const raised = env.pushes.filter((p) => p.title.startsWith('Pay raised'));
+      assert.ok(raised.some((p) => p.body.includes('₹550')) && raised.some((p) => p.body.includes('₹650')));
+      assert.equal(env.ctx.fromFields(env.store.docs.get('offerAlerts/f1')).basePay, 500);
+      // At the top pay and still nobody: Telegram, once.
+      const before = env.telegram.length;
+      age('f1', 5 * 60_000);
+      created(12 * 60_000);
+      env.ctx.dispatchOffers_();
+      assert.equal(env.telegram.length, before + 1);
+      assert.ok(env.telegram.at(-1).text.includes('₹650'));
+    });
+
+    test('no property (or an invalid one): exactly the % cut as before', () => {
+      confirm('f1', 'local-full-day');
+      env.props.set('DRIVER_RATES', '{"local8h": "lots"}');
+      confirm('f2', 'local-full-day', { ref: s('DB-1043') });
+      env.ctx.autoOffers_();
+      for (const id of ['f1', 'f2']) {
+        const o = offerOf(id);
+        assert.deepEqual([o.price, o.driverPay, o.cutPercent, o.payBy], [1200, 840, 30, undefined], id);
+      }
+      env.ctx.dispatchOffers_();
+      env.store.docs.get('offers/f1').createdAt = ts(2 * 60_000 + 5000);
+      env.ctx.dispatchOffers_();
+      assert.equal(offerOf('f1').cutPercent, 25, 'the cut steps as before');
+    });
+
+    test('a rate-card job given back goes out again at his rate; the payout counts driverPay', () => {
+      useRates();
+      confirm('f1', 'local-full-day'); // back to confirmed, no driver: he gave it back
+      const NEAR = { id: 'd1', name: 'Near One', phone: '9000000001' };
+      env.store.docs.set('offers/f1', env.ctx.toFields({
+        bookingId: 'f1', ref: 'DB-1042', city: 'Raipur', package: 'local-full-day', when: '', area: 'Shankar Nagar', to: '',
+        price: 1200, cutPercent: 46, driverPay: 650, status: 'released', takenBy: NEAR, takenAt: new Date(), done: false, paid: false,
+        paidAt: null, createdAt: new Date(Date.now() - 3600_000), updatedAt: new Date(), by: 'robot', cities: ['Raipur'], payBy: 'rates',
+      }));
+      env.ctx.watchChanges_();
+      const o = offerOf('f1');
+      assert.deepEqual([o.status, o.driverPay, o.cutPercent, o.payBy, o.takenBy], ['open', 500, 58, 'rates', null], 'his rate again, the raises start over');
+      assert.equal(env.ctx.fromFields(env.store.docs.get('offerAlerts/f1')).basePay, 500);
+      const [g] = env.ctx.payoutGroups([{ id: 'f1', data: { ...o, status: 'taken', done: true, takenBy: NEAR } }]);
+      assert.equal(g.amount, 500, 'the payout is the offer’s driverPay');
+      // Without the rate card any more: the % cut, marked so.
+      env.props.delete('DRIVER_RATES');
+      env.store.docs.get('offers/f1').status = s('released');
+      env.store.docs.get('offers/f1').takenBy = env.ctx.toValue(NEAR);
+      env.ctx.watchChanges_();
+      assert.deepEqual([offerOf('f1').driverPay, offerOf('f1').cutPercent, offerOf('f1').payBy], [840, 30, 'cut']);
+    });
+  });
+
   test('an offer posted by hand keeps the cut the admin chose', () => {
     confirm('h1');
     env.ctx.autoOffers_();

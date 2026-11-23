@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 import test from 'node:test';
 
 import { PACKAGE_NAMES, UPI_ID, isDriverConfirmed, isInstantBooking, isUpiPayUrl, toDriverConfirmed, toLocalBill, toPayment, toAcceptedPrice, toTripTaps } from '../lib/bookings.ts';
-import { ZONES, citiesText, offerCitiesFor, offerSettlement } from '../lib/offers.ts';
+import { RATE_RAISE, ZONES, citiesText, offerCitiesFor, offerSettlement } from '../lib/offers.ts';
 import { estimateBasisText, estimateOf } from '../lib/estimate.ts';
 import { checkSettings } from '../lib/settings-schema.ts';
 import { settings } from '../site-settings.ts';
@@ -175,4 +175,14 @@ test('price estimates: the robot and the admin panel give the same answer from t
   // Instant confirmation is not widened: a logged-in full-day booking still waits for the office.
   assert.equal(robot.instantConfirmable({ package: 'local-full-day', customerUid: 'u1', status: 'new', ref: 'DB-1' }, ''), false);
   assert.equal(isInstantBooking({ package: 'night-driver', customerUid: 'u1' }), false);
+});
+
+test('the rate card: the same raise steps in /admin and the robot; its values are never in the public repo', () => {
+  assert.deepEqual({ ...RATE_RAISE }, { ...robot.RATE_RAISE });
+  // DRIVER_RATES lives only in the Script Properties: no settings file, website code or rules carry its keys.
+  for (const f of ['site-settings.ts', 'lib/settings-schema.ts', 'app/app-config.json/route.ts', 'firestore.rules']) {
+    // (returnHour alone is also a customer price in site-settings.ts outstation, so only the card's own keys.)
+    for (const key of ['DRIVER_RATES', 'local8h', 'local12h', 'tripDay']) assert.ok(!read(f).includes(key), `${key} in ${f}`);
+  }
+  assert.equal(robot.driverRatesOf(undefined), null, 'no property: the % cut');
 });

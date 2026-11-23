@@ -11,7 +11,9 @@ test("the cut is the quote calculator's band: 25% usually, never outside 20–30
   const o = settings.outstation;
   assert.deepEqual({ ...CUT }, { min: o.minProfitPercent, max: o.maxProfitPercent, default: o.targetProfitPercent });
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
-  assert.ok(rules.includes(`o.cutPercent >= ${CUT.min} && o.cutPercent <= ${CUT.max}`), 'firestore.rules allows the same band');
+  const band = `request.resource.data.cutPercent >= ${CUT.min} && request.resource.data.cutPercent <= ${CUT.max}`;
+  assert.equal(rules.split(band).length - 1, 2, 'firestore.rules keeps the same band for offers an admin posts or edits');
+  assert.ok(rules.includes('o.cutPercent >= 0 && o.cutPercent <= 80'), 'a rate-card offer stores DriveBuddy’s share, 0–80%');
   assert.equal(clampCut(15), 20);
   assert.equal(clampCut(35), 30);
   assert.equal(clampCut(24.6), 25);

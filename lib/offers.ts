@@ -41,7 +41,17 @@ export type Offer = {
    * DriveBuddy pays him (offerSettlement).
    */
   cashCollected?: number;
+  /**
+   * 'rates': the alerts robot pays the driver from the private rate card
+   * (Script Property DRIVER_RATES, never in this repo) — driverPay is his
+   * rate and cutPercent only DriveBuddy's share, for reference. 'cut' or
+   * none: the price minus the cut.
+   */
+  payBy?: 'rates' | 'cut';
 };
+
+/** A rate-card offer nobody takes: the robot raises the driver's pay by `step` each time, `max` in all (apps-script/Code.js RATE_RAISE). */
+export const RATE_RAISE = { step: 50, max: 150 } as const;
 
 /**
  * One job's settlement with the driver: what he earned, the cash he kept,

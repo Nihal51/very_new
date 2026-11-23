@@ -71,6 +71,11 @@
  *                        in the customer's app instead (no gateway, no fee); the driver
  *                        taps "Paid by UPI" / "Paid in cash" in the Driver app.
  *   UPI_NAME             the name on that UPI link, default DriveBuddy
+ *   DRIVER_RATES         optional, private: what drivers are paid, as JSON
+ *                        {"local8h":…,"local12h":…,"localExtraHour":…,"tripDay":…,"returnHour":…}
+ *                        (whole rupees). Set only here, never in the code or GitHub. With it,
+ *                        automatic full-day and trip offers pay the driver his rate (rateCardPayOf)
+ *                        instead of the price minus a % cut. Missing or invalid: the % cut.
  *   CONFIRM_BY_CALL      "off" stops the Telegram that asks the office to call a driver
  *                        who took a job in the app (Confirmed ✓ / Give to someone else);
  *                        his take is then confirmed at once (driverConfirmed by 'auto')
@@ -1362,18 +1367,101 @@ function driverPayOf(price, cutPercent) {
   return Math.floor(Math.round(price) * (100 - cut) / 100 / 10) * 10;
 }
 
+/* The private rate card (Script Property DRIVER_RATES): what a driver is paid
+   for a job, instead of the customer's price minus a % cut. The values live
+   only in the Script Properties — never in this file, the website or GitHub. */
+var RATE_KEYS = ['local8h', 'local12h', 'localExtraHour', 'tripDay', 'returnHour'];
+/** A rate-card offer nobody takes: his pay goes up this much each step (AUTO_OFFER_STEP_MIN), at most `max` in all. */
+var RATE_RAISE = { step: 50, max: 150 };
+
+/** DRIVER_RATES → { local8h, local12h, localExtraHour, tripDay, returnHour }, every one a whole number 1–100000; anything else → null (the % cut). */
+function driverRatesOf(raw) {
+  var r;
+  try {
+    r = JSON.parse(String(raw == null ? '' : raw));
+  } catch (err) {
+    return null;
+  }
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+  var out = {};
+  for (var i = 0; i < RATE_KEYS.length; i++) {
+    var n = r[RATE_KEYS[i]];
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 100000) return null;
+    out[RATE_KEYS[i]] = n;
+  }
+  return out;
+}
+
+function driverRates_() {
+  return driverRatesOf(PropertiesService.getScriptProperties().getProperty('DRIVER_RATES'));
+}
+
+/**
+ * What the rate card pays the driver for this booking, or null (= the % cut):
+ *   local full day → local8h (the 8-hour package);
+ *   one-way drop → trip.days driving days × tripDay, plus his way home
+ *     (trip.returnHours, the booking's estimate of the wait and the ride):
+ *     each full 24 hours a tripDay, the hours left over × returnHour, those
+ *     never more than one tripDay;
+ *   outstation (round trip) → trip.days × tripDay.
+ * Night driver, 1 hour, 3 hours and everything else → null. `price` is not
+ * used here: the caller checks the pay stays below it.
+ */
+function rateCardPayOf(b, price, rates) {
+  if (!rates || !b) return null;
+  if (b.package === 'local-full-day') return rates.local8h;
+  var t = b.trip;
+  if (!t || typeof t !== 'object') return null;
+  var days = Math.max(1, Math.floor(Number(t.days) || 0));
+  if (b.package === 'outstation') return days * rates.tripDay;
+  if (b.package !== 'one-way-drop') return null;
+  var home = Math.max(0, Number(t.returnHours) || 0);
+  var fullDays = Math.floor(home / 24);
+  var leftover = Math.ceil(home - fullDays * 24); // a started hour counts
+  return days * rates.tripDay + fullDays * rates.tripDay + Math.min(rates.tripDay, leftover * rates.returnHour);
+}
+
+/** DriveBuddy's share of the price, in whole percent, for reference on a rate-card offer. */
+function keepPercentOf(price, pay) {
+  return Math.round(((price - pay) / price) * 100);
+}
+
+/**
+ * A rate-card offer nobody has taken, `ageMs` after it went out: his pay
+ * goes up RATE_RAISE.step every `stepMs`, at most RATE_RAISE.max in all, and
+ * never to the price or above. → { pay, top } (top: it will not rise again).
+ */
+function rateRaiseAt(ageMs, basePay, price, stepMs) {
+  var steps = Math.floor(Math.max(0, ageMs) / Math.max(60000, stepMs));
+  var most = 0;
+  while ((most + 1) * RATE_RAISE.step <= RATE_RAISE.max && basePay + (most + 1) * RATE_RAISE.step < price) most++;
+  var k = Math.min(steps, most);
+  return { pay: basePay + k * RATE_RAISE.step, top: k >= most };
+}
+
+/** The offer fields that pay by the rate card, or null when the card does not price this booking or its pay is not below the price. */
+function rateCardFields(b, price, rates) {
+  var pay = rateCardPayOf(b, price, rates);
+  if (pay === null || !(pay < price)) return null;
+  return { driverPay: pay, cutPercent: keepPercentOf(price, pay), payBy: 'rates' };
+}
+
 /** The automatic offer for a confirmed booking with a price, in the exact shape firestore.rules checks; null if not one. */
-function autoOfferFor(id, b, prices, cut, now) {
+function autoOfferFor(id, b, prices, cut, now, rates) {
   var price = estimateOf(b, prices).amount;
   if (!price || b.status !== 'confirmed' || b.assignedDriver) return null;
   var area = offerAreaOf(b.pickup);
   if (area.length < 2) area = b.city;
-  return {
+  var offer = {
     bookingId: id, ref: b.ref || '', city: b.city, package: b.package, when: b.preferredTime || '', area: area,
     to: (b.trip && b.trip.to) || '', price: Math.round(price), cutPercent: Math.min(30, Math.max(20, Math.round(cut))),
     driverPay: driverPayOf(price, cut), status: 'open', takenBy: null, takenAt: null, done: false, paid: false,
     paidAt: null, createdAt: now, updatedAt: now, by: 'robot', cities: zoneOf(b.city),
   };
+  // The rate card, when it prices this job (autoOffers_ holds a job whose rate is not below its price).
+  var card = rateCardFields(b, offer.price, rates);
+  if (card) Object.keys(card).forEach(function (k) { offer[k] = card[k]; });
+  return offer;
 }
 
 /** The job alert on a driver's phone (English and Hindi, most drivers read Hindi first). `raised`: the pay went up. */
@@ -1434,6 +1522,7 @@ function autoOffers_() {
   if (prop_('AUTO_OFFERS') === 'off') return;
   changedSince_('bookings', 'autoOfferMs', function (rows) {
     var prices = null;
+    var rates; // the rate card, read once a run when needed
     var cut = autoCuts(prop_('AUTO_OFFER_CUTS'))[0];
     rows.forEach(function (row) {
       var b = row.data;
@@ -1443,7 +1532,19 @@ function autoOffers_() {
       if (fsGet_('offers/' + row.id)) return; // already offered (by hand or before)
       // The site's prices only when needed (and once a run).
       if (needsPrices && !prices) prices = sitePrices_();
-      var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date());
+      if (rates === undefined) rates = driverRates_();
+      var price = estimateOf(b, prices || {}).amount;
+      var ratePay = rateCardPayOf(b, price, rates);
+      if (price && ratePay !== null && ratePay >= price) {
+        // The price is below what the driver is paid: never offered at a loss. Telegram once per price.
+        var key = price + ':' + ratePay;
+        if (bookOf_(row.id).rateWarned !== key) {
+          telegramLine_('⚠️ ' + escapeHtml(b.ref || row.id) + ': the price ₹' + inr(price) + ' is below the driver\'s rate ₹' + inr(ratePay) + ' — check the price');
+          saveBook_(row.id, { rateWarned: key });
+        }
+        return;
+      }
+      var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date(), rates);
       if (!offer) return;
       fsCommit_([{ update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } }]);
     });
@@ -1464,9 +1565,27 @@ function dispatchOffers_() {
   offers.forEach(function (row) {
     var o = row.data;
     var alert = fsGet_('offerAlerts/' + row.id);
-    // An automatic offer nobody has taken: lower the cut a step (the driver earns more) and tell everyone again.
+    // An automatic offer nobody has taken: the driver earns more each step, and everyone hears again —
+    // a rate-card offer by RATE_RAISE.step on his rate (up to RATE_RAISE.max), others a lower cut.
     var raised = false;
-    if (o.by === 'robot' && o.createdAt) {
+    var rateCard = o.payBy === 'rates';
+    var basePay = rateCard ? (alert && alert.basePay) || o.driverPay : null;
+    var atTop = !rateCard || o.by !== 'robot';
+    if (rateCard && o.by === 'robot' && o.createdAt) {
+      var up = rateRaiseAt(now - o.createdAt.getTime(), basePay, o.price, stepMs);
+      atTop = up.top;
+      if (up.pay > o.driverPay) {
+        o.driverPay = up.pay;
+        o.cutPercent = keepPercentOf(o.price, up.pay);
+        fsCommit_([{
+          update: { name: docName_('offers/' + row.id), fields: toFields({ cutPercent: o.cutPercent, driverPay: o.driverPay, updatedAt: new Date(now) }) },
+          updateMask: { fieldPaths: ['cutPercent', 'driverPay', 'updatedAt'] },
+          currentDocument: { exists: true },
+        }]);
+        raised = true;
+        if (alert) alert.alerted = [];
+      }
+    } else if (o.by === 'robot' && o.createdAt) {
       var want = autoCutAt(now - o.createdAt.getTime(), cuts, stepMs);
       if (want < o.cutPercent) {
         o.cutPercent = want;
@@ -1523,7 +1642,8 @@ function dispatchOffers_() {
     if (!step && !touched) return;
     if (step) {
       // An automatic offer only rings Telegram once its pay has reached the top.
-      if (step.alarm && o.by === 'robot' && o.cutPercent > cuts[cuts.length - 1]) step = { stage: 2, send: step.send, alarm: false, keepTime: true };
+      var notTopYet = rateCard ? !atTop : o.cutPercent > cuts[cuts.length - 1];
+      if (step.alarm && o.by === 'robot' && notTopYet) step = { stage: 2, send: step.send, alarm: false, keepTime: true };
       if (step.send.length) sendPush_(step.send.map(function (d) { return offerPush(o, d.token, raised); }));
       if (step.alarm) {
         try {
@@ -1539,7 +1659,7 @@ function dispatchOffers_() {
         name: docName_('offerAlerts/' + row.id),
         fields: toFields({
           stage: step.stage, stageAt: step.keepTime && alert && alert.stageAt ? alert.stageAt : new Date(now), alerted: alerted,
-          skipIds: keep.skipIds, widenedAt: keep.widenedAt, stillPushedAt: keep.stillPushedAt,
+          skipIds: keep.skipIds, widenedAt: keep.widenedAt, stillPushedAt: keep.stillPushedAt, basePay: basePay,
         }),
       },
     }]);
@@ -1725,12 +1845,19 @@ function driverReminderPush(b, id, token) {
   return pushMsg_(token, { title: 'Job reminder · काम की याद', body: 'Job at ' + clockText(b.preferredTime) + ' · ' + area + (b.ref ? ' · ' + b.ref : '') }, { bookingId: id }, 'jobs');
 }
 
-/** A given-back offer, open again as a fresh automatic offer: nobody's, from the first step, to its whole zone. */
-function reopenedOffer(o, cut, now) {
-  return {
+/**
+ * A given-back offer, open again as a fresh automatic offer: nobody's, from
+ * the first step, to its whole zone — at the rate card's pay when it prices
+ * the booking `b` (payBy 'rates'), else at the first % cut (payBy 'cut').
+ */
+function reopenedOffer(o, cut, now, b, rates) {
+  var fields = {
     status: 'open', takenBy: null, takenAt: null, done: false, cities: zoneOf(o.city), cutPercent: cut,
-    driverPay: driverPayOf(o.price, cut), createdAt: now, updatedAt: now, by: 'robot',
+    driverPay: driverPayOf(o.price, cut), createdAt: now, updatedAt: now, by: 'robot', payBy: 'cut',
   };
+  var card = rateCardFields(b, o.price, rates);
+  if (card) Object.keys(card).forEach(function (k) { fields[k] = card[k]; });
+  return fields;
 }
 
 /** What a completed job costs the customer, from its bill: the local bill, else the trip's final bill; 0 = none. */
@@ -2168,7 +2295,7 @@ function releasedOffers_(rows) {
     var now = new Date();
     var reopen = Boolean(b && b.status === 'confirmed' && !b.assignedDriver);
     if (reopen) {
-      var fields = reopenedOffer(o, cut, now);
+      var fields = reopenedOffer(o, cut, now, b, driverRates_());
       fsCommit_([
         {
           update: { name: docName_('offers/' + row.id), fields: toFields(fields) },
@@ -2184,7 +2311,10 @@ function releasedOffers_(rows) {
         {
           update: {
             name: docName_('offerAlerts/' + row.id),
-            fields: toFields({ stage: 0, stageAt: now, alerted: [], skipIds: who.id ? [who.id] : [], widenedAt: null, stillPushedAt: null }),
+            fields: toFields({
+              stage: 0, stageAt: now, alerted: [], skipIds: who.id ? [who.id] : [], widenedAt: null, stillPushedAt: null,
+              basePay: fields.payBy === 'rates' ? fields.driverPay : null,
+            }),
           },
         },
       ]);
@@ -2412,7 +2542,7 @@ function giveToAnother_(id, b, e) {
   var skip = (alert.skipIds || []).slice();
   if (skip.indexOf(e.driverId) < 0) skip.push(e.driverId);
   var now = new Date();
-  var fields = reopenedOffer(o, autoCuts(prop_('AUTO_OFFER_CUTS'))[0], now);
+  var fields = reopenedOffer(o, autoCuts(prop_('AUTO_OFFER_CUTS'))[0], now, b, driverRates_());
   fsCommit_([
     {
       // driverConfirmed is in the mask but not the fields: removed, it was about him.
@@ -2429,7 +2559,7 @@ function giveToAnother_(id, b, e) {
     {
       update: {
         name: docName_('offerAlerts/' + id),
-        fields: toFields({ stage: 0, stageAt: now, alerted: [], skipIds: skip, widenedAt: null, stillPushedAt: null }),
+        fields: toFields({ stage: 0, stageAt: now, alerted: [], skipIds: skip, widenedAt: null, stillPushedAt: null, basePay: fields.payBy === 'rates' ? fields.driverPay : null }),
       },
     },
   ]);
@@ -4048,7 +4178,7 @@ if (typeof module !== 'undefined') {
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
     estimateOf: estimateOf,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
-    ZONES: ZONES, zoneOf: zoneOf,
+    ZONES: ZONES, zoneOf: zoneOf, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt,
     parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen, confirmedFor: confirmedFor,
     UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
   };
