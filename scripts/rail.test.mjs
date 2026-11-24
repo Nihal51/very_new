@@ -6,6 +6,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { estimate, planTrip, returnCost, withReturn } from '../lib/outstation.ts';
@@ -523,4 +524,11 @@ test('"Check seats": each train links to its seat availability on ixigo', () => 
   assert.equal(seatsLink('12809'), 'https://www.ixigo.com/trains/12809/seat-availability');
   assert.equal(seatsLink(' 20843 '), 'https://www.ixigo.com/trains/20843/seat-availability');
   for (const bad of ['', 'abc', '12809/../x', '1', '1234567']) assert.equal(seatsLink(bad), '', bad);
+  // The booking form: a new tab with no opener or referrer, and the line above the list (no seat API is called).
+  const form = readFileSync(new URL('../components/TripEstimate.tsx', import.meta.url), 'utf8');
+  assert.match(form, /href=\{seatsLink\(l\.train\.number\)\}\s+target="_blank"\s+rel="noopener noreferrer"/);
+  assert.ok(form.includes('Check seats ↗'));
+  const line = form.indexOf('Tickets can sell out — check seats before you book.');
+  assert.ok(line > 0 && line < form.indexOf('{rail.options.map('), 'the line comes above the list');
+  assert.match(form.replace(/\s+/g, ' '), /If there’s no seat, he takes the next train; the final bill counts his real time\./);
 });

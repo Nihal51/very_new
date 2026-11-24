@@ -737,16 +737,11 @@ import {
   pricedLong,
 } from '../lib/outstation.ts';
 
-/** lib/settings.ts tripRules, with the long one-way settings (the rules above leave them out: the 8 Nov way). */
-const longRules = {
-  ...rules,
-  oneWayLong: { ...settings.prices.oneWayLong },
-  drivingGraceHours: settings.outstation.drivingGraceHours,
-  graceMinutes: settings.outstation.graceMinutes,
-};
+/** lib/settings.ts tripRules, with the long one-way prices (the rules above leave them out: the 8 Nov way). */
+const longRules = { ...rules, oneWay: { ...settings.outstation.oneWay } };
+const hm = (h, m = 0) => h * 60 + m;
 
-test('long one-way drops: the five cases the website and the app must both give', () => {
-  const hm = (h, m = 0) => h * 60 + m;
+test('long one-way drops: the cases the website and the app must both give', () => {
   const cases = [
     ['A', 616, 12.3, hm(10, 41), 3200],
     ['B', 1200, 24, hm(27), 5280],
@@ -761,37 +756,71 @@ test('long one-way drops: the five cases the website and the app must both give'
   assert.deepEqual([a.drivingDays, a.returnFullDays, a.returnLeftoverHours, a.returnCharge, a.returnHours], [1, 0, 11, 1600, 11]);
   const b = longOneWayPrice(longRules, 1200, 24, hm(27));
   assert.deepEqual([b.drivingDays, b.returnFullDays, b.returnLeftoverHours, b.returnCharge], [2, 1, 3, 1600 + 3 * 160]);
-  // E: 140 km is a same-day drop — today's near-tier price, untouched.
+  // E: up to the first nearby tier (160 km) a same-day drop — today's price, untouched; round trips too.
   assert.equal(isLongOneWay(longRules, 140), false);
   assert.equal(isLongOneWay(longRules, 160), false, 'up to the first tier');
+  assert.equal(isLongOneWay(longRules, 161), true);
   assert.equal(isLongOneWay(rules, 616), false, 'without the settings: the 8 Nov way');
-  const e = trip('bilaspur');
-  assert.deepEqual(estimate(longRules, e), estimate(rules, e), 'Bilaspur (113 km) priced as before');
-});
-
-test('long one-way drops: driving days with the grace hour; the way home after the 15-minute grace, capped per 24 h', () => {
-  const days = (h) => longDrivingDays(longRules, h);
-  assert.deepEqual([days(0), days(6), days(12), days(13), days(13.1), days(24), days(25), days(25.5), days(36)], [1, 1, 1, 1, 2, 2, 2, 3, 3]);
-  const r = (m) => longReturn(settings.prices.oneWayLong, m, 15);
-  assert.equal(r(15).charge, 0, '0 h 15 m → 0');
-  assert.equal(r(16).charge, 160, '0 h 16 m → 1 hour');
-  assert.equal(r(10 * 60).charge, 1600, '10 h = the day’s cap');
-  assert.equal(r(11 * 60).charge, 1600, 'never more than a day for the hours left over');
-  assert.equal(r(24 * 60 + 15).charge, 1600, '24 h 15 m → one day, nothing left over');
-  assert.equal(r(48 * 60 + 61).charge, 2 * 1600 + 160, '1 h 01 m → 1 hour');
-  assert.equal(r(48 * 60 + 76).charge, 2 * 1600 + 2 * 160, '1 h 16 m → 2 hours');
-});
-
-test('long one-way drops: the estimate from the plan — driving time, then the drop → home (wait + ride)', () => {
-  for (const id of ['nagpur', 'mumbai', 'delhi', 'visakhapatnam']) {
-    const plan = trip(id);
-    if (!isLongOneWay(longRules, plan.km)) continue;
-    const est = estimate(longRules, plan);
-    const p = longOneWayPrice(longRules, plan.km, plan.driveHours, (plan.homeAt - plan.dropAt) * 60);
-    assert.ok(est.long, id);
-    assert.deepEqual([est.from, est.to, est.days], [p.price, p.price, p.drivingDays], id);
-    assert.equal(est.long.drivingDays, plan.days, `${id}: the driving days are the calendar days the plan drives`);
+  let near = 0;
+  for (const d of destinations) {
+    const km = fromRaipur(d.id);
+    if (!(km > 0) || km > settings.prices.outstationNear[0].upToKm) continue;
+    const e = trip(d.id);
+    assert.deepEqual(estimate(longRules, e), estimate(rules, e), `${d.id} (${km} km) priced as before`);
+    near++;
   }
+  assert.ok(near > 0);
+  for (const id of ['ranchi', 'nagpur', 'bengaluru']) {
+    const round = trip(id, 'round', 3);
+    assert.deepEqual(estimate(longRules, round), estimate(rules, round), `${id}: a round trip priced as before`);
+  }
+});
+
+test('long one-way drops: Raipur → Ranchi ₹3,200 and Raipur → Bengaluru ₹8,000 (+ his ticket), with or without the night drive', () => {
+  for (const nonstop of [false, true]) {
+    const ranchi = estimate(longRules, trip('ranchi', 'one-way', 0, 7, nonstop));
+    assert.deepEqual([ranchi.from, ranchi.to, ranchi.long.drivingDays, ranchi.long.returnCharge], [3200, 3200, 1, 1600], `Ranchi nonstop ${nonstop}`);
+    const blr = estimate(longRules, trip('bengaluru', 'one-way', 0, 7, nonstop));
+    // 1,370 km, about 27.4 h of driving → 3 driving days; home about 34 h 45 m → 1 day + 11 h (at most a day) → ₹3,200.
+    assert.deepEqual([blr.from, blr.to, blr.long.drivingDays, blr.long.returnFullDays, blr.long.returnCharge], [8000, 8000, 3, 1, 3200], `Bengaluru nonstop ${nonstop}`);
+  }
+  // A train picked home from Ranchi: drop → home 10 h 41 m → 11 h × ₹160, at most ₹1,600.
+  const plan = trip('ranchi');
+  const picked = withReturn(plan, plan.dropAt + 1, plan.dropAt + hm(10, 41) / 60);
+  assert.equal(estimate(longRules, picked).from, 3200);
+});
+
+test('long one-way drops: driving days (12 h, the last day up to 1 h more); his way home by each started hour, capped a day', () => {
+  const days = (h) => longDrivingDays(longRules, h);
+  assert.deepEqual([days(0), days(6), days(12), days(12.32), days(13), days(13.1), days(24), days(25), days(25.5), days(36)], [1, 1, 1, 1, 1, 2, 2, 2, 3, 3]);
+  // Without the grace hour it is the plain ceil(h / driveHoursPerDay).
+  const plain = { ...longRules, oneWay: { ...longRules.oneWay, driveGraceHours: 0 } };
+  assert.deepEqual([12, 12.32, 24, 27.4].map((h) => longDrivingDays(plain, h)), [1, 2, 2, 3]);
+  // The estimate: floor(H / 24) × returnDay + min(returnDay, ceil(H mod 24) × returnHour).
+  const r = (m) => longReturn(settings.outstation.oneWay, m).charge;
+  assert.deepEqual([r(0), r(1), r(60), r(61), r(hm(10)), r(hm(10, 41)), r(hm(24)), r(hm(24, 1)), r(hm(27)), r(hm(35))], [0, 160, 160, 320, 1600, 1600, 1600, 1760, 2080, 3200]);
+  // The final bill: the usual first 15 minutes of an hour free.
+  const bill = (m) => longReturn(settings.outstation.oneWay, m, settings.outstation.graceMinutes).charge;
+  assert.equal(bill(15), 0, '0 h 15 m → 0');
+  assert.equal(bill(16), 160, '0 h 16 m → 1 hour');
+  assert.equal(bill(hm(24, 15)), 1600, '24 h 15 m → one day, nothing left over');
+  assert.equal(bill(hm(48, 61)), 2 * 1600 + 160, '1 h 01 m → 1 hour');
+  assert.equal(bill(hm(48, 76)), 2 * 1600 + 2 * 160, '1 h 16 m → 2 hours');
+});
+
+test('long one-way drops: the estimate from the plan — driving time, then the drop → home (wait + ride) — from every pickup city', () => {
+  for (const from of pickupCities)
+    for (const d of destinations) {
+      const km = roadKm(from, d);
+      if (!isLongOneWay(longRules, km)) continue;
+      const plan = planTrip(longRules, km, 'one-way', 0, homeWay(d, from), 7, false);
+      const est = estimate(longRules, plan);
+      const p = longOneWayPrice(longRules, plan.km, plan.driveHours, (plan.homeAt - plan.dropAt) * 60);
+      assert.ok(est.long, `${from} → ${d.id}`);
+      assert.deepEqual([est.from, est.to, est.days], [p.price, p.price, p.drivingDays], `${from} → ${d.id}`);
+      assert.equal(est.long.drivingDays, plan.days, `${from} → ${d.id}: the driving days are the calendar days the plan drives`);
+      assert.equal(est.long.returnHours, plan.returnHours, `${from} → ${d.id}: the booking's returnHours are the hours charged`);
+    }
   // A train picked: its arrival home counts.
   const plan = trip('mumbai');
   const late = withReturn(plan, plan.dropAt + 2, plan.dropAt + 30);
@@ -803,15 +832,18 @@ test('long one-way drops: the /admin quote and the final bill fit the saved-quot
   for (let m = 0; m <= 200 * 60; m += 37) {
     const p = longOneWayPrice(longRules, 900, 18, m);
     assert.ok(p.returnCharge <= p.returnHourRate * 10 * (p.returnHours / 24 + 1), `${m} min`);
-    assert.ok(p.returnHours <= 200 || m > 199 * 60);
+    assert.ok(p.returnHours <= 201);
   }
   const q = longQuote(longRules, { ...band, km: 616, drivingHours: 12.3, returnMinutes: 641, driverDayCost: 1000, driverHourPay: 100, ticket: 0, partnerPercent: 0 });
   assert.equal(q.total, 3200);
   assert.equal(q.long.price, q.long.drivingDays * q.long.drivingDay + q.long.returnCharge, 'amount = days × dayRate + returnCharge (+ ticket)');
+  assert.deepEqual([q.long.drivingDay, q.long.drivingDays, q.long.returnHours, q.long.returnHourRate, q.long.returnCharge], [1600, 1, 11, 160, 1600]);
   assert.equal(q.driverPay, 1000 + 1000, 'his day for driving; his hours home capped at his day');
   assert.equal(pricedLong(longRules, { km: 616, returnHourRate: 160 }), true);
   assert.equal(pricedLong(longRules, { km: 616, returnHourRate: 160, awayHours: 30 }), false, 'a route price stays one');
   assert.equal(pricedLong(longRules, { km: 140, returnHourRate: 160 }), false);
+  // An older one-way quote by the 24-hour blocks (8 Nov – 24 Nov) still reads as one.
+  assert.equal(pricedByTime({ km: 616, returnHours: 0, returnCharge: 0 }), true);
   assert.equal(longReturnDayFor(longRules, 160), 1600);
   assert.equal(longReturnDayFor(longRules, 100), 1000, 'an agreed hourly rate keeps the same proportion');
   // The final bill from the real times: start → drop driving, drop → home his way home.
@@ -825,16 +857,23 @@ test('long one-way drops: the /admin quote and the final bill fit the saved-quot
   assert.equal(bill.amount, bill.dayRate * bill.days + bill.extraCharge + bill.returnCharge + bill.ticket);
   assert.ok(bill.returnCharge <= bill.returnHourRate * 10 * (bill.returnHours / 24 + 1));
   const a = finalBillLong(longRules, {
-    kind: 'one-way', nonstop: false, startAt: t0, dropAt: t0 + 12.3 * H, homeAt: t0 + 12.3 * H + (10 * 60 + 41) * 60_000,
+    kind: 'one-way', nonstop: false, startAt: t0, dropAt: t0 + 12.3 * H, homeAt: t0 + 12.3 * H + hm(10, 41) * 60_000,
     dayRate: 1600, extraHourRate: 130, returnHourRate: 160, ticket: 0, graceMinutes: 15, long: { km: 616 },
   });
   assert.equal(a.amount, 3200);
 });
 
-test('long one-way settings: whole rupees, and the way home’s day at most 10 hours’ worth (the saved checks)', () => {
-  const ow = settings.prices.oneWayLong;
-  assert.throws(() => checkSettings({ ...settings, prices: { ...settings.prices, oneWayLong: { ...ow, returnDay: 10 * ow.returnHour + 10 } } }), /returnDay/);
-  assert.throws(() => checkSettings({ ...settings, prices: { ...settings.prices, oneWayLong: { ...ow, drivingDay: 0 } } }), /drivingDay/);
-  assert.equal(settings.outstation.hoursPerDay, 12, 'a driving day is outstation.hoursPerDay');
-  assert.equal(settings.outstation.drivingGraceHours, 1);
+test('long one-way settings (outstation.oneWay): whole rupees above 0, and the way home’s day exactly 10 × its hour', () => {
+  const ow = settings.outstation.oneWay;
+  const withOw = (o) => ({ ...settings, outstation: { ...settings.outstation, oneWay: { ...ow, ...o } } });
+  assert.doesNotThrow(() => checkSettings(withOw({})));
+  assert.equal(ow.returnDay, 10 * ow.returnHour);
+  assert.throws(() => checkSettings(withOw({ returnDay: 10 * ow.returnHour + 10 })), /returnDay/);
+  assert.throws(() => checkSettings(withOw({ returnDay: 10 * ow.returnHour - 10 })), /returnDay/);
+  assert.throws(() => checkSettings(withOw({ driveDay: 0 })), /driveDay/);
+  assert.throws(() => checkSettings(withOw({ driveDay: 1600.5 })), /driveDay/);
+  assert.throws(() => checkSettings(withOw({ driveHoursPerDay: 0 })), /driveHoursPerDay/);
+  assert.throws(() => checkSettings(withOw({ driveHoursPerDay: 12.5 })), /driveHoursPerDay/);
+  assert.equal(ow.driveHoursPerDay, 12);
+  assert.equal(ow.driveGraceHours, 1);
 });

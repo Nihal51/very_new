@@ -179,8 +179,8 @@ export function billRates(quote: Booking['quote'], rules: TripRules, km?: number
   if (quote && pricedByTime(quote)) return { ...base, dayRate: quote.dayRate, time: { km: quote.km ?? 0 } };
   if (quote) return { ...base, dayRate: quote.dayRate };
   // No quote: the estimate's rates — a long one-way drop at the settings' driving day and hour.
-  if (oneWay && rules.oneWayLong && isLongOneWay(rules, km))
-    return { ...base, dayRate: rules.oneWayLong.drivingDay, returnHourRate: rules.oneWayLong.returnHour, long: { km: km ?? 0 } };
+  if (oneWay && rules.oneWay && isLongOneWay(rules, km))
+    return { ...base, dayRate: rules.oneWay.driveDay, returnHourRate: rules.oneWay.returnHour, long: { km: km ?? 0 } };
   const dayRate = dayRateFor(rules, km).from;
   return oneWay && km ? { ...base, dayRate, time: { km } } : { ...base, dayRate };
 }
@@ -264,13 +264,16 @@ export function billLines(
   const lines: { label: string; amount: string }[] = [];
   // A long one-way drop (24 Nov 2026): the driving days, then his way home.
   if (b.long) {
-    lines.push({ label: `Driving (start → drop, ${inr.format(b.long.km)} km): ${plural(b.days, 'day')} × ${rupees(b.dayRate)}`, amount: rupees(b.days * b.dayRate) });
+    lines.push({
+      label: `Driving (start → drop, ${inr.format(b.long.km)} km): ${plural(b.days, 'driving day')} × ${rupees(b.dayRate)}`,
+      amount: rupees(b.days * b.dayRate),
+    });
     const parts = [
-      b.long.returnFullDays ? `${b.long.returnFullDays} × 24 h × ${rupees(b.long.returnDay)}` : null,
-      b.long.returnLeftoverHours ? `${plural(b.long.returnLeftoverHours, 'hour')} × ${rupees(b.returnHourRate)}` : null,
+      b.long.returnFullDays ? `${plural(b.long.returnFullDays, 'day')} × ${rupees(b.long.returnDay)}` : null,
+      b.long.returnLeftoverHours ? `${b.long.returnLeftoverHours} h × ${rupees(b.returnHourRate)}` : null,
     ].filter(Boolean);
     lines.push({
-      label: `Driver’s way home (drop → home): ${b.returnHours} h → ${parts.join(' + ') || 'no charge'} (at most ${rupees(b.long.returnDay)} per 24 h)`,
+      label: `His way home (drop → home), ${b.returnHours} h: ${parts.join(' + ') || 'nothing'} (never more than ${rupees(b.long.returnDay)} a day)`,
       amount: rupees(b.returnCharge),
     });
     if (b.ticket > 0) lines.push({ label: 'Ticket home (we bought it)', amount: rupees(b.ticket) });

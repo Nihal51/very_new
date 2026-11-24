@@ -45,8 +45,6 @@ export type SiteSettings = {
     nightFrom: number;
     /** Each hour a local job runs over its package (the automatic bill from the Driver app's taps). */
     localExtraHour: number;
-    /** One-way drops farther than the first nearby tier: each driving day, each full 24 h of his way home, each hour left over. */
-    oneWayLong: { drivingDay: number; returnDay: number; returnHour: number };
   };
   /** Cash on jobs (the alerts robot and the Driver app read it from /app-config.json). */
   payments: {
@@ -60,8 +58,11 @@ export type SiteSettings = {
     /** … to prices.outstation.to at dayTopFromKm (lib/outstation.ts dayRateFor). */
     dayTopFromKm: number;
     hoursPerDay: number;
-    /** One-way drops: the last day of driving may run this many hours longer without counting as one more day. */
-    drivingGraceHours: number;
+    /**
+     * One-way drops farther than the first nearby tier (customer prices): each driving day,
+     * each full 24 h of his way home, each started hour of it left over; a driving day's hours and its grace.
+     */
+    oneWay: { driveDay: number; returnDay: number; returnHour: number; driveHoursPerDay: number; driveGraceHours: number };
     /** A round trip with up to this many hours of driving there and back is back within the 24 hours: one day. */
     sameDayMaxHours: number;
     /** Per hour past the 24-hour blocks of a one-way drop; per driving hour beyond hoursPerDay on a round trip. */
@@ -213,17 +214,19 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   if (s.payments.cashLimit > 50000)
     problems.push(`payments.cashLimit (${s.payments.cashLimit}) is more than 50000 — is a 0 too many?`);
 
-  const ow = s.prices.oneWayLong;
-  price('prices.oneWayLong.drivingDay', ow.drivingDay);
-  price('prices.oneWayLong.returnDay', ow.returnDay);
-  price('prices.oneWayLong.returnHour', ow.returnHour);
-  // The saved quotes' and bills' check (firestore.rules isQuote / isBill) allows at most 10 hours' worth a day of the way home.
-  if (ow.returnDay > 10 * ow.returnHour)
-    problems.push(`prices.oneWayLong.returnDay (${ow.returnDay}) must be at most 10 × returnHour (${10 * ow.returnHour})`);
+  const ow = s.outstation.oneWay;
+  price('outstation.oneWay.driveDay', ow.driveDay);
+  price('outstation.oneWay.returnDay', ow.returnDay);
+  price('outstation.oneWay.returnHour', ow.returnHour);
+  count('outstation.oneWay.driveHoursPerDay', ow.driveHoursPerDay, 24);
+  if (ow.driveHoursPerDay < 1) problems.push('outstation.oneWay.driveHoursPerDay must be at least 1');
+  count('outstation.oneWay.driveGraceHours', ow.driveGraceHours, 6);
+  // The saved quotes' and bills' check (firestore.rules isQuote / isBill) allows 10 hours' worth a day of the way home.
+  if (ow.returnDay !== 10 * ow.returnHour)
+    problems.push(`outstation.oneWay.returnDay (${ow.returnDay}) must be 10 × returnHour (${10 * ow.returnHour})`);
 
   const o = s.outstation;
   count('outstation.hoursPerDay', o.hoursPerDay, 16);
-  count('outstation.drivingGraceHours', o.drivingGraceHours, 6);
   if (o.hoursPerDay < 8) problems.push('outstation.hoursPerDay must be at least 8');
   count('outstation.sameDayMaxHours', o.sameDayMaxHours, 20);
   if (o.sameDayMaxHours < o.hoursPerDay)

@@ -45,7 +45,7 @@ const DEFAULT_RETURN_PAY = Math.floor((tripRules.returnHour * (1 - MIN_PROFIT / 
 /** By the driver's time: what he usually gets for an hour past the 24-hour blocks — the customer's hourly rate less the profit, to ₹10 (as the quote). */
 const DEFAULT_HOUR_PAY = Math.round((tripRules.extraHour * (1 - TARGET / 100)) / 10) * 10;
 /** A long one-way drop: what a driver usually gets for an hour of his way home — the customer's hourly rate less the profit, to ₹10. */
-const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWayLong?.returnHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
+const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWay?.returnHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
 /** Warn when driving or the way home took this many hours longer than the plan for the real start. */
 const LATE_DRIVE_HOURS = 4;
 const LATE_HOME_HOURS = 3;

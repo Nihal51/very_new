@@ -514,7 +514,7 @@ export const extraRates = [
   },
   {
     label: 'One-way drop: the driver’s time until he is home',
-    detail: `Up to ${priceText.sameDayKm} (home the same day): one price, ${priceText.sameDayDrop}. Farther: ${priceText.oneWayDrivingDay} for each day of driving, then his way home (the wait and the train) at ${priceText.oneWayReturnHour} an hour, at most ${priceText.oneWayReturnDay} per 24 h. You book his ticket`,
+    detail: `Up to ${priceText.sameDayKm} (home the same day): one price, ${priceText.sameDayDrop}. Farther: ${priceText.oneWayDrivingDay} for each day of driving, then his way home (the wait and the train) at ${priceText.oneWayReturnHour} an hour, never more than ${priceText.oneWayReturnDay} a day. You book his ticket`,
     price: `from ${priceText.sameDayDrop.split('–')[0]}`,
   },
   {

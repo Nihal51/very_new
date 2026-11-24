@@ -32,7 +32,7 @@ const hrs = (v: string) => {
   return Number.isFinite(n) && n > 0 ? n : 0;
 };
 /** A long one-way drop: what a driver usually gets for an hour of his way home — the customer's rate less the profit, to ₹10. */
-const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWayLong?.returnHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
+const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWay?.returnHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
@@ -303,7 +303,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
                 'His pay an hour home',
                 longHourPay,
                 setLongHourPay,
-                `The customer pays ${priceText.oneWayReturnHour} an hour, at most ${priceText.oneWayReturnDay} per 24 h`,
+                `The customer pays ${priceText.oneWayReturnHour} an hour, never more than ${priceText.oneWayReturnDay} a day`,
               )}
             {oneWay && !long &&
               num(

@@ -151,14 +151,15 @@ export function TripEstimate({
               distance).
             </li>
             <li>
-              Farther: {priceText.oneWayDrivingDay} for each day of driving — {priceText.outstationHours} of driving a
-              day, the last day up to {tripRules.hoursPerDay + (tripRules.drivingGraceHours ?? 1)} hours.
+              Farther: {priceText.oneWayDrivingDay} for each day of driving — {tripRules.oneWay?.driveHoursPerDay ?? 12} hours
+              of driving a day, the last day up to {(tripRules.oneWay?.driveHoursPerDay ?? 12) + (tripRules.oneWay?.driveGraceHours ?? 0)}{' '}
+              hours.
             </li>
             <li>
-              Then his way home — waiting for the train he takes and the ride: {priceText.oneWayReturnHour} an hour
-              (the first 15 minutes of an hour free), never more than {priceText.oneWayReturnDay} for each 24 hours. So
-              5 hours home = 5 × {priceText.oneWayReturnHour}; 27 hours = {priceText.oneWayReturnDay} + 3 ×{' '}
-              {priceText.oneWayReturnHour}.
+              Then his way home — waiting for the train he takes and the ride: {priceText.oneWayReturnHour} for each
+              started hour, never more than {priceText.oneWayReturnDay} for each 24 hours. So 5 hours home = 5 ×{' '}
+              {priceText.oneWayReturnHour}; 27 hours = {priceText.oneWayReturnDay} + 3 × {priceText.oneWayReturnHour}. The
+              final bill uses his real times.
             </li>
             <li>
               Until you pick the date, the wait and the ride home are the route’s average from the timetables; with the
@@ -315,6 +316,10 @@ function TrainsHome({
       <>
         <fieldset>
           <legend className="sr-only">Choose the driver’s train home</legend>
+          <p className="text-fg-muted mb-2 text-xs">
+            Tickets can sell out — check seats before you book. If there’s no seat, he takes the next train; the final
+            bill counts his real time.
+          </p>
           <ul className="flex flex-col gap-2">
             {rail.options.map((o, i) => {
               const on = selected?.id === o.id;
@@ -348,10 +353,10 @@ function TrainsHome({
                               <a
                                 href={seatsLink(l.train.number)}
                                 target="_blank"
-                                rel="noopener"
+                                rel="noopener noreferrer"
                                 className="text-accent-text font-semibold underline underline-offset-2"
                               >
-                                Check seats
+                                Check seats ↗
                               </a>
                             </>
                           )}
@@ -383,10 +388,6 @@ function TrainsHome({
             })}
           </ul>
         </fieldset>
-        <p className="text-fg-muted mt-2 text-xs">
-          No reserved seat? He travels in the general coach (always available) or takes the next train — the price
-          counts the wait for the train you pick.
-        </p>
         <p className="text-fg-subtle mt-2 text-xs">
           {lookup?.live ? 'Includes live running status' : 'Scheduled timetable times, not live'} · from RailRadar
           {lookup?.checkedAt ? `, checked ${whenText(lookup.checkedAt)}` : ''}. Seats and tickets are not checked —

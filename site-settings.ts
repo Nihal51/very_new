@@ -109,18 +109,6 @@ export const settings = {
     outstationNear: [
       { upToKm: 160, from: 1050, to: 1350 }, //  same-day drops: Bilaspur, Kanker, Janjgir …
     ],
-    /* One-way drops FARTHER than the first nearby tier (decided 24 Nov 2026):
-       drivingDay for each day of driving (outstation.hoursPerDay hours, the
-       last day up to outstation.drivingGraceHours longer), then his way home
-       — waiting for the train he takes plus the ride — returnDay for each
-       full 24 hours and returnHour for each hour left over, never more than
-       returnDay for them. The customer books and pays his ticket.
-         616 km, 12.3 h driving, home in 10 h 41 m: 1,600 + 1,600 = 3,200. */
-    oneWayLong: {
-      drivingDay: 1600, //                    each day of driving
-      returnDay: 1600, //                     each full 24 hours of his way home (at most 10 × returnHour)
-      returnHour: 160, //                     each hour of his way home left over (after 15 minutes' grace)
-    },
     nightFrom: 500, //                        Night driver, 8 PM – 6 AM, "from ₹500"; also the price a night job goes to drivers at by itself (decide)
     /* Local jobs (1 hour, 3 hours, full day, night) that run longer than the
        package: each started hour over it, after 15 minutes' grace, from the
@@ -156,8 +144,23 @@ export const settings = {
   outstation: {
     nearFromKm: 60, //         the day price starts rising from the first tier's `from` here …
     dayTopFromKm: 300, //      … and reaches prices.outstation.to here (farther: the same)
-    hoursPerDay: 12, //        driving hours in one outstation day (about 600 km); also a one-way drop's driving day (prices.oneWayLong)
-    drivingGraceHours: 1, //   one-way drops: the last day of driving may run this much longer without counting as one more day
+    hoursPerDay: 12, //        driving hours in one outstation day (about 600 km)
+    /* One-way drops FARTHER than the first nearby tier (prices.outstationNear,
+       160 km) — what the CUSTOMER pays (decided 24 Nov 2026): driveDay for
+       each day of driving (driveHoursPerDay hours; the last day up to
+       driveGraceHours longer, as the plan finishes that evening), then his
+       way home — waiting for his train plus the ride — returnDay for each
+       full 24 hours and returnHour for each started hour left over, never
+       more than returnDay for those. The customer books and pays his ticket.
+       Customer prices only: the driver's pay is set in Script Properties.
+         Raipur → Ranchi, 616 km: 1 driving day + home in 10 h 41 m = 1,600 + 1,600 = 3,200. */
+    oneWay: {
+      driveDay: 1600, //        decide: each day of driving
+      returnDay: 1600, //       decide: each full 24 hours of his way home — must be 10 × returnHour
+      returnHour: 160, //       decide: each started hour of his way home left over
+      driveHoursPerDay: 12, //  driving hours in one day
+      driveGraceHours: 1, //    the last day may run this much longer and still be one day
+    },
     sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
     extraHour: 130, //         each hour past the 24-hour blocks of a one-way drop, and each driving hour beyond hoursPerDay on a round trip
     extraFullDayAfterHours: 7, // round trips: driving hours left over after the full days: up to this many at extraHour; more = a full day

@@ -341,18 +341,23 @@ export function estimateLines(view: TripView): { label: string; amount: string }
       : w
         ? `waiting ${hmText(w.wait * 60)} + ${view.home?.by ?? 'train'} ${hmText(w.travel * 60)}, the route’s average`
         : '';
+    // "1 driving day (about 12 h) × ₹1,600 · his way home about 10 h 41 m: 11 h × ₹160 (never more than ₹1,600 a day)".
     const parts = [
-      l.returnFullDays ? `${l.returnFullDays} × 24 h × ${rupees(l.returnDay)}` : null,
-      l.returnLeftoverHours ? `${plural(l.returnLeftoverHours, 'hour')} × ${rupees(l.returnHourRate)}` : null,
+      l.returnFullDays ? `${plural(l.returnFullDays, 'day')} × ${rupees(l.returnDay)}` : null,
+      l.returnLeftoverHours ? `${l.returnLeftoverHours} h × ${rupees(l.returnHourRate)}` : null,
     ].filter(Boolean);
     return [
-      { label: `Driving: ${plural(l.drivingDays, 'day')} × ${rupees(l.drivingDay)} (${aboutHours(l.drivingHours)} of driving)`, amount: rupees(l.drivingDays * l.drivingDay) },
+      {
+        label: `${plural(l.drivingDays, 'driving day')} (${aboutHours(l.drivingHours)}) × ${rupees(l.drivingDay)}`,
+        amount: rupees(l.drivingDays * l.drivingDay),
+      },
       {
         label:
-          `His way home: ${hmText(l.returnMinutes)}${split ? ` (${split})` : ''} → ${parts.join(' + ') || 'no charge'}` +
-          ` (at most ${rupees(l.returnDay)} per 24 h)`,
+          `His way home about ${hmText(l.returnMinutes)}${split ? ` (${split})` : ''}: ${parts.join(' + ') || 'nothing'}` +
+          ` (never more than ${rupees(l.returnDay)} a day)`,
         amount: rupees(l.returnCharge),
       },
+      { label: 'His ticket home: you book and pay for it', amount: '+ ticket' },
     ];
   }
   const t = est.time;
@@ -419,7 +424,7 @@ export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
   if (pricedLong(tripRules, q))
     return [
       `${rupees(q.dayRate)} × ${plural(q.days, 'driving day')}`,
-      `${rupees(q.returnCharge)} his way home (${q.returnHours} h at ${rupees(q.returnHourRate)} an hour, at most ${rupees(longDayOf(q.returnHourRate))} per 24 h)`,
+      `${rupees(q.returnCharge)} his way home (${q.returnHours} h at ${rupees(q.returnHourRate)} an hour, never more than ${rupees(longDayOf(q.returnHourRate))} a day)`,
       q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
     ]
       .filter(Boolean)

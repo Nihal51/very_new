@@ -357,6 +357,24 @@ describe('bookings — admin workflow', () => {
     await assertFails(save({ ...route, km: -5 }));
   });
 
+  test('a long one-way drop: driving days, then his way home by the hour, at most a day each 24 h (24 Nov 2026)', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    const db = admin();
+    const save = (q) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: q }));
+    // Raipur → Ranchi: 1 driving day × ₹1,600 + home in about 10 h 41 m → 11 h × ₹160, at most ₹1,600.
+    const ranchi = agreed({
+      dayRate: 1600, days: 1, returnHours: 11, returnHourRate: 160, returnCharge: 1600,
+      extraHours: 0, extraHourRate: 0, extraCharge: 0, km: 616, ticket: 0, amount: 3200,
+    });
+    await assertSucceeds(save(ranchi));
+    await assertSucceeds(save({ ...ranchi, ticket: 650, amount: 3200 + 650 }));
+    // Raipur → Bengaluru: 3 driving days + home 35 h (a day + 11 h, at most a day) = 4,800 + 3,200.
+    await assertSucceeds(save({ ...ranchi, days: 3, returnHours: 35, returnCharge: 3200, km: 1370, amount: 8000 }));
+    // Never more than a day for the 11 hours left over, and it must add up.
+    await assertFails(save({ ...ranchi, returnCharge: 2400, amount: 1600 + 2400 }));
+    await assertFails(save({ ...ranchi, amount: 3000 }));
+  });
+
   test('customers and guests cannot change a booking', async () => {
     await seedBooking('b1', { customerUid: 'cust1' });
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { status: 'cancelled' }));
@@ -504,6 +522,20 @@ describe('trip links and the final bill', () => {
     await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ clock: { startAt: new Date(2026, 9, 30), homeAt: new Date(2026, 9, 29) } })));
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { bill: finalBill() }));
     await assertFails(updateDoc(doc(guest(), 'bookings', 'b1'), { clock: clock() }));
+  });
+
+  test('a long one-way drop’s final bill: start → drop driving days, drop → home his way home (24 Nov 2026)', async () => {
+    await seedLink();
+    const db = admin();
+    const save = (b) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ bill: b }));
+    const ranchi = finalBill({
+      dayRate: 1600, days: 1, extraHours: 0, extraHourRate: 0, extraCharge: 0, returnHours: 11, returnHourRate: 160,
+      returnCharge: 1600, km: 616, ticket: 0, nonstop: false, amount: 3200,
+    });
+    await assertSucceeds(save(ranchi));
+    // 27 h home: a day + 3 h.
+    await assertSucceeds(save({ ...ranchi, days: 2, returnHours: 27, returnCharge: 1600 + 480, km: 1200, amount: 3200 + 2080 }));
+    await assertFails(save({ ...ranchi, returnCharge: 2400, amount: 1600 + 2400 }));
   });
 });
 
