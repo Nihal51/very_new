@@ -148,6 +148,8 @@ function load() {
   const warnings = [];
   const deadTokens = new Set(); // tokens Expo answers with DeviceNotRegistered
   const rail = { calls: [], answer: () => ({ code: 404, body: { success: false } }) }; // RailRadar stand-in
+  // Every HTTP request the robot makes (each one inside fetchAll too): Apps Script's daily UrlFetch quota.
+  const http = { n: 0, urls: [] };
   // Telegram's other methods: getUpdates serves `updates` (from `offset`), the rest are recorded.
   const tg = { updates: [], calls: [] };
   // Razorpay stand-in: links it made, by id; `status` is what a GET answers.
@@ -236,12 +238,16 @@ function load() {
       fetchAll(requests) {
         return requests.map((r) => {
           if (!r.url.startsWith('https://api.railradar.in/')) return ctx.UrlFetchApp.fetch(r.url, r);
+          http.n++;
+          http.urls.push(r.url);
           rail.calls.push({ url: r.url, auth: r.headers?.Authorization });
           const { code, body } = rail.answer(r.url);
           return { getResponseCode: () => code, getContentText: () => (typeof body === 'string' ? body : JSON.stringify(body)) };
         });
       },
       fetch(url, opts = {}) {
+        http.n++;
+        http.urls.push(url.replace(BASE, 'fs') + (opts.payload && url.endsWith(':runQuery') ? ' ' + JSON.parse(opts.payload).structuredQuery.from[0].collectionId : ''));
         const body = opts.payload ? JSON.parse(opts.payload) : null;
         if (url.startsWith('https://api.telegram.org/')) {
           if (url.endsWith('/sendMessage')) telegram.push(body);
@@ -291,6 +297,12 @@ function load() {
         }
         if (url === `${BASE}:runQuery`) return response(200, store.runQuery(body.structuredQuery));
         if (url === `${BASE}:commit`) return response(200, store.commit(body.writes));
+        if (url === `${BASE}:batchGet`) {
+          return response(200, body.documents.map((name) => {
+            const doc = store.get(name.replace(PREFIX, ''));
+            return doc ? { found: doc } : { missing: name };
+          }));
+        }
         const doc = store.get(url.slice(BASE.length + 1));
         return doc ? response(200, doc) : response(404, {});
       },
@@ -299,6 +311,14 @@ function load() {
   };
   vm.createContext(ctx);
   vm.runInContext(CODE, ctx);
+  // The robot's schedule reads the minute from nowDate_: the tests set it (default: an even minute, when
+  // the app steps run; see "schedule" in Code.js), never the real clock.
+  const clock = { minute: 0 };
+  ctx.nowDate_ = () => {
+    const d = new Date();
+    d.setMinutes(clock.minute);
+    return d;
+  };
 
   /** The sheet as [{ heading: value }], top to bottom. */
   const table = (name) => {
@@ -306,7 +326,7 @@ function load() {
     const [head = [], ...rows] = g;
     return rows.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
   };
-  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, rail, mc, tg, rzp };
+  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, rail, mc, tg, rzp, http, clock };
 }
 
 const ts = (msAgo) => ({ timestampValue: new Date(Date.now() - msAgo).toISOString() });
@@ -428,6 +448,7 @@ describe('the alerts robot', () => {
       name: s('Suresh Verma'), phone: s('9893302783'), city: s('Bhilai'), experienceYears: { integerValue: '7' },
       licence: s('lmv'), about: s(''), status: s('new'), source: s('website'), createdAt: ts(30_000),
     });
+    env.clock.minute = 1; // applications are looked at every ~5 minutes (and at once on the website's doorbell)
     env.ctx.tick();
     env.ctx.tick();
     assert.equal(env.telegram.length, 1);
@@ -1753,6 +1774,8 @@ describe('automation', () => {
 
   describe('accepted price (2)', () => {
     const trip = { to: 'Nagpur', destId: 'nagpur', kind: 'one-way', km: 284, days: 1, returnHours: 6, estFrom: 1440, estTo: 1600 };
+    // Accepted prices are looked at every 4 minutes on the minute ticks (minute 2, 6 …) and on every doorbell.
+    beforeEach(() => { env.clock.minute = 2; });
 
     test('a new trip whose price the customer accepted is confirmed and offered at that price', () => {
       booking('t1', { package: 'one-way-drop', trip, customerUid: 'u1', updatedAt: ago(20 * MIN), acceptedPrice: { amount: 1600, at: new Date() } });
@@ -2750,3 +2773,167 @@ describe('automation', () => {
     });
   });
 });
+
+describe('web calls: within Google’s daily UrlFetch quota', () => {
+  let env;
+  const put = (path, obj) => env.store.docs.set(path, env.ctx.toFields(obj));
+  const ago = (ms) => new Date(Date.now() - ms);
+  const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+  /** Web calls of one tick at minute `m`. */
+  const tickAt = (m) => {
+    env.clock.minute = m;
+    const n0 = env.http.n;
+    env.ctx.tick();
+    return env.http.n - n0;
+  };
+  const tenMinutes = () => Array.from({ length: 10 }, (_, m) => tickAt(m));
+  const busyDay = () => {
+    for (const [id, lat] of [['d1', 21.252], ['d2', 21.26], ['d3', 21.28], ['d4', 21.35]]) {
+      put(`availability/${id}`, { online: true, city: 'Raipur', name: id, phone: '9000000000', lat, lng: 81.63, pushToken: `ExponentPushToken[${id}]`, at: ago(60_000) });
+    }
+    put('bookings/o1', { name: 'A', phone: '9111473929', city: 'Raipur', package: '3-hours-600', pickup: '12, Shankar Nagar', preferredTime: '', notes: '', status: 'confirmed', source: 'app', createdAt: ago(600_000), ref: 'DB-1050' });
+    put('offers/o1', {
+      bookingId: 'o1', ref: 'DB-1050', city: 'Raipur', package: '3-hours-600', when: '', area: 'Shankar Nagar', to: '', price: 600, cutPercent: 30, driverPay: 420,
+      status: 'open', takenBy: null, takenAt: null, done: false, paid: false, paidAt: null, createdAt: ago(60_000), updatedAt: ago(60_000), by: 'robot', cities: ['Raipur', 'Bhilai', 'Durg'], payBy: 'cut',
+    });
+    put('bookings/c1', { name: 'B', phone: '9111473928', city: 'Raipur', package: '3-hours-600', pickup: '12, Shankar Nagar', preferredTime: '', notes: '', status: 'assigned', assignedDriver: RAJU, source: 'app', createdAt: ago(600_000), ref: 'DB-1040', updatedBy: `driver-${RAJU.phone}`, updatedAt: ago(5 * 3600_000) });
+    put('tripTaps/c1', { driverPhone: RAJU.phone, leftAt: ago(10 * 60_000), arrivedAt: ago(2 * 60_000) });
+    env.props.set('activeJobs', JSON.stringify({ c1: { p: RAJU.phone, f: '' } }));
+    env.props.set('dispatchOn', '1');
+    env.props.set('confirmsPending', JSON.stringify({ c1: { key: 'd1@1', driverId: 'd1', name: 'Raju Sahu', phone: RAJU.phone, ref: 'DB-1040', at: Date.now() - 5 * 3600_000, reminded: true } }));
+    env.props.set('payoutsPending', JSON.stringify({ [`d1:${env.ctx.istDay(Date.now())}`]: { ids: ['x'], amount: 100, at: Date.now() - 86_400_000 } }));
+  };
+
+  beforeEach(() => {
+    env = load();
+    tenMinutes(); // the first runs: the one-time backfill and the list of current jobs
+  });
+
+  test('an idle robot: at most 4 calls a minute, about 4,300 a day (it was 16 a minute, about 24,000 a day)', () => {
+    const calls = tenMinutes();
+    assert.ok(calls.every((n) => n <= 4), JSON.stringify(calls));
+    const day = (calls.reduce((a, b) => a + b, 0) / 10) * 1440;
+    assert.ok(day <= 4500, `${day} a day`);
+  });
+
+  test('a busy stretch (an offer being dispatched, a take waiting for the call, a payout waiting, a driver on a job): about 8 a minute', () => {
+    busyDay();
+    const calls = tenMinutes();
+    assert.ok(calls.every((n) => n <= 14), JSON.stringify(calls)); // the first minute does the tap's and the offer's work
+    assert.ok(calls.reduce((a, b) => a + b, 0) <= 90, JSON.stringify(calls));
+    assert.ok(env.pushes.some((p) => p.data && p.data.offerId === 'o1'), 'the offer still reaches the drivers');
+    assert.ok(get(env, 'bookings/c1').clock.startAt, 'the driver’s Arrived tap still reaches the booking (the meter)');
+  });
+
+  test('a doorbell: one run for a burst (20 seconds), at most 6 calls', () => {
+    let n0 = env.http.n;
+    env.ctx.doPost({});
+    const first = env.http.n - n0;
+    assert.ok(first <= 6, String(first));
+    n0 = env.http.n;
+    env.ctx.doPost({});
+    env.ctx.doGet({ parameter: {} });
+    assert.equal(env.http.n - n0, 0, 'merged into the first');
+  });
+
+  test('odd minutes leave the app steps alone — unless the minute numbered a new booking (then all in the same minute)', () => {
+    const n0 = env.http.urls.length;
+    tickAt(7);
+    assert.deepEqual(env.http.urls.slice(n0), ['fs:runQuery bookings'], 'only the new-bookings look');
+    seedBooking(env.store, 'b1', { msAgo: 5000, extra: { customerUid: s('u1'), source: s('app') } });
+    tickAt(7);
+    assert.equal(get(env, 'bookings/b1').status, 'confirmed', 'instant confirmation in the same minute');
+    assert.equal(get(env, 'offers/b1').status, 'open', 'and offered in it');
+  });
+
+  test('dispatch every minute only while offers are open (a look every 10 minutes otherwise)', () => {
+    const offerLooks = () => env.http.urls.filter((u) => u === 'fs:runQuery offers').length;
+    let n = offerLooks();
+    tickAt(1);
+    tickAt(3);
+    assert.equal(offerLooks(), n, 'no open offer: not looked for');
+    tickAt(5);
+    assert.equal(offerLooks(), n + 1, 'the 10-minute look');
+    seedBooking(env.store, 'b1', { msAgo: 5000, extra: { customerUid: s('u1'), source: s('app') } });
+    tickAt(7); // numbered, confirmed, offered → dispatching
+    assert.equal(env.props.get('dispatchOn'), '1');
+    env.store.docs.get('offers/b1').status = s('taken');
+    n = offerLooks();
+    tickAt(9);
+    tickAt(11);
+    assert.equal(env.props.get('dispatchOn'), '0', 'none open: stops');
+    assert.equal(offerLooks(), n + 1);
+  });
+
+  test('a waiting confirmation polls Telegram every 2 minutes, and stops after 24 hours (an old take is dropped)', () => {
+    env.props.set('confirmsPending', JSON.stringify({ c1: { key: 'd1@1', driverId: 'd1', name: 'Raju Sahu', phone: RAJU.phone, ref: 'DB-1040', at: Date.now() - 60_000, reminded: false } }));
+    const polls = () => env.tg.calls.filter((c) => c.method === 'getUpdates').length;
+    tickAt(1);
+    assert.equal(polls(), 0, 'odd minute: no poll');
+    tickAt(2);
+    assert.equal(polls(), 1);
+    env.props.set('confirmsPending', JSON.stringify({ c1: { key: 'd1@1', driverId: 'd1', name: 'Raju Sahu', phone: RAJU.phone, ref: 'DB-1040', at: Date.now() - 25 * 3600_000, reminded: true } }));
+    tickAt(4);
+    tickAt(6);
+    assert.equal(polls(), 1, 'expired: no more polling');
+    assert.deepEqual(JSON.parse(env.props.get('confirmsPending')), {});
+  });
+
+  test('payouts waiting more than 2 days: Telegram is asked every 30 minutes, not every 2', () => {
+    env.props.set('payoutsPending', JSON.stringify({ 'd1:2026-11-02': { ids: ['x'], amount: 100, at: Date.now() - 5 * 86_400_000 } }));
+    const polls = () => env.tg.calls.filter((c) => c.method === 'getUpdates').length;
+    for (let m = 1; m <= 29; m++) tickAt(m);
+    assert.equal(polls(), 0);
+    tickAt(30);
+    assert.equal(polls(), 1);
+  });
+
+  test('today’s count; past 14,000 slow mode (Telegram once), the heavy steps every 10 minutes; a fresh count the next day', () => {
+    const today = JSON.parse(env.props.get('fetchBudget'));
+    assert.equal(today.day, env.ctx.istDay(Date.now()));
+    assert.ok(today.n > 0);
+    env.props.set('fetchBudget', JSON.stringify({ day: today.day, n: 14_001, slowSent: false }));
+    assert.equal(tickAt(3), 2, 'the Telegram and the new-bookings look');
+    assert.equal(env.telegram.filter((m) => /Slow mode until midnight/.test(m.text)).length, 1);
+    assert.equal(tickAt(4), 1, 'even minutes too: new bookings only');
+    assert.ok(tickAt(10) > 1, 'every 10 minutes the rest');
+    assert.equal(env.telegram.filter((m) => /Slow mode/.test(m.text)).length, 1, 'once');
+    env.props.set('fetchBudget', JSON.stringify({ day: '2026-01-01', n: 19_000, slowSent: true }));
+    tickAt(2);
+    const fresh = JSON.parse(env.props.get('fetchBudget'));
+    assert.equal(fresh.day, env.ctx.istDay(Date.now()));
+    assert.ok(fresh.n > 0 && fresh.n < 10, String(fresh.n));
+  });
+
+  test('the list of current jobs stays small (a script property holds 9 KB)', () => {
+    const jobs = {};
+    for (let i = 0; i < 150; i++) jobs[`job${String(i).padStart(17, '0')}`] = { p: '2783', f: 'a1b2c3d4', q: 0, u: Math.floor(Date.now() / 60_000) + 1000 + i };
+    jobs.assigned00000000000001 = { p: '2783', f: '', q: 0 };
+    env.ctx.saveActiveJobs_(jobs);
+    const saved = env.props.get('activeJobs');
+    const kept = JSON.parse(saved);
+    assert.equal(Object.keys(kept).length, 90);
+    assert.ok(kept.assigned00000000000001, 'an assigned job always stays');
+    assert.ok(kept.job00000000000000149 && !kept.job00000000000000000, 'the completed jobs nearest the end of their watch go first');
+    assert.ok(saved.length < 9000, String(saved.length));
+    assert.equal(env.ctx.tapsPrint(null), '');
+    assert.match(env.ctx.tapsPrint({ driverPhone: '9893302783', leftAt: new Date(0) }), /^[0-9a-f]{8}$/);
+    assert.notEqual(env.ctx.tapsPrint({ driverPhone: '9893302783', leftAt: new Date(0) }), env.ctx.tapsPrint({ driverPhone: '9893302783', leftAt: new Date(1000) }));
+  });
+
+  test('the quota answers "too many times": the run stops at once, logged once, then a pause of half an hour', () => {
+    const real = env.ctx.UrlFetchApp.fetch;
+    env.ctx.UrlFetchApp.fetch = () => { throw new Error('Exception: Service invoked too many times for one day: urlfetch.'); };
+    tickAt(2); // would throw in every step; the harness fails on any console.error
+    assert.equal(env.warnings.filter((w) => /quota reached/.test(w)).length, 1);
+    assert.ok(Number(env.props.get('quotaHitAt')) > 0);
+    env.ctx.UrlFetchApp.fetch = real;
+    assert.equal(tickAt(4), 0, 'paused');
+    env.props.set('quotaHitAt', String(Date.now() - 31 * 60_000));
+    assert.ok(tickAt(6) > 0, 'tries again after half an hour');
+  });
+});
+
+function get(env, path) {
+  return env.store.docs.has(path) ? env.ctx.fromFields(env.store.docs.get(path)) : null;
+}

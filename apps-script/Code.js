@@ -105,6 +105,38 @@ var DEFAULTS = {
   UPI_NAME: 'DriveBuddy',
 };
 
+/* ============================================================ web calls
+   Apps Script allows a free Gmail account 20,000 UrlFetch calls a day (each
+   request inside fetchAll counts). Every call goes through fetch_ /
+   fetchAll_, which count them (this run, and today in the fetchBudget
+   property) and stop the run at the first "Service invoked too many times". */
+
+var fetchCount_ = 0; // requests in this execution (Apps Script starts every run with fresh globals)
+var quotaHit_ = false; // the daily quota answered "too many times": stop the run
+var QUOTA_ERROR = /Service invoked too many times|Bandwidth quota exceeded/i;
+
+function fetch_(url, opts) {
+  if (quotaHit_) throw new Error('UrlFetch quota reached: stopped');
+  fetchCount_++;
+  try {
+    return UrlFetchApp.fetch(url, opts);
+  } catch (err) {
+    if (QUOTA_ERROR.test(String((err && err.message) || err))) quotaHit_ = true;
+    throw err;
+  }
+}
+
+function fetchAll_(requests) {
+  if (quotaHit_) throw new Error('UrlFetch quota reached: stopped');
+  fetchCount_ += requests.length;
+  try {
+    return UrlFetchApp.fetchAll(requests);
+  } catch (err) {
+    if (QUOTA_ERROR.test(String((err && err.message) || err))) quotaHit_ = true;
+    throw err;
+  }
+}
+
 function prop_(key) {
   var v = PropertiesService.getScriptProperties().getProperty(key);
   return (v && v.trim()) || DEFAULTS[key] || '';
@@ -611,7 +643,7 @@ function docName_(path) {
 }
 
 function fsFetch_(url, payload) {
-  var res = UrlFetchApp.fetch(url, {
+  var res = fetch_(url, {
     method: payload ? 'post' : 'get',
     contentType: 'application/json',
     payload: payload ? JSON.stringify(payload) : undefined,
@@ -677,7 +709,7 @@ function fsQueryAll_(qs) {
   if (!qs.length) return [];
   var headers = { Authorization: 'Bearer ' + ScriptApp.getOAuthToken(), 'X-Goog-User-Project': prop_('FIREBASE_PROJECT_ID') };
   var url = fsBase_() + ':runQuery';
-  var responses = UrlFetchApp.fetchAll(qs.map(function (q) {
+  var responses = fetchAll_(qs.map(function (q) {
     return {
       url: url,
       method: 'post',
@@ -700,7 +732,24 @@ function fieldAt_(data, path) {
 }
 
 function fsCommit_(writes) {
+  // A booking change the later steps of this run must see (its updatedAt moved): the shared query is read again.
+  if (writes.some(function (w) {
+    return w.update && /\/documents\/bookings\/[^/]+$/.test(w.update.name) &&
+      ((w.updateMask && w.updateMask.fieldPaths.indexOf('updatedAt') >= 0) || (!w.updateMask && w.update.fields && w.update.fields.updatedAt));
+  })) bookingsWritten_ = true;
   return fsFetch_(fsBase_() + ':commit', { writes: writes });
+}
+
+/** Many documents in one request (Firestore batchGet, up to 100 a call) → { path: data } for the ones that exist. */
+function fsBatchGet_(paths) {
+  var out = {};
+  for (var i = 0; i < paths.length; i += 100) {
+    var res = fsFetch_(fsBase_() + ':batchGet', { documents: paths.slice(i, i + 100).map(docName_) }) || [];
+    res.forEach(function (r) {
+      if (r.found) out[r.found.name.split('/documents/')[1]] = fromFields(r.found.fields);
+    });
+  }
+  return out;
 }
 
 function fieldFilter_(path, op, value) {
@@ -717,7 +766,7 @@ function sendTelegram_(msg) {
   if (!token || !chats.length) return 'off';
   var sent = 0;
   chats.forEach(function (chatId) {
-    var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+    var res = fetch_('https://api.telegram.org/bot' + token + '/sendMessage', {
       method: 'post',
       contentType: 'application/json',
       payload: JSON.stringify({ chat_id: chatId, text: msg.text, parse_mode: 'HTML', reply_markup: msg.reply_markup, disable_web_page_preview: true }),
@@ -757,7 +806,7 @@ function sendPush_(messages) {
   var headers = { Accept: 'application/json' };
   var expoToken = prop_('EXPO_ACCESS_TOKEN');
   if (expoToken) headers.Authorization = 'Bearer ' + expoToken;
-  var res = UrlFetchApp.fetch('https://exp.host/--/api/v2/push/send', {
+  var res = fetch_('https://exp.host/--/api/v2/push/send', {
     method: 'post',
     contentType: 'application/json',
     headers: headers,
@@ -778,7 +827,7 @@ function whatsappReady_() {
 
 function sendWhatsapp_(payload) {
   var url = 'https://graph.facebook.com/' + prop_('WHATSAPP_API_VERSION') + '/' + prop_('WHATSAPP_PHONE_ID') + '/messages';
-  var res = UrlFetchApp.fetch(url, {
+  var res = fetch_(url, {
     method: 'post',
     contentType: 'application/json',
     headers: { Authorization: 'Bearer ' + prop_('WHATSAPP_TOKEN') },
@@ -858,39 +907,167 @@ function driversTable_() {
 
 /* ============================================================ the robot */
 
-/** Runs every minute (set up by setup()): the safety net behind the instant ping below. */
+/* ------------------------------------------------------------- schedule
+   What runs when, so a normal day stays far below the 20,000 web calls Google
+   allows (each line is about one call; an idle minute costs at most 4):
+     every minute    new bookings (processBookings_) — the alert within a minute
+     even minutes    what changed in the apps and the admin panel: bookings
+                     (one query shared by the instant confirmations, the Sheet,
+                     the customers' notifications and the automatic offers) and
+                     the drivers' taps on their current jobs (one batch read);
+                     prices accepted and jobs given back, each every 4 minutes
+     at once         all of that again when the minute numbered a new booking,
+                     and on the website's / apps' doorbell (ping_)
+     open offers     dispatch every minute while there are any (dispatchOn),
+                     else a look every 10 minutes
+     minute x1       driver applications, the Drivers sheet, trip links (every
+                     10 minutes; the website's driver form rings the doorbell)
+     minutes x3, x9  unhandled-booking nudge, trip reminders, payment links,
+                     ratings, cash limits
+     Telegram        button presses while something waits, every 2 minutes
+                     (payouts older than 2 days: every 30 minutes)
+   Past FETCH_SLOW_ABOVE calls in a day (India date): slow mode — new bookings
+   every minute, everything else every 10 minutes — and Telegram hears once. */
+
+var FETCH_SLOW_ABOVE = 14000;
+var QUOTA_PAUSE_MS = 30 * 60 * 1000;
+
+/** The time the schedule uses (a function, so the tests can set the minute). */
+function nowDate_() {
+  return new Date();
+}
+
+/** Today's web calls (India date): { day, n, slowSent }, a fresh count each day. */
+function fetchBudget_() {
+  var today = istDay(nowDate_().getTime());
+  var b = null;
+  try {
+    b = JSON.parse(PropertiesService.getScriptProperties().getProperty('fetchBudget') || 'null');
+  } catch (err) {
+    b = null;
+  }
+  return b && b.day === today ? b : { day: today, n: 0, slowSent: false };
+}
+
+function saveFetchBudget_(b) {
+  PropertiesService.getScriptProperties().setProperty('fetchBudget', JSON.stringify(b));
+}
+
+/** Adds this run's calls to today's count. */
+function addFetches_(n) {
+  if (!(n > 0)) return;
+  var b = fetchBudget_();
+  b.n += n;
+  saveFetchBudget_(b);
+}
+
+function addFetchesSafe_(n) {
+  try { addFetches_(n); } catch (err) { /* the count must never break an answer */ }
+}
+
+/** A step that runs only when `test()` says so at its turn (it sees what the steps before it did). */
+function onlyIf_(test, fn) {
+  var step = function () { if (test()) return fn(); };
+  step.stepName = fn.name;
+  return step;
+}
+
+/** New bookings numbered in this run (processBookings_): the app steps then run in the same minute. */
+var bookingsNumbered_ = 0;
+
+/** The steps that read what changed in the apps and /admin (the shared bookings query and the taps). */
+function appSteps_() {
+  return [watchChanges_, syncBookingsSheet_, notifyCustomers_, autoOffers_];
+}
+
+/** Dispatch while there are open offers (dispatchOn), else every 10 minutes in case one came without a doorbell. */
+function dispatchDue_(m) {
+  return PropertiesService.getScriptProperties().getProperty('dispatchOn') === '1' || m % 10 === 5;
+}
+
+/** Telegram's button presses: while something waits, every 2 minutes; only old payouts waiting: every 30 minutes. */
+function telegramDue_(m) {
+  var props = PropertiesService.getScriptProperties();
+  var confirms = Object.keys(confirmsPending_()).length > 0;
+  var payouts = JSON.parse(props.getProperty('payoutsPending') || '{}');
+  var keys = Object.keys(payouts);
+  if (!confirms && !keys.length) return false;
+  var now = nowDate_().getTime();
+  var fresh = confirms || keys.some(function (k) { return now - (payouts[k].at || 0) < 2 * 86400000; });
+  return fresh ? m % 2 === 0 : m % 30 === 0;
+}
+
+/** Runs every minute (set up by setup()): the safety net behind the instant ping below. See "schedule". */
 function tick() {
-  var steps = robotSteps_();
-  // Every 5 minutes: things that can wait a few minutes (and cost a query each).
-  if (new Date().getMinutes() % 5 === 0) steps.push(remindUnhandled_, tripReminders_, pollPayments_, processRatingsStep_, cashLimits_);
-  steps.push(confirmBackfill_, telegramCallbacks_, ensureRailTrigger_, ensureTimeTriggers_);
+  var m = nowDate_().getMinutes();
+  var budget = fetchBudget_();
+  if (budget.n > FETCH_SLOW_ABOVE) {
+    runSteps_([slowModeNotice_, processBookings_].concat(m % 10 === 0
+      ? appSteps_().concat([dispatchOffers_, processDrivers_, syncDriversSheet_, telegramCallbacks_]) : []), 5000);
+    return;
+  }
+  var steps = [processBookings_];
+  appSteps_().forEach(function (fn) { steps.push(onlyIf_(function () { return m % 2 === 0 || bookingsNumbered_ > 0; }, fn)); });
+  steps.push(onlyIf_(function () { return dispatchDue_(m); }, dispatchOffers_));
+  if (m % 10 === 1) steps.push(processDrivers_, syncDriversSheet_, syncTripClocks_);
+  if (m % 10 === 3 || m % 10 === 9) steps.push(remindUnhandled_, tripReminders_, pollPayments_, processRatingsStep_, cashLimits_);
+  steps.push(confirmBackfill_, onlyIf_(function () { return telegramDue_(m); }, telegramCallbacks_), ensureRailTrigger_, ensureTimeTriggers_);
   runSteps_(steps, 5000);
 }
 
-/**
- * The minute's work, in order: number new bookings, then what drivers and
- * customers did in the apps (watchChanges_: instant confirmations, taps,
- * given-back jobs, completions, ratings), then the Sheet, the customers'
- * notifications and the job offers — so each sees the others' changes in the
- * same minute.
- */
-function robotSteps_() {
-  return [processBookings_, watchChanges_, processDrivers_, syncBookingsSheet_, syncDriversSheet_, notifyCustomers_, syncTripClocks_, autoOffers_, dispatchOffers_];
+/** Slow mode's one Telegram a day. */
+function slowModeNotice_() {
+  var b = fetchBudget_();
+  if (b.slowSent) return;
+  b.slowSent = true;
+  saveFetchBudget_(b);
+  telegramLine_('⚠️ The robot has made ' + b.n + ' web calls today (Google allows 20,000 a day). Slow mode until midnight: new bookings still alert within a minute; app taps, offers and the Sheet every 10 minutes.');
 }
 
-/** Runs the steps under the script lock. One failing step never stops the others. */
+/**
+ * The minute's work on a doorbell (ping_) — what the website or an app may
+ * have just changed: new bookings and driver applications, the apps'
+ * changes, then the offers (a doorbell often means one was posted, taken or
+ * given back).
+ */
+function robotSteps_() {
+  return [processBookings_, processDrivers_].concat(appSteps_()).concat([dispatchOffers_]);
+}
+
+/**
+ * Runs the steps under the script lock. One failing step never stops the
+ * others — except the daily UrlFetch quota: then the run stops at once (and
+ * runs pause for half an hour), logged once.
+ */
 function runSteps_(steps, waitMs) {
+  var props = PropertiesService.getScriptProperties();
+  var hitAt = Number(props.getProperty('quotaHitAt') || 0);
+  if (hitAt && Date.now() - hitAt < QUOTA_PAUSE_MS) return false;
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(waitMs)) return false; // another run is going; it or the next one picks this up
+  var before = fetchCount_;
+  quotaHit_ = false; // (a fresh execution in Apps Script; here after the pause)
+  bookingsNumbered_ = 0;
+  stream_ = null;
+  inRun_ = true;
   try {
-    steps.forEach(function (step) {
+    for (var i = 0; i < steps.length; i++) {
+      var step = steps[i];
       try {
         step();
       } catch (err) {
-        console.error(step.name + ': ' + (err && err.stack || err));
+        if (quotaHit_) break;
+        console.error((step.stepName || step.name) + ': ' + (err && err.stack || err));
       }
-    });
+      if (quotaHit_) break;
+    }
+    if (quotaHit_) {
+      props.setProperty('quotaHitAt', String(Date.now()));
+      console.warn('UrlFetch daily quota reached: run stopped; the robot pauses ' + QUOTA_PAUSE_MS / 60000 + ' minutes between tries.');
+    }
   } finally {
+    inRun_ = false;
+    addFetchesSafe_(fetchCount_ - before);
     lock.releaseLock();
   }
   return true;
@@ -911,11 +1088,14 @@ function doPost(e) {
     body = null; // the website's doorbell sends no JSON
   }
   if (body && (body.action === 'driver-otp' || body.action === 'driver-verify')) {
+    var before = fetchCount_;
     try {
       return jsonOut_(body.action === 'driver-otp' ? driverOtp_(body, Date.now()) : driverVerify_(body, Date.now()));
     } catch (err) {
       console.warn('driver login: ' + (err && err.stack || err));
       return jsonOut_({ ok: false, error: 'unavailable' });
+    } finally {
+      addFetchesSafe_(fetchCount_ - before);
     }
   }
   return ping_();
@@ -925,12 +1105,15 @@ function doPost(e) {
 function doGet(e) {
   var p = (e && e.parameter) || {};
   if (p.action === 'trains') {
+    var before = fetchCount_;
     try {
       return jsonOut_(trainsLookup_(p, Date.now()));
     } catch (err) {
       // Never an error page: the website and the app read a failed search and try again.
       console.warn('trainsLookup_: ' + (err && err.stack || err));
       return jsonOut_({ ok: false, error: 'unavailable' });
+    } finally {
+      addFetchesSafe_(fetchCount_ - before);
     }
   }
   return ping_();
@@ -1050,7 +1233,7 @@ function mcToken_(fresh) {
   var cache = CacheService.getScriptCache();
   var had = !fresh && cache.get('mc-token');
   if (had) return had;
-  var res = UrlFetchApp.fetch(MC_API + '/auth/v1/authentication/token?customerId=' + encodeURIComponent(prop_('MC_CUSTOMER_ID')) +
+  var res = fetch_(MC_API + '/auth/v1/authentication/token?customerId=' + encodeURIComponent(prop_('MC_CUSTOMER_ID')) +
     '&key=' + encodeURIComponent(Utilities.base64Encode(prop_('MC_PASSWORD'))) + '&scope=NEW&country=91', {
     method: 'get', headers: { accept: '*/*' }, muteHttpExceptions: true,
   });
@@ -1063,7 +1246,7 @@ function mcToken_(fresh) {
 /** A call to Message Central with its login; logs in again once if it has run out. */
 function mcFetch_(method, path) {
   for (var attempt = 0; attempt < 2; attempt++) {
-    var res = UrlFetchApp.fetch(MC_API + path, { method: method, headers: { authToken: mcToken_(attempt > 0) }, muteHttpExceptions: true });
+    var res = fetch_(MC_API + path, { method: method, headers: { authToken: mcToken_(attempt > 0) }, muteHttpExceptions: true });
     var code = res.getResponseCode();
     if ((code === 401 || code === 403) && attempt === 0) continue;
     var body = {};
@@ -1519,7 +1702,7 @@ function siteConfig_() {
   var cache = CacheService.getScriptCache();
   var had = cache.get('siteConfig');
   if (had) return JSON.parse(had);
-  var res = UrlFetchApp.fetch(prop_('SITE_URL') + '/app-config.json', { muteHttpExceptions: true });
+  var res = fetch_(prop_('SITE_URL') + '/app-config.json', { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) return null;
   var all = JSON.parse(res.getContentText()) || {};
   if (!all.prices) return null;
@@ -1581,13 +1764,21 @@ function autoOffers_() {
       var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date(), rates, nearKm);
       if (!offer) return;
       fsCommit_([{ update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } }]);
+      dispatchOn_();
     });
   });
+}
+
+/** There is an open offer: dispatch every minute until none is left (see "schedule"). */
+function dispatchOn_() {
+  PropertiesService.getScriptProperties().setProperty('dispatchOn', '1');
 }
 
 /** Every open offer: push to the nearest online drivers, then the rest, then Telegram. */
 function dispatchOffers_() {
   var offers = fsQuery_('offers', fieldFilter_('status', 'EQUAL', 'open'), 'ASCENDING', 20, 'status');
+  // No open offer left: the minute-by-minute dispatch stops (a new offer or a doorbell starts it again).
+  PropertiesService.getScriptProperties().setProperty('dispatchOn', offers.length ? '1' : '0');
   if (!offers.length) return;
   var now = Date.now();
   var byCity = {};
@@ -1663,11 +1854,9 @@ function dispatchOffers_() {
       keep.stillPushedAt = keep.stillPushedAt || new Date(now);
       touched = true;
     }
-    var pool = [];
-    cities.forEach(function (c) {
-      if (!byCity[c]) byCity[c] = fsQuery_('availability', fieldFilter_('city', 'EQUAL', c), 'ASCENDING', 100, 'city');
-      pool = pool.concat(byCity[c]);
-    });
+    // Online drivers: one query a run for all cities (not one per city), then those of the offer's cities.
+    if (!byCity.online) byCity.online = fsQuery_('availability', fieldFilter_('online', 'EQUAL', true), 'ASCENDING', 300, 'online');
+    var pool = byCity.online.filter(function (r) { return cities.indexOf(r.data && r.data.city) >= 0; });
     var spot = (booking.pickupGeo && typeof booking.pickupGeo.lat === 'number') ? booking.pickupGeo : (CITY_CENTRES[o.city] || CITY_CENTRES.Raipur);
     var ranked = rankDrivers(pool, spot, now, quality, cashLimit).filter(function (d) { return keep.skipIds.indexOf(d.id) < 0; });
     var step = raised && alert && alert.stage >= 1
@@ -2214,34 +2403,189 @@ function telegramLine_(text) {
 /* ----------------------------------------------------- what changed, at once */
 
 /**
- * The apps' news since the last minute, in one round trip (fsQueryAll_):
- * bookings changed (instant confirmations, completions), prices accepted,
- * Start / Job done / Reached home taps, jobs given back. Each has its own
- * bookmark, and one that fails never stops the others.
+ * The apps' news since the last look, in one round trip (fsQueryAll_):
+ * bookings changed (instant confirmations, completions, takes — the shared
+ * query the later steps reuse), prices accepted, jobs given back (every 4
+ * minutes and on a doorbell; the Driver app rings it), then the drivers'
+ * taps on their current jobs in one batch read (tapsWatch_). Each has its
+ * own bookmark, and one that fails never stops the others.
  */
 function watchChanges_() {
   confirmedThisRun_ = {};
-  var jobs = [
-    { spec: sinceSpec_('bookings', 'robotBookingsMs'), run: changedBookings_ },
-    { spec: sinceSpec_('bookings', 'acceptedPriceMs', 'acceptedPrice.at'), run: acceptedPrices_ },
-    { spec: sinceSpec_('tripTaps', 'tapsLeftMs', 'leftAt'), run: syncTripTaps_ },
-    { spec: sinceSpec_('tripTaps', 'tapsArrivedMs', 'arrivedAt'), run: syncTripTaps_ },
-    { spec: sinceSpec_('tripTaps', 'tapsDoneMs', 'doneAt'), run: syncTripTaps_ },
-    { spec: sinceSpec_('tripTaps', 'tapsHomeMs', 'homeAt'), run: syncTripTaps_ },
-    { spec: sinceSpec_('tripTaps', 'tapsPaidMs', 'paidAt'), run: paidTaps_ },
-    { spec: { collection: 'offers', where: fieldFilter_('status', 'EQUAL', 'released'), field: 'status', limit: 20 }, run: releasedOffers_ },
-  ];
+  // Prices accepted and jobs given back: each every 4 minutes (in turn), and always on a doorbell.
+  var m = nowDate_().getMinutes();
+  var all = !inRun_ || pingRun_;
+  var jobs = [{ spec: bookingStreamSpec_(), mark: 'robotBookingsMs', run: changedBookings_ }];
+  if (all || m % 4 === 2) jobs.push({ spec: sinceSpec_('bookings', 'acceptedPriceMs', 'acceptedPrice.at'), run: acceptedPrices_ });
+  if (all || m % 4 === 0) jobs.push({ spec: { collection: 'offers', where: fieldFilter_('status', 'EQUAL', 'released'), field: 'status', limit: 20 }, run: releasedOffers_ });
   var results = fsQueryAll_(jobs.map(function (j) { return j.spec; }));
+  if (!results[0].error) keepStream_(results[0].rows);
   jobs.forEach(function (j, i) {
     try {
       var r = results[i];
       if (r.error) throw r.error;
-      if (j.spec.bookmark) sinceRun_(j.spec, r.rows, j.run);
+      if (j.mark) sinceRun_(sinceSpec_('bookings', j.mark), r.rows, j.run);
+      else if (j.spec.bookmark) sinceRun_(j.spec, r.rows, j.run);
       else if (r.rows.length) j.run(r.rows);
     } catch (err) {
       console.error(j.run.name + ': ' + (err && err.stack || err));
     }
   });
+  try {
+    tapsWatch_();
+  } catch (err) {
+    console.error('tapsWatch_: ' + (err && err.stack || err));
+  }
+}
+
+/** A doorbell run (ping_): everything the apps may have just changed is looked at. */
+var pingRun_ = false;
+
+/* ----------------------------------------------- the drivers' current jobs
+   activeJobs (script property, kept small: a property holds 9 KB):
+   { bookingId: { p: his phone's last 4 digits, f: a short hash of his taps
+   as last seen, q: 1 once "payment received" was seen, u: until when (epoch
+   minutes) a completed job is watched for that tap } }; at most
+   ACTIVE_JOBS_MAX, the oldest completed ones dropped first. Kept from the changed bookings (assigned →
+   watched; completed → three more days; anything else → dropped), started
+   from Firestore the first time, checked again every night. Their taps are
+   read in one batch (one call however many jobs), and only a job whose taps
+   changed is worked on. */
+var TAPS_WATCH_DONE_MS = 3 * 86400000;
+var ACTIVE_JOBS_MAX = 90;
+
+function activeJobs_() {
+  try {
+    return JSON.parse(PropertiesService.getScriptProperties().getProperty('activeJobs') || 'null');
+  } catch (err) {
+    return null;
+  }
+}
+
+function saveActiveJobs_(jobs) {
+  var ids = Object.keys(jobs);
+  if (ids.length > ACTIVE_JOBS_MAX) {
+    // Too many: the completed ones closest to the end of their watch go first (assigned jobs always stay).
+    ids.filter(function (id) { return jobs[id].u; })
+      .sort(function (a, b) { return jobs[a].u - jobs[b].u; })
+      .slice(0, ids.length - ACTIVE_JOBS_MAX)
+      .forEach(function (id) { delete jobs[id]; });
+  }
+  PropertiesService.getScriptProperties().setProperty('activeJobs', JSON.stringify(jobs));
+}
+
+/** The last 4 digits of a phone: enough to see that the job has another driver. */
+function phoneTail_(phone) {
+  return String(phone || '').replace(/\D/g, '').slice(-4);
+}
+
+/** Changed bookings → the jobs to watch (changes `jobs`). */
+function noteActiveJobs_(rows, jobs) {
+  var changed = false;
+  (rows || []).forEach(function (row) {
+    var b = row.data || {};
+    var d = b.assignedDriver;
+    var phone = d && d.phone ? phoneTail_(d.phone) : '';
+    var had = jobs[row.id];
+    var same = had && had.p === phone;
+    if (b.status === 'assigned' && phone) {
+      if (!same || had.u) { jobs[row.id] = { p: phone, f: same ? had.f : '', q: same ? had.q || 0 : 0 }; changed = true; }
+    } else if (b.status === 'completed' && phone) {
+      var until = Math.floor(((b.updatedAt ? b.updatedAt.getTime() : Date.now()) + TAPS_WATCH_DONE_MS) / 60000);
+      if (!same || had.u !== until) { jobs[row.id] = { p: phone, f: same ? had.f : '', q: same ? had.q || 0 : 0, u: until }; changed = true; }
+    } else if (had) {
+      delete jobs[row.id];
+      changed = true;
+    }
+  });
+  return changed;
+}
+
+/** The first time: every assigned booking, and those completed in the last three days. */
+function bootstrapActiveJobs_() {
+  var res = fsQueryAll_([
+    { collection: 'bookings', where: fieldFilter_('status', 'EQUAL', 'assigned'), field: 'status', limit: 300 },
+    { collection: 'bookings', where: fieldFilter_('updatedAt', 'GREATER_THAN_OR_EQUAL', new Date(Date.now() - TAPS_WATCH_DONE_MS)), field: 'updatedAt', limit: 500 },
+  ]);
+  var jobs = {};
+  res.forEach(function (r) {
+    if (r.error) throw r.error;
+    noteActiveJobs_(r.rows.filter(function (row) { return row.data.status === 'assigned' || row.data.status === 'completed'; }), jobs);
+  });
+  return jobs;
+}
+
+/** Nightly: the assigned jobs from Firestore itself (a missed change never leaves a job unwatched for long). */
+function reconcileActiveJobs_(assignedRows) {
+  var jobs = activeJobs_() || {};
+  Object.keys(jobs).forEach(function (id) { if (!jobs[id].u) delete jobs[id]; });
+  noteActiveJobs_(assignedRows, jobs);
+  saveActiveJobs_(jobs);
+}
+
+function msOf_(d) {
+  return d && d.getTime ? d.getTime() : '';
+}
+
+/** A taps document as a short hash (8 hex digits), to see whether it changed; '' for none. */
+function tapsPrint(t) {
+  if (!t) return '';
+  var text = [t.driverPhone || '', msOf_(t.leftAt), msOf_(t.arrivedAt), msOf_(t.doneAt), msOf_(t.homeAt), t.paidBy || '', msOf_(t.paidAt)].join('|');
+  var h = 5381;
+  for (var i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return ('0000000' + h.toString(16)).slice(-8);
+}
+
+/**
+ * The drivers' taps on their current jobs: one batch read; a job whose taps
+ * changed goes to syncTaps_ (Start, Arrived, Job done, Reached home) and, at
+ * a new "payment received", to takePayment_. A completed job whose payment
+ * the driver has confirmed is no longer watched.
+ */
+function tapsWatch_() {
+  var jobs = activeJobs_();
+  var changed = false;
+  if (!jobs) {
+    jobs = bootstrapActiveJobs_();
+    changed = true;
+  }
+  var nowMin = Date.now() / 60000;
+  Object.keys(jobs).forEach(function (id) {
+    if (jobs[id].u && jobs[id].u < nowMin) {
+      delete jobs[id];
+      changed = true;
+    }
+  });
+  var ids = Object.keys(jobs);
+  if (ids.length) {
+    var docs = fsBatchGet_(ids.map(function (id) { return 'tripTaps/' + id; }));
+    ids.forEach(function (id) {
+      var e = jobs[id];
+      var t = docs['tripTaps/' + id] || null;
+      var fp = tapsPrint(t);
+      if (fp === (e.f || '')) return;
+      try {
+        if (t) {
+          syncTaps_(id, t);
+          if (t.paidBy && !e.q) {
+            var b = fsGet_('bookings/' + id);
+            takePayment_(id, b, t, true);
+            if (b && b.status === 'completed') {
+              delete jobs[id];
+              changed = true;
+              return;
+            }
+            e.q = 1;
+          }
+        }
+        e.f = fp;
+        changed = true;
+      } catch (err) {
+        console.error('taps of ' + id + ': ' + (err && err.stack || err)); // tried again next time (e.f unchanged)
+      }
+    });
+  }
+  if (changed) saveActiveJobs_(jobs);
 }
 
 /**
@@ -2251,6 +2595,8 @@ function watchChanges_() {
  * link, rating request). All safe to repeat.
  */
 function changedBookings_(rows) {
+  var jobs = activeJobs_();
+  if (jobs && noteActiveJobs_(rows, jobs)) saveActiveJobs_(jobs);
   instantConfirm_(rows);
   confirmAssignments_(rows, false);
   paymentsAwaitingBill_(rows);
@@ -2361,6 +2707,7 @@ function releasedOffers_(rows) {
           },
         },
       ]);
+      dispatchOn_();
     } else {
       // Assigned by hand or cancelled meanwhile: nothing to offer.
       fsCommit_([{
@@ -2607,6 +2954,7 @@ function giveToAnother_(id, b, e) {
       },
     },
   ]);
+  dispatchOn_();
   var av = fsGet_('availability/' + e.driverId);
   if (av && av.pushToken) sendPush_([givenAwayPush(av.pushToken, id)]);
   return '';
@@ -2646,10 +2994,6 @@ function confirmPress_(cq, c, pending) {
 }
 
 /* ------------------------------------------------------- the driver's taps */
-
-function syncTripTaps_(rows) {
-  rows.forEach(function (row) { syncTaps_(row.id, row.data); });
-}
 
 /**
  * One booking's taps. A trip: Start / Job done / Reached home become the
@@ -2738,7 +3082,7 @@ function razorpayReady_() {
 /** Basic auth for Razorpay. Built here only; never logged, stored or returned. */
 function razorpayFetch_(method, path, payload) {
   var auth = 'Basic ' + Utilities.base64Encode(prop_('RAZORPAY_KEY_ID') + ':' + prop_('RAZORPAY_KEY_SECRET'));
-  var res = UrlFetchApp.fetch(RAZORPAY_API + path, {
+  var res = fetch_(RAZORPAY_API + path, {
     method: method,
     contentType: 'application/json',
     headers: { Authorization: auth },
@@ -2865,13 +3209,6 @@ function paymentsAwaitingBill_(rows) {
       var p = takePayment_(row.id, b, taps, false);
       if (p) b.payment = p; // completedBookings_ (next) sees it paid: no link, and the rating request
     }
-  });
-}
-
-/** The driver tapped "Paid by UPI" / "Paid in cash" (tripTaps paidBy, paidAt). */
-function paidTaps_(rows) {
-  rows.forEach(function (row) {
-    if (row.data.paidBy) takePayment_(row.id, fsGet_('bookings/' + row.id), row.data, true);
   });
 }
 
@@ -3126,7 +3463,7 @@ function sendPayouts_() {
 }
 
 function telegramApi_(method, payload) {
-  var res = UrlFetchApp.fetch('https://api.telegram.org/bot' + prop_('TELEGRAM_BOT_TOKEN') + '/' + method, {
+  var res = fetch_('https://api.telegram.org/bot' + prop_('TELEGRAM_BOT_TOKEN') + '/' + method, {
     method: 'post',
     contentType: 'application/json',
     payload: JSON.stringify(payload),
@@ -3227,7 +3564,7 @@ function dailyReport() {
 function sendDailyReport_() {
   var now = Date.now();
   var midnight = new Date(Date.parse(istDay(now) + 'T00:00:00+05:30'));
-  var names = ['created', 'changed', 'offersToday', 'open', 'unpaid', 'online', 'drivers', 'paidToday'];
+  var names = ['created', 'changed', 'offersToday', 'open', 'unpaid', 'online', 'drivers', 'paidToday', 'assigned'];
   var res = fsQueryAll_([
     { collection: 'bookings', where: fieldFilter_('createdAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'createdAt', limit: 500 },
     { collection: 'bookings', where: fieldFilter_('updatedAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'updatedAt', limit: 500 },
@@ -3237,6 +3574,7 @@ function sendDailyReport_() {
     { collection: 'availability', where: fieldFilter_('online', 'EQUAL', true), field: 'online', limit: 200 },
     { collection: 'drivers', where: fieldFilter_('status', 'EQUAL', 'active'), field: 'status', limit: 500 },
     { collection: 'bookings', where: fieldFilter_('payment.paidAt', 'GREATER_THAN_OR_EQUAL', midnight), field: 'payment.paidAt', limit: 500 },
+    { collection: 'bookings', where: fieldFilter_('status', 'EQUAL', 'assigned'), field: 'status', limit: 300 },
   ]);
   var q = {};
   res.forEach(function (r, i) {
@@ -3244,6 +3582,9 @@ function sendDailyReport_() {
     q[names[i]] = r.rows;
   });
   sendTelegram_({ text: dailyReportText(dailySummary(q, now)) });
+  reconcileActiveJobs_(q.assigned);
+  // Today's web calls, for the record (Google allows 20,000 a day).
+  console.log('UrlFetch calls today: ' + fetchBudget_().n);
   // Once a day the ranking's copy of ratings and strikes is made again from the
   // drivers themselves, and the cash each one holds from all unpaid jobs.
   var prev = driverQuality_();
@@ -3497,7 +3838,7 @@ function railSave_(results) {
 /** Asks RailRadar for these searches (budget already counted): one result each, in order. */
 function railFetch_(queries, key, now) {
   if (!queries.length) return [];
-  var responses = UrlFetchApp.fetchAll(queries.map(function (m) {
+  var responses = fetchAll_(queries.map(function (m) {
     return {
       url: RAIL_API + '/trains/between/' + m.q.from + '/' + m.q.to +
         (m.q.date ? '?date=' + m.q.date + (m.live ? '&live=true' : '') : ''),
@@ -3659,11 +4000,27 @@ function ensureRailTrigger_() {
   props.setProperty('railRefreshTrigger', 'v1');
 }
 
+/**
+ * The doorbell: one run for a burst of rings (20 seconds; the next tick
+ * picks up anything later). A ring often means an offer was posted, taken or
+ * given back, so the offers are dispatched while any are open. Slow mode:
+ * new bookings only.
+ */
 function ping_() {
   var cache = CacheService.getScriptCache();
   if (!cache.get('ping')) {
-    cache.put('ping', '1', 3);
-    runSteps_(robotSteps_(), 25000);
+    cache.put('ping', '1', 20);
+    if (fetchBudget_().n > FETCH_SLOW_ABOVE) {
+      runSteps_([processBookings_], 25000);
+    } else {
+      PropertiesService.getScriptProperties().setProperty('dispatchOn', '1');
+      pingRun_ = true;
+      try {
+        runSteps_(robotSteps_(), 25000);
+      } finally {
+        pingRun_ = false;
+      }
+    }
   }
   return ContentService.createTextOutput('ok');
 }
@@ -3759,6 +4116,7 @@ function processBookings_() {
     ]);
 
     props.setProperty('lastBookingMs', String(b.createdAt.getTime()));
+    bookingsNumbered_++;
   });
 
   var cache = CacheService.getScriptCache();
@@ -3806,7 +4164,39 @@ function processDrivers_() {
  */
 function changedSince_(collection, bookmark, handle, field) {
   var spec = sinceSpec_(collection, bookmark, field);
-  return sinceRun_(spec, fsQuery_(spec.collection, spec.where, 'ASCENDING', spec.limit, spec.field), handle);
+  // Changed bookings: one query a run, shared by every step that follows them (bookingStream_).
+  var rows = collection === 'bookings' && !field ? bookingStream_() : fsQuery_(spec.collection, spec.where, 'ASCENDING', spec.limit, spec.field);
+  return sinceRun_(spec, rows, handle);
+}
+
+/* The shared "bookings changed" query. Four steps follow changed bookings,
+   each with its own bookmark (the instant confirmations, the Sheet, the
+   customers' notifications, the automatic offers): one query from the
+   oldest bookmark serves them all, each taking the rows past its own. It is
+   read again only when this run itself changed a booking (fsCommit_). */
+var stream_ = null; //          this run's rows
+var inRun_ = false; //          inside runSteps_ (a step called on its own reads afresh)
+var bookingsWritten_ = false; // a booking's updatedAt moved since the rows were read
+var BOOKING_BOOKMARKS = ['robotBookingsMs', 'sheetBookingsMs', 'notifyBookingsMs', 'autoOfferMs'];
+
+function bookingStreamSpec_() {
+  var props = PropertiesService.getScriptProperties();
+  var fallback = Date.now() - 15 * 60 * 1000;
+  var marks = BOOKING_BOOKMARKS.filter(function (k) { return k !== 'autoOfferMs' || prop_('AUTO_OFFERS') !== 'off'; });
+  var since = Math.min.apply(null, marks.map(function (k) { return Number(props.getProperty(k) || fallback); }));
+  return { collection: 'bookings', where: fieldFilter_('updatedAt', 'GREATER_THAN_OR_EQUAL', new Date(since)), field: 'updatedAt', dir: 'ASCENDING', limit: 200 };
+}
+
+function keepStream_(rows) {
+  bookingsWritten_ = false;
+  if (inRun_) stream_ = { rows: rows };
+  return rows;
+}
+
+function bookingStream_() {
+  if (inRun_ && stream_ && !bookingsWritten_) return stream_.rows;
+  var spec = bookingStreamSpec_();
+  return keepStream_(fsQuery_(spec.collection, spec.where, 'ASCENDING', spec.limit, spec.field));
 }
 
 /**
@@ -3833,7 +4223,8 @@ function sinceRun_(spec, rows, handle) {
   var since = spec.since;
   var seen = spec.seen;
   var ms = function (r) { return fieldAt_(r.data, spec.field).getTime(); };
-  rows = rows.filter(function (r) { return !(ms(r) === since && seen.indexOf(r.id) >= 0); });
+  // (A shared query may start before this bookmark: only the rows past it.)
+  rows = rows.filter(function (r) { return ms(r) >= since && !(ms(r) === since && seen.indexOf(r.id) >= 0); });
   if (!rows.length) return 0;
   handle(rows);
   var last = ms(rows[rows.length - 1]);
@@ -4126,7 +4517,7 @@ function setup() {
   console.log('✓ Firestore reachable for project ' + prop_('FIREBASE_PROJECT_ID'));
 
   // 2. Telegram chat(s): everyone who has messaged the bot
-  var upd = JSON.parse(UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getUpdates', { muteHttpExceptions: true }).getContentText());
+  var upd = JSON.parse(fetch_('https://api.telegram.org/bot' + token + '/getUpdates', { muteHttpExceptions: true }).getContentText());
   if (!upd.ok) throw new Error('Telegram did not accept the bot token (' + (upd.description || 'no reason given') + '). In @BotFather: /mybots → your bot → API Token, copy it, and paste it here again.');
   var chats = {};
   (upd.result || []).forEach(function (u) {
@@ -4140,12 +4531,12 @@ function setup() {
   // Keep only chats this bot can actually reach (an old bot's chat gives "chat not found").
   var known = prop_('TELEGRAM_CHAT_ID').split(',').map(function (s) { return s.trim(); }).filter(function (id) {
     if (!id || chats[id] !== undefined) return false;
-    var r = JSON.parse(UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getChat?chat_id=' + encodeURIComponent(id), { muteHttpExceptions: true }).getContentText());
+    var r = JSON.parse(fetch_('https://api.telegram.org/bot' + token + '/getChat?chat_id=' + encodeURIComponent(id), { muteHttpExceptions: true }).getContentText());
     return r.ok;
   });
   Object.keys(chats).forEach(function (id) { if (known.indexOf(id) < 0) known.push(id); });
   if (!known.length) {
-    var me = JSON.parse(UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/getMe', { muteHttpExceptions: true }).getContentText());
+    var me = JSON.parse(fetch_('https://api.telegram.org/bot' + token + '/getMe', { muteHttpExceptions: true }).getContentText());
     var bot = me.ok && me.result && me.result.username ? '@' + me.result.username + ' (t.me/' + me.result.username + ')' : 'your bot';
     throw new Error('No Telegram chat found. Open ' + bot + ' in Telegram, press START, send "hi", then run Connect Telegram and start again.');
   }
@@ -4234,7 +4625,7 @@ if (typeof module !== 'undefined') {
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
     estimateOf: estimateOf,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
-    ZONES: ZONES, zoneOf: zoneOf, LOCAL_GRACE_MIN: LOCAL_GRACE_MIN, usedHours: usedHours, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt, nearKmOf: nearKmOf,
+    tapsPrint: tapsPrint, ZONES: ZONES, zoneOf: zoneOf, LOCAL_GRACE_MIN: LOCAL_GRACE_MIN, usedHours: usedHours, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt, nearKmOf: nearKmOf,
     parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen, confirmedFor: confirmedFor,
     UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
   };
