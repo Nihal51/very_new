@@ -53,14 +53,21 @@ const ROUTES = [
   .filter((t) => t.dest && t.est)
   .sort((a, b) => a.km - b.km);
 
+/** Whole hours from when he leaves until he is home on a route in the table (the route's average). */
+const awayHours = (t: (typeof ROUTES)[number]) =>
+  t.est?.time?.hours ?? (t.plan?.homeAt !== undefined ? Math.ceil(t.plan.homeAt - 1e-9) : 0);
+
 /** "about 13 h" — the driver's time on a route in the table (leaves → home, the route's average). */
 const awayText = (id: string) => {
-  const h = ROUTES.find((t) => t.dest?.id === id)?.est?.time?.hours;
+  const t = ROUTES.find((r) => r.dest?.id === id);
+  const h = t ? awayHours(t) : 0;
   return h ? `about ${h} hours` : 'a day or more';
 };
 
-/** "Same day" / "1 × 24 h + 2 h" — what a route in the table is charged. */
+/** "Same day — one price" / "1 driving day + 11 h home" — what a route in the table is charged. */
 const chargedText = (t: (typeof ROUTES)[number]) => {
+  const l = t.est?.long;
+  if (l) return `${l.drivingDays} driving day${l.drivingDays === 1 ? '' : 's'} + ${l.returnHours} h home`;
   const x = t.est?.time;
   if (!x) return '';
   if (x.short && x.days === 1) return 'Same day — one price';
@@ -101,9 +108,9 @@ const steps = [
 
 const included = [
   'A police-verified, sober, highway-experienced driver',
-  `One price for the driver’s time, from when he leaves until he is home — ${priceText.timeRule}`,
   `Up to ${priceText.sameDayKm} he is home the same day: one price for the trip, ${priceText.sameDayDrop} by distance`,
-  'Waiting for his train and his ride home, inside the 24-hour blocks',
+  `Farther: ${priceText.timeRule}`,
+  'Waiting for the train you pick and his ride home, by the hour — never more than a day’s price for each 24 hours',
   'The estimate times his train home from your start date and time',
   'Ride along or send the car alone — the same price',
 ];
@@ -220,12 +227,12 @@ export default function OneWayDropPage() {
                       {/* Phones: his time and what is charged under the name, the price stays in view. */}
                       <span className="sm:hidden">
                         {' · '}
-                        {`about ${t.est?.time?.hours ?? 0} h away · ${chargedText(t)}`}
+                        {`about ${awayHours(t)} h away · ${chargedText(t)}`}
                       </span>
                     </span>
                   </th>
                   <td className="hidden px-4 py-3 sm:table-cell">
-                    <span className="tabular block">about {t.est?.time?.hours ?? 0} h, leaves → home</span>
+                    <span className="tabular block">about {awayHours(t)} h, leaves → home</span>
                     {t.home ? <span className="text-fg-muted block text-xs">home by {homeText(t.home)} (average)</span> : null}
                   </td>
                   <td className="tabular text-fg-muted hidden px-4 py-3 sm:table-cell">{chargedText(t)}</td>

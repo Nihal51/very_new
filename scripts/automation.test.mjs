@@ -215,3 +215,18 @@ test('the local bill’s hours: lib/local-bill.ts is the robot’s rule (base ho
   assert.equal(localHours('outstation', t0, t0 + 3600_000), null);
   assert.deepEqual(localHours('local-12-hours', t0, t0 + (12 * 60 + 16) * 60_000), { baseHours: 12, usedHours: 13, extraHours: 1 });
 });
+
+test('long one-way drops: the settings reach the apps (app-config.json), and the robot prices and pays a case-A booking consistently', () => {
+  const route = read('app/app-config.json/route.ts');
+  assert.ok(route.includes('oneWayLong: { drivingDay: prices.oneWayLong.drivingDay, returnDay: prices.oneWayLong.returnDay, returnHour: prices.oneWayLong.returnHour }'));
+  assert.ok(route.includes('drivingGraceHours: outstation.drivingGraceHours'));
+  assert.ok(route.includes('graceMinutes: outstation.graceMinutes'));
+  // Case A as saved on the booking (trip.days = the driving days, returnHours as today: whole hours up).
+  const b = { package: 'one-way-drop', trip: { km: 616, days: 1, returnHours: 11, estFrom: 3200, estTo: 3200 } };
+  assert.deepEqual({ ...robot.estimateOf(b, settings.prices) }, { amount: 3200, basis: 'trip' });
+  // Generic test rates (the real ones are only in the Script Properties): his pay stays below the price.
+  const rates = { local8h: 500, local12h: 700, localExtraHour: 10, tripDay: 1000, returnHour: 100 };
+  const pay = robot.rateCardPayOf(b, 3200, rates, 160);
+  assert.equal(pay, 1000 + Math.min(1000, 11 * 100));
+  assert.ok(pay < 3200);
+});

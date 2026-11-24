@@ -14,7 +14,41 @@ or **Outstation Trip**, where to, and **when the driver leaves** (date and
 time; blank = 7 AM). The estimate shows straight away, with the driver's trip
 hour by hour.
 
-### One-way drops: the driver's time
+### One-way drops farther than 160 km: driving days and his way home (24 Nov 2026)
+
+The per-24-hours rule below was below the driver's cost on long drops. From
+24 Nov 2026 a one-way drop farther than the first nearby tier
+(`prices.outstationNear[0].upToKm`, 160 km) is priced in two parts
+(`lib/outstation.ts` `longOneWayPrice`; the mobile app does the same from
+`app-config.json`):
+
+- **Driving:** `prices.oneWayLong.drivingDay` (1,600) for each driving day —
+  `max(1, ceil((driving hours − outstation.drivingGraceHours) / outstation.hoursPerDay))`,
+  i.e. 12 hours a day, the last day up to 13 hours. The driving hours are the
+  route's (km ÷ `averageKmh`); on the final bill, start → drop.
+- **His way home:** waiting for the train he takes plus the ride (the route's
+  average until a train is picked; on the final bill, drop → home):
+  `returnDay` (1,600) for each full 24 hours, and the hours left over —
+  whole hours, rounding up after 15 minutes' grace — at `returnHour` (160),
+  never more than `returnDay` for them.
+- The customer books and pays his ticket (its own line, not in the total).
+
+| Case | Km | Driving | Way home | Price |
+| --- | --- | --- | --- | --- |
+| A | 616 | 12.3 h → 1 day | 10 h 41 m → 11 h, capped | 1,600 + 1,600 = **3,200** |
+| B | 1,200 | 24 h → 2 days | 27 h → 1 day + 3 h | 3,200 + 1,600 + 480 = **5,280** |
+| C | 1,200 | 24 h → 2 days | 35 h → 1 day + 11 h, capped | 3,200 + 3,200 = **6,400** |
+| D | 300 | 6 h → 1 day | 5 h | 1,600 + 800 = **2,400** |
+| E | 140 | same-day drop | — | the near-tier price, unchanged |
+
+Saved on the booking: `trip.days` = the driving days, `trip.returnHours` =
+the way home (whole hours, up). The /admin quote saves `dayRate` = the
+driving day, `days` = driving days, `returnHourRate`, `returnHours` and
+`returnCharge` with the km (firestore.rules unchanged: the way home's day is
+at most 10 hours' worth, `returnDay ≤ 10 × returnHour`, checked at build).
+Same-day drops (up to 160 km) and round trips stay as below.
+
+### One-way drops up to 160 km (and before 24 Nov 2026): the driver's time
 
 The customer pays for the driver's **time**, from when he leaves until he is
 home by train or bus — the drive, waiting for his train and the ride home:
@@ -200,7 +234,8 @@ How the times are charged (`finalBill` in `lib/outstation.ts`):
 
 | | Rule |
 | --- | --- |
-| One-way (8 Nov 2026 on) | The driver's time, start → home: each 24 h the agreed price for each 24 h, the hours past them the agreed hourly rate, never more than one more day (`time`, saved with the km) |
+| One-way farther than 160 km (24 Nov 2026 on) | Driving days (start → drop) at the agreed driving day, then his way home (drop → home): each full 24 h at the way-home day, the hours left over at the agreed hourly rate, never more than a day for them (`long`, saved with the km and a way-home rate) |
+| One-way up to 160 km (8 Nov 2026 on) | The driver's time, start → home: each 24 h the agreed price for each 24 h, the hours past them the agreed hourly rate, never more than one more day (`time`, saved with the km) |
 | Round trips, and older quotes | as below |
 | Driving | One-way: start → drop. Round trip: start → back |
 | Normal trip | Each 24 h from the start is a day (12 h driving + 12 h rest); what is left after the last 24 h is driving: 12 h of it is one more day, the rest by the hour |
@@ -239,6 +274,8 @@ All in `site-settings.ts`:
 | Setting | Today | Meaning |
 | --- | --- | --- |
 | `prices.outstation` | 1450–1750 | Customer price for each 24 h of the driver's time, farther than the nearby tiers (rising with the distance) |
+| `prices.oneWayLong` | 1600 / 1600 / 160 | One-way drops farther than the first tier: each driving day, each full 24 h of his way home, each hour of it left over |
+| `outstation.drivingGraceHours` | 1 | Long one-way drops: the last driving day may run this much past `hoursPerDay` |
 | `prices.outstationNear` | ≤160 km 1050–1350 | Same-day drops (one price for the trip) and round-trip days close by; nearest first |
 | `outstation.nearFromKm` | 60 | The day price starts rising from the first tier's `from` here … |
 | `outstation.dayTopFromKm` | 300 | … and reaches `prices.outstation.to` here (farther: the same) |

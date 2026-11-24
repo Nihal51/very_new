@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { cn } from '@/lib/cn';
 import { dayRateFor } from '@/lib/outstation';
-import type { ReturnOption } from '@/lib/rail';
+import { seatsLink, type ReturnOption } from '@/lib/rail';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import {
   estimateLines,
@@ -147,17 +147,18 @@ export function TripEstimate({
         {oneWay ? (
           <ul className="mt-1 list-disc pl-5">
             <li>
-              One rule: the driver’s <strong>time</strong>, from when he leaves until he is home — the drive, waiting
-              for his train and the ride home.
-            </li>
-            <li>
               Up to {priceText.sameDayKm} he is home the same day: one price for the trip ({priceText.sameDayDrop}, by
-              distance). Farther: {view.est?.time ? rupees(view.est.time.dayRate) : dayText} for each 24 hours. If he
-              drops the car in 8 hours, the other 16 cover his waiting and his train home — no extra.
+              distance).
             </li>
             <li>
-              Past the 24-hour blocks, {priceText.outstationExtraHour} an hour — never more than one more day. So 30
-              hours away = 24 h + 6 h × {priceText.outstationExtraHour}; 44 hours = 2 × 24 h.
+              Farther: {priceText.oneWayDrivingDay} for each day of driving — {priceText.outstationHours} of driving a
+              day, the last day up to {tripRules.hoursPerDay + (tripRules.drivingGraceHours ?? 1)} hours.
+            </li>
+            <li>
+              Then his way home — waiting for the train he takes and the ride: {priceText.oneWayReturnHour} an hour
+              (the first 15 minutes of an hour free), never more than {priceText.oneWayReturnDay} for each 24 hours. So
+              5 hours home = 5 × {priceText.oneWayReturnHour}; 27 hours = {priceText.oneWayReturnDay} + 3 ×{' '}
+              {priceText.oneWayReturnHour}.
             </li>
             <li>
               Until you pick the date, the wait and the ride home are the route’s average from the timetables; with the
@@ -341,6 +342,19 @@ function TrainsHome({
                         <span key={`${l.train.number}-${j}`} className="text-fg-muted block text-[0.8125rem]">
                           {l.from.name} {whenText(l.depart)} → {l.to.name} {whenText(l.arrive)}
                           {l.delayMinutes !== undefined ? ` · live: ${l.delayMinutes} min late` : ''}
+                          {seatsLink(l.train.number) && (
+                            <>
+                              {' · '}
+                              <a
+                                href={seatsLink(l.train.number)}
+                                target="_blank"
+                                rel="noopener"
+                                className="text-accent-text font-semibold underline underline-offset-2"
+                              >
+                                Check seats
+                              </a>
+                            </>
+                          )}
                         </span>
                       ))}
                       <span className="text-fg-muted block text-[0.8125rem]">
@@ -369,6 +383,10 @@ function TrainsHome({
             })}
           </ul>
         </fieldset>
+        <p className="text-fg-muted mt-2 text-xs">
+          No reserved seat? He travels in the general coach (always available) or takes the next train — the price
+          counts the wait for the train you pick.
+        </p>
         <p className="text-fg-subtle mt-2 text-xs">
           {lookup?.live ? 'Includes live running status' : 'Scheduled timetable times, not live'} · from RailRadar
           {lookup?.checkedAt ? `, checked ${whenText(lookup.checkedAt)}` : ''}. Seats and tickets are not checked —

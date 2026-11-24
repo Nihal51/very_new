@@ -24,8 +24,7 @@ import {
   waitFromNotes,
   waitHoursOf,
   waitNote,
-  weekdayOf,
-} from '../lib/rail.ts';
+  weekdayOf, seatsLink } from '../lib/rail.ts';
 import { makeFetcher, parseLookup } from '../lib/rail-client.ts';
 import { settings } from '../site-settings.ts';
 
@@ -518,4 +517,10 @@ test('routes ending on the same last train are offered once — the safest chang
   });
   assert.deepEqual(opts.map((o) => o.legs.at(-1).train.number), ['12833', '12859']);
   assert.equal(opts[0].id.split('@')[0], '22691+12833', '3 h 9 m to change beats 1 h 50 m');
+});
+
+test('"Check seats": each train links to its seat availability on ixigo', () => {
+  assert.equal(seatsLink('12809'), 'https://www.ixigo.com/trains/12809/seat-availability');
+  assert.equal(seatsLink(' 20843 '), 'https://www.ixigo.com/trains/20843/seat-availability');
+  for (const bad of ['', 'abc', '12809/../x', '1', '1234567']) assert.equal(seatsLink(bad), '', bad);
 });

@@ -221,8 +221,8 @@ export const pricesHi: { name: string; price: string; unit: string }[] = [
   },
   {
     name: 'वन-वे ड्रॉप — ड्राइवर का समय, निकलने से घर पहुँचने तक (ड्राइव, ट्रेन का इंतज़ार और घर वापसी)',
-    price: `हर 24 घंटे ${priceText.outstation}`,
-    unit: `दूरी के हिसाब से; ${priceText.sameDayKm} तक (उसी दिन घर) पूरी ट्रिप की एक कीमत ${priceText.sameDayDrop}; 24 घंटे के बाद ${priceText.outstationExtraHour}/घंटा, एक दिन से ज़्यादा नहीं; टिकट आप बुक करें`,
+    price: `हर ड्राइविंग दिन ${priceText.oneWayDrivingDay}`,
+    unit: `${priceText.sameDayKm} तक (उसी दिन घर) पूरी ट्रिप की एक कीमत ${priceText.sameDayDrop}; उससे दूर: हर ड्राइविंग दिन ${priceText.oneWayDrivingDay}, फिर उसका घर लौटने का समय (ट्रेन का इंतज़ार और सफ़र) ${priceText.oneWayReturnHour}/घंटा, हर 24 घंटे में ज़्यादा से ज़्यादा ${priceText.oneWayReturnDay}; टिकट आप बुक करें`,
   },
   { name: 'शादी / इवेंट', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
 ];

@@ -520,3 +520,9 @@ export async function findReturn(args: {
     live: anyLive && options.some((o) => !o.scheduled),
   };
 }
+
+/** A train's seat availability on ixigo ("Check seats" on the booking form), or '' when the number is not a train number. */
+export function seatsLink(trainNumber: string): string {
+  const n = String(trainNumber ?? '').trim();
+  return /^\d{4,6}$/.test(n) ? `https://www.ixigo.com/trains/${n}/seat-availability` : '';
+}

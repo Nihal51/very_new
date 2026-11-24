@@ -56,14 +56,19 @@ export const priceText = {
   sameDayKm: `${p.outstationNear[0]?.upToKm ?? 0} km`,
   /** Each hour past the 24-hour blocks (and of driving beyond the day on a round trip). */
   outstationExtraHour: rupees(settings.outstation.extraHour),
-  /** One-way drops, in a few words: "each 24 hours of his time ₹1,450–1,750 by distance; past them ₹130 an hour, never more than a day". */
-  timeRule: `each 24 hours of his time ${rupeeRange(p.outstation.from, p.outstation.to)} by distance; the hours past them ${rupees(settings.outstation.extraHour)} each, never more than one more day`,
-  /** The whole one-way drop price (decided 8 Nov 2026): the driver's time, from when he leaves until he is home. */
+  /** A long one-way drop's driving day, the way home's 24 hours and its hour (prices.oneWayLong, 24 Nov 2026). */
+  oneWayDrivingDay: rupees(p.oneWayLong.drivingDay),
+  oneWayReturnDay: rupees(p.oneWayLong.returnDay),
+  oneWayReturnHour: rupees(p.oneWayLong.returnHour),
+  /** One-way drops farther than the same-day distance, in a few words (24 Nov 2026). */
+  timeRule: `${rupees(p.oneWayLong.drivingDay)} for each day of driving, then his way home (the wait and the train) at ${rupees(p.oneWayLong.returnHour)} an hour, at most ${rupees(p.oneWayLong.returnDay)} per 24 h`,
+  /** The whole one-way drop price: up to the same-day distance one price; farther, driving days and his way home. */
   get oneWayRule() {
     return (
-      `Priced by the driver’s time, from when he leaves until he is home by train or bus — the drive, waiting for his train and the ride home. ` +
       `Up to ${this.sameDayKm} he is home the same day: one price for the trip, ${this.sameDayDrop} by distance. ` +
-      `Farther: ${this.timeRule}. If he arrives in 8 hours, the rest of the 24 covers his waiting and ride home at no extra charge.`
+      `Farther: ${rupees(p.oneWayLong.drivingDay)} for each day of driving (${settings.outstation.hoursPerDay} hours; the last day up to ${settings.outstation.hoursPerDay + settings.outstation.drivingGraceHours}), ` +
+      `then his way home — waiting for the train he takes and the ride — ${rupees(p.oneWayLong.returnDay)} for each full 24 hours and ${rupees(p.oneWayLong.returnHour)} an hour for the rest, never more than ${rupees(p.oneWayLong.returnDay)} for those hours. ` +
+      `You book and pay his ticket.`
     );
   },
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
@@ -122,6 +127,9 @@ export const tripRules: TripRules = {
   extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
   extraHour: settings.outstation.extraHour,
   hoursPerDay: settings.outstation.hoursPerDay,
+  oneWayLong: { ...p.oneWayLong },
+  drivingGraceHours: settings.outstation.drivingGraceHours,
+  graceMinutes: settings.outstation.graceMinutes,
   sameDayMaxHours: settings.outstation.sameDayMaxHours,
   kmPerDay: settings.outstation.kmPerDay,
   averageKmh: settings.outstation.averageKmh,

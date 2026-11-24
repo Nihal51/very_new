@@ -37,6 +37,8 @@ export function GET() {
       nightFrom: prices.nightFrom,
       /* Each hour a local job runs over its package: the alerts robot bills it from the driver's taps. */
       localExtraHour: prices.localExtraHour,
+      /* One-way drops farther than outstationNear[0].upToKm (24 Nov 2026): driving days and his way home. */
+      oneWayLong: { drivingDay: prices.oneWayLong.drivingDay, returnDay: prices.oneWayLong.returnDay, returnHour: prices.oneWayLong.returnHour },
     },
     monthly: {
       basic: { from: monthly.basic.from, to: monthly.basic.to },
@@ -65,6 +67,8 @@ export function GET() {
       nearFromKm: outstation.nearFromKm,
       dayTopFromKm: outstation.dayTopFromKm,
       hoursPerDay: outstation.hoursPerDay,
+      drivingGraceHours: outstation.drivingGraceHours,
+      graceMinutes: outstation.graceMinutes,
       sameDayMaxHours: outstation.sameDayMaxHours,
       extraHour: outstation.extraHour,
       returnHour: outstation.returnHour,

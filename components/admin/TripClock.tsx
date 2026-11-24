@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Field';
 import { formatDateTime, wantsNonstop, type Booking, type TripPackage } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
-import { pricedByTime } from '@/lib/outstation';
+import { pricedByTime, pricedLong } from '@/lib/outstation';
 import { rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import { asset } from '@/lib/site';
 import { tripFor } from '@/lib/trip';
@@ -44,6 +44,8 @@ const { targetProfitPercent: TARGET, minProfitPercent: MIN_PROFIT, maxProfitPerc
 const DEFAULT_RETURN_PAY = Math.floor((tripRules.returnHour * (1 - MIN_PROFIT / 100)) / 10) * 10;
 /** By the driver's time: what he usually gets for an hour past the 24-hour blocks — the customer's hourly rate less the profit, to ₹10 (as the quote). */
 const DEFAULT_HOUR_PAY = Math.round((tripRules.extraHour * (1 - TARGET / 100)) / 10) * 10;
+/** A long one-way drop: what a driver usually gets for an hour of his way home — the customer's hourly rate less the profit, to ₹10. */
+const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWayLong?.returnHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
 /** Warn when driving or the way home took this many hours longer than the plan for the real start. */
 const LATE_DRIVE_HOURS = 4;
 const LATE_HOME_HOURS = 3;
@@ -341,11 +343,13 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
         }),
         // Priced by the driver's time (from 8 Nov 2026): the km with no route hours.
         ...(pricedByTime(saved) && { time: { km: saved.km ?? 0 } }),
+        // A long one-way drop (24 Nov 2026): driving days and his way home.
+        ...(link.kind === 'one-way' && pricedLong(tripRules, saved) && { long: { km: saved.km ?? 0 } }),
       }
     : billRates(b.quote, tripRules, b.trip?.km, link.kind === 'one-way');
   const [dayRate, setDayRate] = useState(String(rates.dayRate));
   const [cost, setCost] = useState('');
-  const [returnPay, setReturnPay] = useState(String(rates.time ? DEFAULT_HOUR_PAY : DEFAULT_RETURN_PAY));
+  const [returnPay, setReturnPay] = useState(String(rates.time ? DEFAULT_HOUR_PAY : rates.long ? DEFAULT_LONG_HOUR_PAY : DEFAULT_RETURN_PAY));
   const [editing, setEditing] = useState(!b.bill);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');

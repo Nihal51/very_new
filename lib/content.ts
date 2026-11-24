@@ -361,11 +361,11 @@ export const services: Service[] = [
       'The driver arranges their own way back',
     ],
     quote: {
-      title: 'Priced by the driver’s time',
+      title: 'Priced by the driving days and his way home',
       body: `${priceText.oneWayRule} Pick the destination and the start date and time on the booking form: the estimate shows when he drops the car, the train he takes home and when he is home; we confirm the exact figure on the call, before the driver sets off.`,
       factors: [
-        'The distance (one-way km): the price for each 24 hours of his time',
-        'How long he is away — leaves → home, his wait and train home included',
+        'The distance: up to the same-day distance one price, farther the days of driving',
+        'His way home — the wait for the train he takes and the ride, by the hour',
         'His bus or train ticket home — you book it',
       ],
       whatsapp:
@@ -509,12 +509,12 @@ export const extraRates = [
   },
   {
     label: 'Outstation extra hour',
-    detail: `One-way: each hour past the 24-hour blocks of his time (never more than a day). Round trips: each hour beyond ${priceText.outstationHours} of driving in a day`,
+    detail: `Round trips: each hour beyond ${priceText.outstationHours} of driving in a day`,
     price: priceText.outstationExtraHour,
   },
   {
     label: 'One-way drop: the driver’s time until he is home',
-    detail: `The drive, waiting for his train and the ride home. Up to ${priceText.sameDayKm} (home the same day): one price, ${priceText.sameDayDrop}. Farther: each 24 hours ${priceText.outstation} by distance; past them ${priceText.outstationExtraHour} an hour. You book his ticket`,
+    detail: `Up to ${priceText.sameDayKm} (home the same day): one price, ${priceText.sameDayDrop}. Farther: ${priceText.oneWayDrivingDay} for each day of driving, then his way home (the wait and the train) at ${priceText.oneWayReturnHour} an hour, at most ${priceText.oneWayReturnDay} per 24 h. You book his ticket`,
     price: `from ${priceText.sameDayDrop.split('–')[0]}`,
   },
   {

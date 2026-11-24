@@ -15,6 +15,8 @@ import {
   pickupStations,
   planTrip,
   pricedByTime,
+  pricedLong,
+  longReturnDayFor,
   roadKm,
   withReturn,
   type Destination,
@@ -278,7 +280,8 @@ export function tripRecord(view: TripView, typedPlace: string): BookingTrip {
     destId: view.dest?.id ?? '',
     kind: view.kind,
     km: view.km,
-    days: view.days,
+    // A long one-way drop: the driving days (what its price and the driver's rate count).
+    days: view.est?.long ? view.est.long.drivingDays : view.days,
     returnHours: view.returnHours,
     estFrom: view.est?.from ?? 0,
     estTo: view.est?.to ?? 0,
@@ -329,6 +332,29 @@ export function estimateLines(view: TripView): { label: string; amount: string }
   const p = view.plan;
   const est = view.est;
   if (!est || !p) return [];
+  // A long one-way drop (24 Nov 2026): the driving days, then his way home.
+  const l = est.long;
+  if (l) {
+    const w = wayHome(view);
+    const split = view.ret
+      ? `waiting ${hmText(view.ret.waitMinutes)} + train ${hmText(l.returnMinutes - view.ret.waitMinutes)}`
+      : w
+        ? `waiting ${hmText(w.wait * 60)} + ${view.home?.by ?? 'train'} ${hmText(w.travel * 60)}, the route’s average`
+        : '';
+    const parts = [
+      l.returnFullDays ? `${l.returnFullDays} × 24 h × ${rupees(l.returnDay)}` : null,
+      l.returnLeftoverHours ? `${plural(l.returnLeftoverHours, 'hour')} × ${rupees(l.returnHourRate)}` : null,
+    ].filter(Boolean);
+    return [
+      { label: `Driving: ${plural(l.drivingDays, 'day')} × ${rupees(l.drivingDay)} (${aboutHours(l.drivingHours)} of driving)`, amount: rupees(l.drivingDays * l.drivingDay) },
+      {
+        label:
+          `His way home: ${hmText(l.returnMinutes)}${split ? ` (${split})` : ''} → ${parts.join(' + ') || 'no charge'}` +
+          ` (at most ${rupees(l.returnDay)} per 24 h)`,
+        amount: rupees(l.returnCharge),
+      },
+    ];
+  }
   const t = est.time;
   if (view.kind === 'round' || !t)
     return [{ label: `${plural(est.days, 'day')} × ${rupeeRange(est.dayRate.from, est.dayRate.to)}`, amount: rupeeRange(est.from, est.to) }];
@@ -373,6 +399,9 @@ export function notIncluded(view: TripView): string[] {
   ];
 }
 
+/** The way-home day rate for a saved hourly rate (lib/outstation.ts longReturnDayFor). */
+const longDayOf = (rate: number) => longReturnDayFor(tripRules, rate);
+
 /** "₹1,750 × 2 × 24 h of his time + ₹130 × 9 h + ₹650 ticket" — the agreed price, itemised. */
 export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
   // The driver's time (from 8 Nov 2026): the 24-hour blocks and the hours past them.
@@ -382,6 +411,15 @@ export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
         ? `${rupees(q.dayRate)} for the driver’s time (${kmText(q.km ?? 0)}, up to 24 h, his way home included)`
         : `${rupees(q.dayRate)} × ${q.days} × 24 h of the driver’s time`,
       q.extraHours > 0 ? `${rupees(q.extraHourRate)} × ${q.extraHours} h past them` : null,
+      q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+  // A long one-way drop (24 Nov 2026): the driving days and his way home.
+  if (pricedLong(tripRules, q))
+    return [
+      `${rupees(q.dayRate)} × ${plural(q.days, 'driving day')}`,
+      `${rupees(q.returnCharge)} his way home (${q.returnHours} h at ${rupees(q.returnHourRate)} an hour, at most ${rupees(longDayOf(q.returnHourRate))} per 24 h)`,
       q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
     ]
       .filter(Boolean)
