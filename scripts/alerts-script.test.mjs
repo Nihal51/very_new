@@ -988,6 +988,9 @@ describe('formatting', () => {
     assert.equal(ctx.tripLine(nagpur), 'Raipur → Nagpur · one-way drop · ~284 km · 1 day + 6 h getting home · est. ₹1,440');
     const elsewhere = { ...booking, trip: { ...trip, to: 'Jaipur', destId: '', km: 0, days: 1, returnHours: 0, estFrom: 0, estTo: 0 } };
     assert.equal(ctx.tripLine(elsewhere), 'Raipur → Jaipur (not in our list) · one-way drop · 1 day · quote on the call');
+    // A place from the list of all India: no id, but its km (from the map) and an estimate.
+    const fromMap = { ...elsewhere, trip: { ...elsewhere.trip, to: 'Gaya, Bihar', km: 681, days: 2, returnHours: 15, estFrom: 3550, estTo: 3550 } };
+    assert.equal(ctx.tripLine(fromMap), 'Raipur → Gaya, Bihar (km from the map) · one-way drop · ~681 km · 2 days + 15 h getting home · est. ₹3,550');
     assert.equal(ctx.tripLine({ ...booking, trip: undefined }), '');
   });
   test('the pinned pickup spot: a Google Maps link in the alert, the email and the Sheet', () => {

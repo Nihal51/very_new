@@ -77,6 +77,40 @@ Quotes and bills saved under the first 24 Nov 2026 rule (driving days at
 1,600 and the way home at 160 an hour, at most 1,600 a day) still read and
 bill as they were agreed (`pricedV2Long`).
 
+### Any place in India (the place box, 24 Nov 2026)
+
+"Drop the car in" and "Where to?" are a search box (`components/PlacePicker.tsx`,
+an accessible combobox) over our destinations and every place in India
+(`public/data/india-places.json`, 3,502 places, built by
+`scripts/places/build-places.js`; the browser fetches it only when the box is
+used). Type 2 letters or more: names, old names (Allahabad → Prayagraj) and
+states match, accents and case ignored; names that begin with it first, then
+a later word, then the state's places, then names it is inside — ours first
+among equals, then the biggest; at most 20. "Somewhere else" keeps what was
+typed, priced on the call as before. Islands without a road (Andaman and
+Nicobar, Lakshadweep) are not offered.
+
+- **One of ours:** exactly as before — measured km, the route's average way
+  home, its stations and change stations.
+- **Any other place:** km = round(straight line from the pickup city ×
+  `outstation.roadFactor`, 1.3), shown as "estimated from the map — the team
+  confirms" (Raipur → Ambikapur: 342 km against the measured 334). Then the
+  same rules: up to 160 km the same-day price, farther the price by the km
+  plus his way home; round trips the days at the day price for that km. His
+  way home: the bus/train average (km ÷ `busKmh` + `stationHours`) until a
+  date is picked; then the train lookup from the place's nearest station (the
+  list's `station`, renamed codes mapped to today's — `RENAMED_STATIONS`) to
+  the pickup city's home station, direct trains only, through the robot as
+  for our places. No train found: the average stays.
+- **Saved:** `trip.to` = "Name, State" (at most 60 characters), `trip.destId`
+  = '' (as a typed place), `trip.km` = the km from the map, the estimate as
+  shown. /admin plans it from that km; the robot's offers and rate card use
+  `trip.estTo`, `trip.km` and `trip.returnHours` as for any trip, and its
+  booking line says "(km from the map)".
+
+Credits: places GeoNames (CC BY 4.0), stations datameet/railways (CC0) —
+under the box and on /about.
+
 ### One-way drops up to 160 km (and before 24 Nov 2026): the driver's time
 
 The customer pays for the driver's **time**, from when he leaves until he is
@@ -304,6 +338,7 @@ All in `site-settings.ts`:
 | --- | --- | --- |
 | `prices.outstation` | 1450–1750 | Customer price for each 24 h of the driver's time, farther than the nearby tiers (rising with the distance) |
 | `outstation.oneWay` | 3 / 100 / 1500 / 1500 / 50 | One-way drops farther than the first tier (customer prices): `perKm`, `homeHour`, `homeDayMax` (≤ 24 × `homeHour`), `minimum`, `roundTo` |
+| `outstation.roadFactor` | 1.3 | A place not among ours: road km ≈ the straight line from the pickup city × this |
 | `outstation.drive` | 55 / 4 / 35 / 12 | One-way timings: `kmh`, a break after each full `breakEveryHours` of driving, `breakMinutes` long, `maxRoadHoursPerDay` on the road |
 | `prices.outstationNear` | ≤160 km 1050–1350 | Same-day drops (one price for the trip) and round-trip days close by; nearest first |
 | `outstation.nearFromKm` | 60 | The day price starts rising from the first tier's `from` here … |

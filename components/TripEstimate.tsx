@@ -89,7 +89,8 @@ export function TripEstimate({
         <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">Estimated price</p>
         <p className="tabular font-display mt-1 text-2xl font-bold">{rupeeRange(view.est.from, view.est.to)}</p>
         <p className="text-fg-muted mt-1">
-          {city} → {view.dest.name} · about {kmText(view.km)} one way ·{' '}
+          {city} → {view.dest.name} · about {kmText(view.km)}
+          {view.place ? ' by road (estimated from the map — the team confirms)' : ''} one way ·{' '}
           {view.est.time ? `the driver is away about ${view.est.time.hours} h` : tripDays(view)}
         </p>
         <ul className="border-border mt-3 flex flex-col gap-1.5 border-t pt-3">

@@ -143,6 +143,31 @@ export default function AboutPage() {
             </span>
           ))}
         </p>
+        <p id="credits" className="text-fg-subtle mt-4 text-xs">
+          Credits: the places in the booking form’s search come from{' '}
+          <a href="https://www.geonames.org/" className="underline underline-offset-2" rel="noopener noreferrer" target="_blank">
+            GeoNames
+          </a>{' '}
+          (
+          <a
+            href="https://creativecommons.org/licenses/by/4.0/"
+            className="underline underline-offset-2"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            CC BY 4.0
+          </a>
+          ), and the railway stations from{' '}
+          <a
+            href="https://github.com/datameet/railways"
+            className="underline underline-offset-2"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            datameet/railways
+          </a>{' '}
+          (CC0). Names and spellings are simplified, and some renamed cities updated.
+        </p>
       </Section>
 
       <ClosingCTA />

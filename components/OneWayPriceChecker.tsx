@@ -3,13 +3,15 @@
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
+import { PlacePicker, type PlaceValue } from '@/components/PlacePicker';
 import { TripEstimate } from '@/components/TripEstimate';
 import { useReturnTrains } from '@/components/useReturnTrains';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Field, Input, Select } from '@/components/ui/Field';
 import { cities } from '@/lib/content';
-import { ELSEWHERE, destinationGroups, tripFor } from '@/lib/trip';
+import { placeLabel } from '@/lib/places';
+import { ELSEWHERE, PLACE, tripFor } from '@/lib/trip';
 
 /**
  * "What will my drop cost?" on the One-Way Drop page: pickup city, destination,
@@ -20,18 +22,20 @@ import { ELSEWHERE, destinationGroups, tripFor } from '@/lib/trip';
 export function OneWayPriceChecker({ className }: { className?: string }) {
   const router = useRouter();
   const [city, setCity] = useState('Raipur');
-  const [dest, setDest] = useState('nagpur');
+  const [to, setTo] = useState<PlaceValue>({ dest: 'nagpur', place: null, other: '' });
+  const dest = to.dest;
   const [days, setDays] = useState('');
   const [when, setWhen] = useState('');
   const [nonstop, setNonstop] = useState(false);
 
   const base = useMemo(
-    () => tripFor('one-way-drop', city, dest, Number(days) || 0, when, nonstop),
-    [city, dest, days, when, nonstop],
+    () => tripFor('one-way-drop', city, dest, Number(days) || 0, when, nonstop, to.place ?? undefined),
+    [city, dest, days, when, nonstop, to.place],
   );
   const rail = useReturnTrains(base, city);
   const trip = rail.view ?? base;
   const query = new URLSearchParams({ pkg: 'one-way-drop', city, to: dest });
+  if (dest === PLACE && to.place) query.set('place', placeLabel(to.place));
   if (days && Number(days) > trip.minDays) query.set('days', String(Number(days)));
   if (nonstop) query.set('nonstop', '1');
   if (when) query.set('when', when);
@@ -51,20 +55,7 @@ export function OneWayPriceChecker({ className }: { className?: string }) {
           )}
         </Field>
         <Field label="Drop in" name="ow-dest">
-          {(p) => (
-            <Select {...p} value={dest} onChange={(e) => setDest(e.target.value)}>
-              {destinationGroups.map((g) => (
-                <optgroup key={g.label} label={g.label}>
-                  {g.items.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-              <option value={ELSEWHERE}>Somewhere else…</option>
-            </Select>
-          )}
+          {(p) => <PlacePicker field={p} city={city} value={to} onChange={setTo} placeholder="City, town or state" />}
         </Field>
         <Field label="Driver leaves on" name="ow-when" hint="The date and time decide which train he catches home.">
           {(p) => (

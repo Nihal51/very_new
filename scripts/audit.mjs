@@ -332,4 +332,37 @@ if (missing.length) {
   }
 }
 
+/* The list of every place in India (lib/places.ts) is a file of its own,
+   fetched only when a trip form's place box is used: it must be published,
+   whole, and never folded into the JavaScript every page loads. */
+{
+  const issues = [];
+  let places = null;
+  try {
+    places = JSON.parse(readFileSync(path.join(OUT, 'data', 'india-places.json'), 'utf8'));
+  } catch (err) {
+    issues.push(`data/india-places.json missing or not JSON (${err.message})`);
+  }
+  if (places && (!Array.isArray(places.places) || places.places.length < 3000)) issues.push('data/india-places.json has too few places');
+  if (places && !/GeoNames/.test(String(places.source))) issues.push('data/india-places.json lost its source line');
+  // "Ilahabad" (Prayagraj's other name) is only in the list: a script that holds it holds the whole list.
+  const scripts = [];
+  const js = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) js(full);
+      else if (e.name.endsWith('.js')) scripts.push(full);
+    }
+  };
+  js(path.join(OUT, '_next'));
+  const bundled = scripts.filter((f) => readFileSync(f, 'utf8').includes('Ilahabad'));
+  if (bundled.length) issues.push(`the place list is inside ${bundled.map((f) => path.relative(OUT, f)).join(', ')}`);
+  if (issues.length) {
+    console.log(`places       — ↳ FAIL ${issues.join(', ')}`);
+    failures++;
+  } else {
+    console.log(`places       — ok, ${places.places.length} places, loaded only when asked for (not in ${scripts.length} scripts)`);
+  }
+}
+
 process.exit(failures === 0 ? 0 : 1);

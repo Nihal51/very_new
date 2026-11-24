@@ -186,6 +186,19 @@ describe('bookings — creating', () => {
     await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop' })));
   });
 
+  test('a place from the list of all India (not one of ours): its "Name, State", no id, the km from the map', async () => {
+    const db = guest();
+    // Raipur → Gaya: 524 km straight × 1.3 = 681 km; 681 × ₹3 + his way home (the bus/train average).
+    const gaya = trip({ to: 'Gaya, Bihar', destId: '', km: 681, days: 2, returnHours: 15, estFrom: 3550, estTo: 3550 });
+    await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: gaya })));
+    await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'outstation', trip: { ...gaya, kind: 'round', days: 3, returnHours: 0 } })));
+    // The longest label the form makes is 60 characters; more is refused.
+    await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: { ...gaya, to: 'A'.repeat(60) } })));
+    await assertFails(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: { ...gaya, to: 'A'.repeat(61) } })));
+    // Leh, about 1,940 km: still inside the km check.
+    await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: { ...gaya, to: 'Leh, Ladakh', km: 1937 } })));
+  });
+
   test('a trip must match its package and stay in shape', async () => {
     const db = guest();
     const bad = (pkg, t) => assertFails(addDoc(collection(db, 'bookings'), booking({ package: pkg, trip: t })));

@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { CheckCircleIcon, PhoneIcon, WhatsappIcon } from '@/components/icons';
 import { PickupLocation } from '@/components/PickupLocation';
+import { PlacePicker, findPlaceByLabel } from '@/components/PlacePicker';
 import { TripEstimate } from '@/components/TripEstimate';
 import { useReturnTrains } from '@/components/useReturnTrains';
 import { currentUser, loadProfile, mightBeSignedIn } from '@/lib/auth';
@@ -18,7 +19,8 @@ import { submitDoc } from '@/lib/firebase';
 import { cn } from '@/lib/cn';
 import { mapsLink, type PickupGeo } from '@/lib/geo';
 import { formatPhone, site, telHref, waHref } from '@/lib/site';
-import { ELSEWHERE, destinationGroups, tripFor, tripRecord, tripSummary, whenText, type TripView } from '@/lib/trip';
+import type { Place } from '@/lib/places';
+import { ELSEWHERE, PLACE, tripFor, tripRecord, tripSummary, whenText, type TripView } from '@/lib/trip';
 import {
   firstErrorField,
   isClean,
@@ -35,7 +37,7 @@ type Values = {
   phone: string;
   city: string;
   pkg: string;
-  /** Outstation trips and one-way drops only: a destination id, ELSEWHERE, or ''. */
+  /** Outstation trips and one-way drops only: a destination id, PLACE (a place from the list of all India), ELSEWHERE, or ''. */
   dest: string;
   /** The place typed in when dest is ELSEWHERE. */
   destOther: string;
@@ -101,7 +103,9 @@ function validateField(key: keyof Values, values: Values): string | undefined {
     case 'pkg':
       return validateRequired(values.pkg, 'a service');
     case 'dest':
-      return isTripPackage(values.pkg) ? validateRequired(values.dest, 'where you are going') : undefined;
+      return isTripPackage(values.pkg) && !values.dest
+        ? 'Type where you are going and pick it from the list (or “Somewhere else”).'
+        : undefined;
     case 'destOther': {
       if (!isTripPackage(values.pkg) || values.dest !== ELSEWHERE) return undefined;
       const place = values.destOther.trim();
@@ -126,10 +130,10 @@ function packageLabel(value: string): string {
   return bookingPackages.find((p) => p.value === value)?.label ?? value;
 }
 
-/** The trip for a trip package, as the form shows and saves it. */
-function tripOf(v: Values) {
+/** The trip for a trip package, as the form shows and saves it (`place`: the place picked from the list of all India). */
+function tripOf(v: Values, place: Place | null) {
   if (!isTripPackage(v.pkg)) return null;
-  return tripFor(v.pkg, v.city, v.dest, Number(v.days) || 0, v.when, Boolean(v.nonstop));
+  return tripFor(v.pkg, v.city, v.dest, Number(v.days) || 0, v.when, Boolean(v.nonstop), place ?? undefined);
 }
 
 /** The trip as saved: from the view the customer saw (with the train they chose applied). */
@@ -172,6 +176,8 @@ export function BookingForm({
   const Heading = headingLevel as ElementType;
 
   const [values, setValues] = useState<Values>(EMPTY);
+  // The place picked from the list of all India (values.dest === PLACE).
+  const [place, setPlace] = useState<Place | null>(null);
   const [errors, setErrors] = useState<Errors>({});
   const [touched, setTouched] = useState<Partial<Record<keyof Values, boolean>>>({});
   const [status, setStatus] = useState<Status>('idle');
@@ -211,7 +217,7 @@ export function BookingForm({
   }, []);
 
   /* Links can pre-fill the form: /book/?pkg=one-way-drop&city=Raipur&to=nagpur&days=2&nonstop=1&when=2026-10-31T07:00
-     (the One-Way Drop page's "Book this drop"), and &note=… for the notes box (the New Car page). Unknown values are ignored. */
+     (the One-Way Drop page's "Book this drop"; a place from the list of all India: to=place&place=Prayagraj, Uttar Pradesh), and &note=… for the notes box (the New Car page). Unknown values are ignored. */
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const pkg = q.get('pkg') ?? '';
@@ -232,6 +238,13 @@ export function BookingForm({
       ...(nonstop && { nonstop }),
     };
     if (Object.keys(patch).length) setValues((v) => ({ ...v, ...patch }));
+    const label = (q.get('place') ?? '').trim().slice(0, 60);
+    if (to === PLACE && label)
+      void findPlaceByLabel(label).then((p) => {
+        if (!p) return;
+        setPlace(p);
+        setValues((v) => ({ ...v, dest: PLACE }));
+      });
   }, []);
 
   // Move focus to the confirmation so screen reader and keyboard users land on it.
@@ -239,7 +252,7 @@ export function BookingForm({
     if (status === 'success') successRef.current?.focus();
   }, [status]);
 
-  const baseTrip = useMemo(() => tripOf(values), [values]);
+  const baseTrip = useMemo(() => tripOf(values, place), [values, place]);
   // The real trains home for the drop date (one-way drops); `trip` has the chosen one applied.
   const rail = useReturnTrains(baseTrip, values.city);
   const trip = rail.view;
@@ -302,6 +315,7 @@ export function BookingForm({
       setSubmittedTrip({ trip: sentTrip, ...(sentTrain && { train: sentTrain }) });
       setStatus('success');
       setValues(account ? { ...EMPTY, name: values.name, phone: values.phone } : EMPTY);
+      setPlace(null);
       setTouched({});
       setErrors({});
     } else {
@@ -524,45 +538,25 @@ export function BookingForm({
                   label={trip.kind === 'round' ? 'Where to?' : 'Drop the car in'}
                   name="dest"
                   required
-                  error={errors.dest}
+                  error={errors.dest ?? errors.destOther}
+                  className="sm:col-span-2"
                 >
                   {(p) => (
-                    <Select
-                      {...p}
-                      value={values.dest}
-                      onChange={(e) => set('dest')(e.target.value)}
+                    <PlacePicker
+                      field={p}
+                      city={values.city}
+                      value={{ dest: values.dest, place, other: values.destOther }}
+                      onChange={(v) => {
+                        setPlace(v.place);
+                        const next = { ...values, dest: v.dest, destOther: v.other };
+                        setValues(next);
+                        if (touched.dest)
+                          setErrors((e) => ({ ...e, dest: validateField('dest', next), destOther: validateField('destOther', next) }));
+                      }}
                       onBlur={blur('dest')}
-                    >
-                      <option value="">Choose a city</option>
-                      {destinationGroups.map((g) => (
-                        <optgroup key={g.label} label={g.label}>
-                          {g.items.map((d) => (
-                            <option key={d.id} value={d.id}>
-                              {d.name}
-                            </option>
-                          ))}
-                        </optgroup>
-                      ))}
-                      <option value={ELSEWHERE}>Somewhere else…</option>
-                    </Select>
+                    />
                   )}
                 </Field>
-
-                {values.dest === ELSEWHERE ? (
-                  <Field label="City or town" name="destOther" required error={errors.destOther}>
-                    {(p) => (
-                      <Input
-                        {...p}
-                        type="text"
-                        maxLength={60}
-                        placeholder="e.g. Jaipur"
-                        value={values.destOther}
-                        onChange={(e) => set('destOther')(e.target.value)}
-                        onBlur={blur('destOther')}
-                      />
-                    )}
-                  </Field>
-                ) : null}
 
                 <Field
                   label={trip.kind === 'round' ? 'Days of the trip' : 'Driving days'}

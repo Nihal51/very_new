@@ -13,7 +13,7 @@ import { cn } from '@/lib/cn';
 import { dayRateFor, isLongOneWay, longQuote, pricedByKm, pricedByTime, quote as roundQuote, timeQuote } from '@/lib/outstation';
 import { awayFromNotes } from '@/lib/rail';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
-import { quoteBreakdown, tripFor } from '@/lib/trip';
+import { planForBooking, quoteBreakdown } from '@/lib/trip';
 
 const { targetProfitPercent: TARGET, minProfitPercent: MIN_PROFIT, maxProfitPercent: MAX_PROFIT } = settings.outstation;
 const PARTNER = settings.partners.commissionPercent;
@@ -56,10 +56,11 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
   const [cost, setCost] = useState('');
   const [hourPay, setHourPay] = useState(String(DEFAULT_HOUR_PAY));
 
-  // One-way: the hours of his time — the train in the booking's note, else the plan with the route's average.
+  // One-way: the hours of his time — the train in the booking's note, else the plan with the route's average
+  // (a place from the map, without an id: planned from its km, the bus/train average home).
   const plan =
-    oneWay && b.trip?.destId && isTripPackage(b.package)
-      ? tripFor(b.package, b.city, b.trip.destId, b.trip.days, b.preferredTime, wantsNonstop(b.notes)).plan
+    oneWay && b.trip && isTripPackage(b.package)
+      ? planForBooking(b.package, b.city, b.trip, b.preferredTime, wantsNonstop(b.notes))
       : undefined;
   const noteHours = awayFromNotes(b.notes);
   const planHours = plan?.homeAt !== undefined ? Math.ceil(plan.homeAt - 1e-9) : 0;

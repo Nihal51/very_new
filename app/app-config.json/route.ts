@@ -84,6 +84,9 @@ export function GET() {
         breakMinutes: outstation.drive.breakMinutes,
         maxRoadHoursPerDay: outstation.drive.maxRoadHoursPerDay,
       },
+      /* A place not among `destinations` (any place in India, the list at site.url + /data/india-places.json):
+         road km ≈ round(straight line from the pickup city × roadFactor) (lib/places.ts placeKm). */
+      roadFactor: outstation.roadFactor,
       graceMinutes: outstation.graceMinutes,
       sameDayMaxHours: outstation.sameDayMaxHours,
       extraHour: outstation.extraHour,
@@ -113,7 +116,8 @@ export function GET() {
     payments: { cashLimit: payments.cashLimit },
     google: { profile: google.profile, writeReview: google.writeReview },
     alerts: { pingUrl: alerts.pingUrl },
-    site: { url: site.url, privacy: `${site.url}/privacy/`, terms: `${site.url}/terms/` },
+    /* places: every place in India for the place box (lib/places.ts; GeoNames CC BY 4.0, datameet CC0). */
+    site: { url: site.url, privacy: `${site.url}/privacy/`, terms: `${site.url}/terms/`, places: `${site.url}/data/india-places.json` },
     app: { minVersion: app.minVersion, playStoreUrl: app.playStoreUrl, appStoreUrl: app.appStoreUrl },
   };
   return new Response(JSON.stringify(body, null, 2), {

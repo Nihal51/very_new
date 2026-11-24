@@ -14,6 +14,7 @@ import {
   homeWay,
   pickupCities,
   pickupStations,
+  airKm,
   planTrip,
   homeDayMaxFor,
   pricedByKm,
@@ -27,11 +28,14 @@ import {
   type TripKind,
   type TripPlan,
 } from './outstation';
+import { placeKm, placeLabel, placeStation, type Place } from './places';
 import { returnParts, waitHoursOf, type ReturnOption } from './rail';
 import { rupeeRange, rupees, settings, tripRules } from './settings';
 
-/** The picker's value for a place that is not in the list. */
+/** The picker's value for a place that is not in the list (typed in: the team prices it on the call). */
 export const ELSEWHERE = 'other';
+/** The picker's value for a place from the list of all India (lib/places.ts): km from the map. */
+export const PLACE = 'place';
 
 export const destinationGroups = [
   { label: 'Chhattisgarh', items: destinations.filter((d) => d.region === 'cg') },
@@ -67,6 +71,8 @@ export type TripView = {
   sameCity: boolean;
   /** One-way: the train home from the lookup that the plan and the estimate use (withTrain). */
   ret?: ReturnOption;
+  /** A place from the list of all India, not one of ours: `km` is estimated from the map (lib/places.ts placeKm). */
+  place?: Place;
 };
 
 /**
@@ -97,10 +103,19 @@ export function tripFor(
   bookedDays: number,
   when = '',
   nonstop = false,
+  place?: Place,
 ): TripView {
   const kind = TRIP_PACKAGES[pkg];
-  const dest = destId && destId !== ELSEWHERE ? findDestination(destId) : undefined;
-  const sameCity = Boolean(dest && dest.name === city);
+  const dest =
+    destId === PLACE && place && isPickupCity(city)
+      ? placeDestination(place, city)
+      : destId && destId !== ELSEWHERE && destId !== PLACE
+        ? findDestination(destId)
+        : undefined;
+  // The pickup city itself (a place from the map: within 15 km of it — Bhilai for Durg, say, is not).
+  const sameCity = Boolean(
+    dest && (destId === PLACE ? dest.fromRaipur.air < 15 : dest.name === city),
+  );
   const start = parseStart(when);
   const startHour = start?.startHour ?? DEFAULT_START_HOUR;
   const when_ = { startHour, startKnown: Boolean(start), ...(start?.startDate && { startDate: start.startDate }) };
@@ -109,15 +124,18 @@ export function tripFor(
     const days = Math.min(60, Math.max(1, Math.floor(bookedDays) || 1));
     return { kind, dest, km: 0, minDays: 1, days, returnHours: 0, nonstop: straight, sameCity, ...when_ };
   }
-  const homeHours = homeTravelHours(dest, city) ?? 0;
+  const fromMap = destId === PLACE && place ? place : undefined;
+  const km = fromMap ? placeKm(findDestination(city.toLowerCase())!, fromMap, settings.outstation.roadFactor) : roadKm(city, dest);
+  // A place from the map: the bus/train average home (busKmh, stationHours) until a train is found.
+  const homeHours = fromMap ? km / tripRules.busKmh : (homeTravelHours(dest, city) ?? 0);
   const sd = start?.startDate;
   const weekday = sd ? new Date(Date.UTC(sd.y, sd.m - 1, sd.d)).getUTCDay() : undefined;
   const plan = planTrip(
     tripRules,
-    roadKm(city, dest),
+    km,
     kind,
     bookedDays,
-    homeWay(dest, city),
+    fromMap ? {} : homeWay(dest, city),
     { hour: startHour, ...(weekday !== undefined && { weekday }) },
     straight,
   );
@@ -133,8 +151,59 @@ export function tripFor(
     plan,
     est: estimate(tripRules, plan),
     sameCity,
+    ...(fromMap && { place: fromMap }),
     ...when_,
   };
+}
+
+/**
+ * A place from the list of all India as a destination for the planner and
+ * the train lookup: no id (it is not one of ours), its own point, the bus or
+ * train home on the average, and — when it has a railway station nearby —
+ * that station for the trains home (lib/places.ts placeStation).
+ */
+function placeDestination(place: Place, city: PickupCity): Destination {
+  const station = placeStation(place);
+  const from = findDestination(city.toLowerCase())!;
+  const air = Math.round(airKm(from, place) * 10) / 10;
+  return {
+    id: '',
+    name: place.name,
+    nameHi: place.name,
+    region: place.state === 'Chhattisgarh' ? 'cg' : 'india',
+    lat: place.lat,
+    lng: place.lng,
+    fromRaipur: { road: 0, air },
+    home: { by: station ? 'train' : 'bus', raipur: 0, durg: 0, bilaspur: 0 },
+    ...(station && { rail: { stations: [station] } }),
+  };
+}
+
+/**
+ * The plan for a saved booking's trip, for /admin: one of ours by its id;
+ * a place from the map (no id) by its km, with the average way home.
+ */
+export function planForBooking(
+  pkg: TripPackage,
+  city: string,
+  trip: Pick<BookingTrip, 'destId' | 'km' | 'days'>,
+  when = '',
+  nonstop = false,
+): TripPlan | undefined {
+  if (trip.destId) return tripFor(pkg, city, trip.destId, trip.days, when, nonstop).plan;
+  if (!(trip.km > 0)) return undefined;
+  const start = parseStart(when);
+  const sd = start?.startDate;
+  const weekday = sd ? new Date(Date.UTC(sd.y, sd.m - 1, sd.d)).getUTCDay() : undefined;
+  return planTrip(
+    tripRules,
+    trip.km,
+    TRIP_PACKAGES[pkg],
+    trip.days,
+    {},
+    { hour: start?.startHour ?? DEFAULT_START_HOUR, ...(weekday !== undefined && { weekday }) },
+    nonstop && TRIP_PACKAGES[pkg] === 'one-way',
+  );
 }
 
 const TIME = new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'UTC' });
@@ -281,7 +350,7 @@ export function tripTimeline(view: TripView, city: string): { label: string; val
 /** The trip as saved on the booking (firestore.rules: isTrip). */
 export function tripRecord(view: TripView, typedPlace: string): BookingTrip {
   return {
-    to: view.dest ? view.dest.name : typedPlace.trim(),
+    to: view.place ? placeLabel(view.place) : view.dest ? view.dest.name : typedPlace.trim(),
     destId: view.dest?.id ?? '',
     kind: view.kind,
     km: view.km,

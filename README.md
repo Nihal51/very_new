@@ -339,6 +339,7 @@ site-settings.ts        prices, phone numbers, notice bar  ← the file you edit
 lib/
   settings.ts           checks site-settings.ts, formats every price (priceText)
   outstation.ts         trip distances, days, the estimate and the /admin quote
+  places.ts             every place in India for the trip forms' place box (search, km from the map)
   trip.ts               the trip as the booking form, account page and /admin show it
   site.ts               company details + the domain
   content.ts            every word of marketing copy, typed
@@ -347,6 +348,9 @@ lib/
   firebase.ts           lazy-loaded Firestore write, never throws
   validate.ts           form validation rules
 scripts/og.mjs          generates public/og.png with sharp
+scripts/places/         builds public/data/india-places.json (3,502 places; loaded only when a
+                        trip form's place box is used) — places: GeoNames, CC BY 4.0 (credited
+                        under the box and on /about); stations: datameet/railways, CC0
 firestore.rules         ⚠️ deploy this
 ```
 

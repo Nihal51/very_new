@@ -205,7 +205,8 @@ function tripLine(b) {
   var t = b && b.trip;
   if (!t || typeof t !== 'object' || !t.to) return '';
   var plural = function (n, word) { return n + ' ' + word + (n === 1 ? '' : 's'); };
-  var parts = [String(b.city || '?') + ' → ' + String(t.to) + (t.destId ? '' : ' (not in our list)')];
+  // No id: a place from the list of all India (its km from the map), or one typed in (no km: priced on the call).
+  var parts = [String(b.city || '?') + ' → ' + String(t.to) + (t.destId ? '' : t.km > 0 ? ' (km from the map)' : ' (not in our list)')];
   parts.push(t.kind === 'round' ? 'round trip' : 'one-way drop');
   if (t.km > 0) parts.push('~' + t.km + ' km');
   // returnHours: one-way, hours from the drop until the driver is home (waiting included).

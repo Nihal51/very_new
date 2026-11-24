@@ -174,6 +174,11 @@ export const settings = {
       breakMinutes: 35, //        … this long
       maxRoadHoursPerDay: 12, //  hours on the road in a day (driving and breaks)
     },
+    /* A place that is not one of our destinations (any place in India, from the
+       place box): its km by road ≈ the straight line from the pickup city ×
+       this, as roads wind (Raipur → Ambikapur: 266 km × 1.3 ≈ 346; measured 334).
+       The form says it is estimated from the map; the team confirms the km. */
+    roadFactor: 1.3, //         decide
     sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
     extraHour: 130, //         each hour past the 24-hour blocks of a one-way drop, and each driving hour beyond hoursPerDay on a round trip
     extraFullDayAfterHours: 7, // round trips: driving hours left over after the full days: up to this many at extraHour; more = a full day

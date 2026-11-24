@@ -66,6 +66,8 @@ export type SiteSettings = {
     oneWay: { perKm: number; homeHour: number; homeDayMax: number; minimum: number; roundTo: number };
     /** One-way drops: the driving speed, a break after each full breakEveryHours of driving, the hours on the road a day. */
     drive: { kmh: number; breakEveryHours: number; breakMinutes: number; maxRoadHoursPerDay: number };
+    /** A place not among our destinations: road km ≈ the straight line × this (lib/places.ts placeKm). */
+    roadFactor: number;
     /** A round trip with up to this many hours of driving there and back is back within the 24 hours: one day. */
     sameDayMaxHours: number;
     /** Per hour past the 24-hour blocks of a one-way drop; per driving hour beyond hoursPerDay on a round trip. */
@@ -237,6 +239,8 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   if (dr.breakEveryHours < 1) problems.push('outstation.drive.breakEveryHours must be at least 1');
   count('outstation.drive.breakMinutes', dr.breakMinutes, 120);
   count('outstation.drive.maxRoadHoursPerDay', dr.maxRoadHoursPerDay, 16);
+  if (!(Number.isFinite(s.outstation.roadFactor) && s.outstation.roadFactor >= 1 && s.outstation.roadFactor <= 2))
+    problems.push(`outstation.roadFactor (${s.outstation.roadFactor}) must be a number from 1 to 2 (roads are longer than the straight line)`);
   if (dr.maxRoadHoursPerDay < 6) problems.push('outstation.drive.maxRoadHoursPerDay must be at least 6');
 
   const o = s.outstation;

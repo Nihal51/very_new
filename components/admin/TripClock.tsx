@@ -13,7 +13,7 @@ import { cn } from '@/lib/cn';
 import { pricedByKm, pricedByTime, pricedV2Long } from '@/lib/outstation';
 import { rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import { asset } from '@/lib/site';
-import { tripFor } from '@/lib/trip';
+import { planForBooking } from '@/lib/trip';
 import {
   billBreakdown,
   billLines,
@@ -326,9 +326,10 @@ function Steps({ b, link, user }: { b: Booking; link: TripLink; user: User }) {
 
 function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: User; now: number }) {
   // The plan for the real start time: to spot a time that looks wrong.
+  // One of ours by its id; a place from the map by its km.
   const plan =
-    b.trip?.destId && link.startAt
-      ? tripFor(b.package as TripPackage, b.city, b.trip.destId, b.trip.days, toLocalInput(link.startAt), link.nonstop).plan
+    b.trip && link.startAt
+      ? planForBooking(b.package as TripPackage, b.city, b.trip, toLocalInput(link.startAt), link.nonstop)
       : undefined;
   // A saved bill keeps its rates; otherwise the agreed price's (or the estimate's: the driver's time at the day price for the distance).
   const saved = b.bill;
