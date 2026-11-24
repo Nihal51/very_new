@@ -724,7 +724,7 @@ describe('driver app — jobs and live tracking', () => {
     await assertFails(setDoc(doc(driver(), 'tracking', 'nobooking'), point()));
     await assertFails(setDoc(doc(customer('cust1'), 'tracking', 'mine'), point()));
     const t = doc(driver(), 'tracking', 'mine');
-    await assertFails(setDoc(t, point({ at: new Date() })));
+    await assertFails(setDoc(t, point({ at: new Date(Date.now() - 60000) })));
     await assertFails(setDoc(t, point({ driverPhone: '9111111111' })));
     await assertFails(setDoc(t, point({ lat: 51.5, lng: -0.12 }))); // outside India
     await assertFails(setDoc(t, point({ phoneAt: new Date(Date.now() + 3600e3) })));
@@ -754,7 +754,7 @@ describe('drivers — an admin adding one directly', () => {
     await assertFails(addDoc(collection(admin(), 'drivers'), added({ source: 'website' })));
     await assertFails(addDoc(collection(admin(), 'drivers'), added({ experienceYears: 3 })));
     await assertFails(addDoc(collection(admin(), 'drivers'), added({ updatedBy: 'someone-else' })));
-    await assertFails(addDoc(collection(admin(), 'drivers'), added({ createdAt: new Date() })));
+    await assertFails(addDoc(collection(admin(), 'drivers'), added({ createdAt: new Date(Date.now() - 60000) })));
     await assertFails(addDoc(collection(admin(), 'drivers'), added({ extra: 1 })));
     // A guest can still apply as before, only as "new".
     await assertFails(addDoc(collection(guest(), 'drivers'), { ...driverApp(), status: 'active' }));
@@ -885,7 +885,7 @@ describe('availability — Online in the Driver app', () => {
   test('not for someone else, another city, an inactive driver, or a customer', async () => {
     await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd3'), on()));
     await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd1'), on({ city: 'Bhilai' })));
-    await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd1'), on({ at: new Date() })));
+    await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd1'), on({ at: new Date(Date.now() - 60000) })));
     await assertFails(setDoc(doc(drv(RAJU), 'availability', 'd1'), on({ lat: 51.5 })));
     await assertFails(setDoc(doc(drv({ id: 'd3', name: 'Old Driver', phone: '9111111111' }), 'availability', 'd3'), on({ city: 'Raipur', name: 'Old Driver', phone: '9111111111' })));
     await assertFails(getDoc(doc(customer(), 'availability', 'd1')));
@@ -939,7 +939,7 @@ describe('bookings — the customer accepts the trip price (2)', () => {
     await assertFails(accept(drvDb(RAJU)));
     await assertFails(accept(customer('cust1'), { amount: 1440 })); // only the estimate shown
     await assertFails(accept(customer('cust1'), { amount: '1600' }));
-    await assertFails(accept(customer('cust1'), { at: new Date() }));
+    await assertFails(accept(customer('cust1'), { at: new Date(Date.now() - 60000) }));
     await assertFails(accept(customer('cust1'), { note: 'ok' }));
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { acceptedPrice: { amount: 1600 } }));
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { acceptedPrice: { amount: 1600, at: serverTimestamp() }, status: 'confirmed' }));
@@ -1059,15 +1059,16 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
     await assertFails(tap(db, 'homeAt', 't1'));
   });
 
+  // A client time a minute old: "now" could equal the server time to the millisecond on a fast machine.
   test('no picking his own time, no other shape, no two steps at once', async () => {
     const db = drvDb(RAJU);
-    await assertFails(start(db, 'b1', { leftAt: new Date() }));
+    await assertFails(start(db, 'b1', { leftAt: new Date(Date.now() - 60000) }));
     await assertFails(start(db, 'b1', { driverPhone: SONU.phone }));
     await assertFails(start(db, 'b1', { arrivedAt: serverTimestamp() }));
     await assertFails(setDoc(ref(db), { driverPhone: RAJU.phone, arrivedAt: serverTimestamp() }));
     await assertFails(setDoc(ref(db), { leftAt: serverTimestamp() }));
     await start(db);
-    await assertFails(updateDoc(ref(db), { arrivedAt: new Date() }));
+    await assertFails(updateDoc(ref(db), { arrivedAt: new Date(Date.now() - 60000) }));
     await assertFails(updateDoc(ref(db), { arrivedAt: serverTimestamp(), doneAt: serverTimestamp() }));
     await assertFails(updateDoc(ref(db), { arrivedAt: serverTimestamp(), note: 'x' }));
     await assertFails(updateDoc(ref(db), { driverPhone: SONU.phone }));
@@ -1162,7 +1163,7 @@ describe('trip taps — "payment received" (UPI spec 4)', () => {
     await assertFails(paid(db, 'card'));
     await assertFails(paid(db, true));
     await assertFails(paid(db, 'UPI'));
-    await assertFails(updateDoc(ref(db), { paidBy: 'upi', paidAt: new Date() })); // his own clock
+    await assertFails(updateDoc(ref(db), { paidBy: 'upi', paidAt: new Date(Date.now() - 60000) })); // his own clock
     await assertFails(updateDoc(ref(db), { paidBy: 'upi' })); // no time
     await assertFails(updateDoc(ref(db), { paidAt: serverTimestamp() })); // no method
     await assertFails(paid(db, 'cash', { amount: 1 })); // no amount on his taps
@@ -1274,7 +1275,7 @@ describe('bookings — driverConfirmed: the customer’s details for the confirm
     const confirm = (c) => updateDoc(doc(admin(), 'bookings', 'b2'), stamped({ driverConfirmed: c }));
     await assertFails(confirm({ at: serverTimestamp(), by: 'telegram', driverId: 'd1' })); // the robot's kinds
     await assertFails(confirm({ at: serverTimestamp(), by: 'auto', driverId: 'd1' }));
-    await assertFails(confirm({ at: new Date(), by: 'admin', driverId: 'd1' })); // his own clock
+    await assertFails(confirm({ at: new Date(Date.now() - 60000), by: 'admin', driverId: 'd1' })); // his own clock
     await assertFails(confirm({ at: serverTimestamp(), by: 'admin', driverId: 'd2' })); // not the booking's driver
     await assertFails(confirm({ at: serverTimestamp(), by: 'admin' }));
     await assertFails(confirm({ at: serverTimestamp(), by: 'admin', driverId: 'd1', note: 'x' }));
@@ -1358,7 +1359,7 @@ describe('ratings (7)', () => {
     await assertFails(rate(db, { comment: 'x'.repeat(301) }));
     await assertFails(rate(db, { driverId: 'd2' }));
     await assertFails(rate(db, { customerUid: 'cust2' }));
-    await assertFails(rate(db, { at: new Date() }));
+    await assertFails(rate(db, { at: new Date(Date.now() - 60000) }));
     await assertFails(rate(db, { tip: 50 }));
     const { comment, ...noComment } = rating();
     await assertFails(setDoc(doc(db, 'ratings', 'b1'), noComment));
@@ -1394,7 +1395,7 @@ describe('drivers — his UPI ID; ratings and strikes are the robot’s (8, 10)'
     const db = drvDb(RAJU);
     for (const bad of ['raju', 'raju@', '@okaxis', 'r@okaxis', 'raju@ok1', 'raju@okaxis.com', 'raju sahu@okaxis', 'raju@o', 42, ''])
       await assertFails(upi(db, bad));
-    await assertFails(upi(db, 'raju@okaxis', { updatedAt: new Date() }));
+    await assertFails(upi(db, 'raju@okaxis', { updatedAt: new Date(Date.now() - 60000) }));
     await assertFails(upi(db, 'raju@okaxis', { name: 'Raju S' }));
     await assertFails(upi(db, 'raju@okaxis', { status: 'inactive' }));
     await assertFails(upi(db, 'raju@okaxis', { strikes: 0 }));
