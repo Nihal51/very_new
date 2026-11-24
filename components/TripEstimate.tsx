@@ -151,15 +151,17 @@ export function TripEstimate({
               distance).
             </li>
             <li>
-              Farther: {priceText.oneWayDrivingDay} for each day of driving — {tripRules.oneWay?.driveHoursPerDay ?? 12} hours
-              of driving a day, the last day up to {(tripRules.oneWay?.driveHoursPerDay ?? 12) + (tripRules.oneWay?.driveGraceHours ?? 0)}{' '}
-              hours.
+              Farther: the drive is {priceText.oneWayPerKm} a km (one way, by road). He drives about{' '}
+              {settings.outstation.drive.kmh} km an hour with a {settings.outstation.drive.breakMinutes}-minute break
+              every {settings.outstation.drive.breakEveryHours} hours, and rests the night after about{' '}
+              {settings.outstation.drive.maxRoadHoursPerDay} hours on the road — unless you want it driven day and night.
             </li>
             <li>
-              Then his way home — waiting for the train he takes and the ride: {priceText.oneWayReturnHour} for each
-              started hour, never more than {priceText.oneWayReturnDay} for each 24 hours. So 5 hours home = 5 ×{' '}
-              {priceText.oneWayReturnHour}; 27 hours = {priceText.oneWayReturnDay} + 3 × {priceText.oneWayReturnHour}. The
-              final bill uses his real times.
+              Then his way home — waiting for the train he takes and the ride: {priceText.oneWayHomeHour} for each
+              started hour, never more than {priceText.oneWayHomeDayMax} for each 24 hours. So 5 hours home = 5 ×{' '}
+              {priceText.oneWayHomeHour}; 27 hours = {priceText.oneWayHomeDayMax} + 3 × {priceText.oneWayHomeHour}. The
+              total is rounded to the nearest {rupees(settings.outstation.oneWay.roundTo)}, at least{' '}
+              {priceText.oneWayMinimum}; the final bill uses his real times.
             </li>
             <li>
               Until you pick the date, the wait and the ride home are the route’s average from the timetables; with the

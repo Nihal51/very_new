@@ -59,10 +59,13 @@ export type SiteSettings = {
     dayTopFromKm: number;
     hoursPerDay: number;
     /**
-     * One-way drops farther than the first nearby tier (customer prices): each driving day,
-     * each full 24 h of his way home, each started hour of it left over; a driving day's hours and its grace.
+     * One-way drops farther than the first nearby tier (customer prices, 24 Nov 2026 v3): each km of the
+     * drive, each started hour of his way home with at most homeDayMax for any 24 hours, the least such a
+     * drop costs, and the total's rounding (lib/outstation.ts longOneWayPrice).
      */
-    oneWay: { driveDay: number; returnDay: number; returnHour: number; driveHoursPerDay: number; driveGraceHours: number };
+    oneWay: { perKm: number; homeHour: number; homeDayMax: number; minimum: number; roundTo: number };
+    /** One-way drops: the driving speed, a break after each full breakEveryHours of driving, the hours on the road a day. */
+    drive: { kmh: number; breakEveryHours: number; breakMinutes: number; maxRoadHoursPerDay: number };
     /** A round trip with up to this many hours of driving there and back is back within the 24 hours: one day. */
     sameDayMaxHours: number;
     /** Per hour past the 24-hour blocks of a one-way drop; per driving hour beyond hoursPerDay on a round trip. */
@@ -215,15 +218,26 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
     problems.push(`payments.cashLimit (${s.payments.cashLimit}) is more than 50000 — is a 0 too many?`);
 
   const ow = s.outstation.oneWay;
-  price('outstation.oneWay.driveDay', ow.driveDay);
-  price('outstation.oneWay.returnDay', ow.returnDay);
-  price('outstation.oneWay.returnHour', ow.returnHour);
-  count('outstation.oneWay.driveHoursPerDay', ow.driveHoursPerDay, 24);
-  if (ow.driveHoursPerDay < 1) problems.push('outstation.oneWay.driveHoursPerDay must be at least 1');
-  count('outstation.oneWay.driveGraceHours', ow.driveGraceHours, 6);
-  // The saved quotes' and bills' check (firestore.rules isQuote / isBill) allows 10 hours' worth a day of the way home.
-  if (ow.returnDay !== 10 * ow.returnHour)
-    problems.push(`outstation.oneWay.returnDay (${ow.returnDay}) must be 10 × returnHour (${10 * ow.returnHour})`);
+  price('outstation.oneWay.perKm', ow.perKm);
+  price('outstation.oneWay.homeHour', ow.homeHour);
+  price('outstation.oneWay.homeDayMax', ow.homeDayMax);
+  price('outstation.oneWay.minimum', ow.minimum);
+  price('outstation.oneWay.roundTo', ow.roundTo);
+  if (ow.perKm > 100) problems.push(`outstation.oneWay.perKm (${ow.perKm}) is more than 100 a km — is a 0 too many?`);
+  if (ow.roundTo > 500) problems.push(`outstation.oneWay.roundTo (${ow.roundTo}) must be at most 500`);
+  // The saved quotes' and bills' check (firestore.rules isQuote / isBill): the way home never more than each hour at homeHour.
+  if (ow.homeDayMax > 24 * ow.homeHour)
+    problems.push(`outstation.oneWay.homeDayMax (${ow.homeDayMax}) must be at most 24 × homeHour (${24 * ow.homeHour})`);
+  if (ow.homeDayMax < ow.homeHour)
+    problems.push(`outstation.oneWay.homeDayMax (${ow.homeDayMax}) must be at least homeHour (${ow.homeHour})`);
+  const dr = s.outstation.drive;
+  count('outstation.drive.kmh', dr.kmh, 100);
+  if (dr.kmh < 20) problems.push('outstation.drive.kmh must be at least 20');
+  count('outstation.drive.breakEveryHours', dr.breakEveryHours, 12);
+  if (dr.breakEveryHours < 1) problems.push('outstation.drive.breakEveryHours must be at least 1');
+  count('outstation.drive.breakMinutes', dr.breakMinutes, 120);
+  count('outstation.drive.maxRoadHoursPerDay', dr.maxRoadHoursPerDay, 16);
+  if (dr.maxRoadHoursPerDay < 6) problems.push('outstation.drive.maxRoadHoursPerDay must be at least 6');
 
   const o = s.outstation;
   count('outstation.hoursPerDay', o.hoursPerDay, 16);

@@ -14,54 +14,68 @@ or **Outstation Trip**, where to, and **when the driver leaves** (date and
 time; blank = 7 AM). The estimate shows straight away, with the driver's trip
 hour by hour.
 
-### One-way drops farther than 160 km: driving days and his way home (24 Nov 2026)
+### One-way drops farther than 160 km: by the km, plus his way home (24 Nov 2026)
 
-The per-24-hours rule below was below the driver's cost on long drops. From
-24 Nov 2026 a one-way drop farther than the first nearby tier
-(`prices.outstationNear[0].upToKm`, 160 km) is priced in two parts
-(`lib/outstation.ts` `longOneWayPrice`; the mobile app does the same from
-`app-config.json`):
+A one-way drop farther than the first nearby tier
+(`prices.outstationNear[0].upToKm`, 160 km) is priced by the km and his way
+home (`lib/outstation.ts` `longOneWayPrice`; the mobile app does the same
+from `app-config.json`). All customer prices, in `outstation.oneWay` — never
+the driver's pay (his rate card is set in Script Properties):
 
-All customer prices, in `outstation.oneWay` — never the driver's pay (his
-rate card is set in Script Properties):
+```
+driving = km × perKm                                 (the one-way road km)
+home    = floor(H / 24) × homeDayMax + min(homeDayMax, ceil(H mod 24) × homeHour)
+price   = max(minimum, the nearest roundTo of driving + home)   + his ticket
+```
 
-- **Driving:** `driveDay` (1,600) for each driving day —
-  `max(1, ceil((driving hours − driveGraceHours) / driveHoursPerDay))`, i.e.
-  12 hours a day, the last day up to 13 hours (as the plan: up to an hour
-  more and he finishes that evening; without it Raipur → Ranchi's 12.3 hours
-  would be two days). The driving hours are the route's (km ÷ `averageKmh`);
-  on the final bill, start → drop. "Drive day and night" changes nothing.
-- **His way home**, H = waiting for the train he takes + the ride (the
-  route's average until a train is picked; on the final bill, drop → home):
-  `floor(H / 24) × returnDay + min(returnDay, ceil(H mod 24) × returnHour)`
-  — 1,600 for each full 24 hours, 160 for each started hour left over, never
-  more than 1,600 for those. The final bill gives the usual first 15
-  minutes of an hour free (`outstation.graceMinutes`).
-- The customer books and pays his ticket (its own line, not in the total).
-- `returnDay` must be exactly `10 × returnHour` (checked at build): the saved
-  quotes' and bills' check in firestore.rules allows 10 hours' worth a day.
+- H = his way home: waiting for the train he takes + the ride (the route's
+  average until a train is picked; on the final bill, drop → home, with the
+  usual first 15 minutes of an hour free, `outstation.graceMinutes`).
+- Today: `perKm` 3, `homeHour` 100, `homeDayMax` 1,500, `minimum` 1,500,
+  `roundTo` 50 (to the NEAREST 50: 1,902 → 1,900, 3,234 → 3,250).
+- `homeDayMax` may be at most 24 × `homeHour` (checked at build): a quote's
+  or bill's way home is then never more than each hour at the rate, which
+  firestore.rules checks.
+- The customer books and pays his ticket and gives his meals, as before.
 
-| Case | Km | Driving | Way home | Price |
+| From Raipur | Km | His way home | Driving + home | Price |
 | --- | --- | --- | --- | --- |
-| A (Raipur → Ranchi) | 616 | 12.3 h → 1 day | 10 h 41 m → 11 h, capped (the route's average, 20 h 45 m: capped too) | 1,600 + 1,600 = **3,200** |
-| Raipur → Bengaluru | 1,370 | 27.4 h → 3 days | 34 h 45 m → 1 day + 11 h, capped | 4,800 + 3,200 = **8,000** |
-| B | 1,200 | 24 h → 2 days | 27 h → 1 day + 3 h | 3,200 + 1,600 + 480 = **5,280** |
-| C | 1,200 | 24 h → 2 days | 35 h → 1 day + 11 h, capped | 3,200 + 3,200 = **6,400** |
-| D | 300 | 6 h → 1 day | 5 h | 1,600 + 800 = **2,400** |
-| E | 140 | same-day drop | — | the near-tier price, unchanged |
+| Ambikapur | 334 | 9 h (route average 1.5 + 7.5 h) | 1,002 + 900 = 1,902 | **1,900** |
+| Prayagraj | 578 | 15 h or more (average 20 h 15 m): a day's most | 1,734 + 1,500 = 3,234 | **3,250** |
+| Ranchi | 616 | 10 h 41 m (a picked train) → 11 h | 1,848 + 1,100 = 2,948 | **2,950** |
+| Ranchi, before a train is picked | 616 | route average 20 h 45 m: a day's most | 1,848 + 1,500 = 3,348 | **3,350** |
+| Bengaluru | 1,370 | 34 h 45 m → a day + 11 h | 4,110 + 1,500 + 1,100 = 6,710 | **6,700** |
+| A short long drop | 170 | 3 h | 510 + 300 = 810 | **1,500** (the minimum) |
 
-Saved on the booking: `trip.days` = the driving days, `trip.returnHours` =
-H (whole hours, up), `trip.estFrom`/`estTo` = the price (the robot's offers
-use it). The /admin quote saves `dayRate` = `driveDay`, `days` = driving
-days, `returnHours` = H, `returnHourRate` = `returnHour`, `returnCharge`,
-`extraHours` 0 and the km (firestore.rules unchanged). Same-day drops (up to
-160 km) and round trips stay as below; quotes and bills saved before 24 Nov
-2026 still read and bill as they were saved.
+**The drive's timing** (`outstation.drive`: when he arrives, which train he
+can catch, his wait, the days): driving at `kmh` (55), a break of
+`breakMinutes` (35) after each full `breakEveryHours` (4) of driving; more
+than `maxRoadHoursPerDay` (12) on the road — an hour more finishes that
+evening — and he rests the night, unless the customer wants it driven day
+and night (`lib/outstation.ts` `roadTime`, `planTrip`). The booking form
+shows it: "Driving about 11 h 10 m + 2 breaks (1 h 10 m) → arrives about
+12 h 20 m after leaving" (Raipur → Ranchi). Round trips keep `averageKmh`.
 
-A test (scripts/automation.test.mjs, "margin guard") checks, with generic
-numbers in the rate card's shape, that the customer's price covers the
-driver's rate-card pay from every pickup city to every place: it holds while
-his day is at most `driveDay` and his hour home at most `returnHour`.
+**Saved:** on the booking `trip.days` = the calendar days, `trip.returnHours`
+= H (whole hours, up), `trip.estFrom`/`estTo` = the price (the robot's offers
+use it). The /admin quote and the final bill save `dayRate` = km × `kmRate`
+with `days` 1, `returnHours` = H, `returnHourRate`, `returnCharge`,
+`extraHours` 0, the `km`, `kmRate`, `minimum` and `adjust` (the round-off,
+at most ₹100 either way, or the top-up to the minimum); `amount` = dayRate +
+returnCharge + adjust + ticket (firestore.rules `isKmPrice`). On the final
+bill the drive is fixed once he starts; his way home is drop → home.
+
+**The driver's pay** (the robot's rate card, `DRIVER_RATES`): his whole time
+T — on the road start → drop (the km at `outstation.drive`, its breaks and
+any night's rest) plus H — `max(tripDay, floor(T / 24) × tripDay +
+min(tripDay, ceil(T mod 24) × returnHour))`. A test
+(scripts/automation.test.mjs, "margin guard") checks with generic numbers in
+the card's shape that the customer's price covers it from every pickup city
+to every place.
+
+Quotes and bills saved under the first 24 Nov 2026 rule (driving days at
+1,600 and the way home at 160 an hour, at most 1,600 a day) still read and
+bill as they were agreed (`pricedV2Long`).
 
 ### One-way drops up to 160 km (and before 24 Nov 2026): the driver's time
 
@@ -289,7 +303,8 @@ All in `site-settings.ts`:
 | Setting | Today | Meaning |
 | --- | --- | --- |
 | `prices.outstation` | 1450–1750 | Customer price for each 24 h of the driver's time, farther than the nearby tiers (rising with the distance) |
-| `outstation.oneWay` | 1600 / 1600 / 160 / 12 / 1 | One-way drops farther than the first tier (customer prices): `driveDay`, `returnDay` (= 10 × `returnHour`), `returnHour`, `driveHoursPerDay`, `driveGraceHours` |
+| `outstation.oneWay` | 3 / 100 / 1500 / 1500 / 50 | One-way drops farther than the first tier (customer prices): `perKm`, `homeHour`, `homeDayMax` (≤ 24 × `homeHour`), `minimum`, `roundTo` |
+| `outstation.drive` | 55 / 4 / 35 / 12 | One-way timings: `kmh`, a break after each full `breakEveryHours` of driving, `breakMinutes` long, `maxRoadHoursPerDay` on the road |
 | `prices.outstationNear` | ≤160 km 1050–1350 | Same-day drops (one price for the trip) and round-trip days close by; nearest first |
 | `outstation.nearFromKm` | 60 | The day price starts rising from the first tier's `from` here … |
 | `outstation.dayTopFromKm` | 300 | … and reaches `prices.outstation.to` here (farther: the same) |

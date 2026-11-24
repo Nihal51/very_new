@@ -13,10 +13,12 @@ import {
   dayRateFor,
   finalBill,
   isLongOneWay,
+  pricedByKm,
   pricedByTime,
-  pricedLong,
+  pricedV2Long,
   returnCost,
   returnWords,
+  wholeTimePay,
   type Bill,
   type TripKind,
   type TripRules,
@@ -154,8 +156,10 @@ export type BillRates = {
   time?: { km: number };
   /** A route price (quotes from before 8 Nov 2026) and the hours away it was planned for (finalBill). */
   route?: { price: number; awayHours: number; km: number };
-  /** A long one-way drop (24 Nov 2026): the km (finalBill: driving days, then his way home). */
-  long?: { km: number };
+  /** A long one-way drop by the km (24 Nov 2026, v3): the km, the price a km and the minimum (finalBill). */
+  long?: { km: number; kmRate: number; minimum: number };
+  /** A long one-way drop agreed under v2 (24 Nov 2026): the km (finalBill: driving days, then his way home). */
+  v2Long?: { km: number };
 };
 
 /**
@@ -174,13 +178,24 @@ export function billRates(quote: Booking['quote'], rules: TripRules, km?: number
   };
   if (quote?.awayHours)
     return { ...base, dayRate: quote.dayRate, route: { price: quote.dayRate, awayHours: quote.awayHours, km: quote.km ?? km ?? 0 } };
-  // A long one-way drop (24 Nov 2026): the agreed driving day and way-home hour.
-  if (quote && oneWay && pricedLong(rules, quote)) return { ...base, dayRate: quote.dayRate, long: { km: quote.km ?? 0 } };
+  // A long one-way drop by the km (24 Nov 2026, v3): the agreed price a km, hour home and minimum.
+  if (quote && oneWay && pricedByKm(quote))
+    return { ...base, dayRate: quote.dayRate, long: { km: quote.km ?? 0, kmRate: quote.kmRate ?? 0, minimum: quote.minimum ?? 0 } };
   if (quote && pricedByTime(quote)) return { ...base, dayRate: quote.dayRate, time: { km: quote.km ?? 0 } };
+  // Agreed under v2 (24 Nov 2026): the agreed driving day and way-home hour.
+  if (quote && oneWay && pricedV2Long(rules, quote)) return { ...base, dayRate: quote.dayRate, v2Long: { km: quote.km ?? 0 } };
   if (quote) return { ...base, dayRate: quote.dayRate };
-  // No quote: the estimate's rates — a long one-way drop at the settings' driving day and hour.
-  if (oneWay && rules.oneWay && isLongOneWay(rules, km))
-    return { ...base, dayRate: rules.oneWay.driveDay, returnHourRate: rules.oneWay.returnHour, long: { km: km ?? 0 } };
+  // No quote: the estimate's rates — a long one-way drop at the settings' price a km, hour home and minimum.
+  if (oneWay && rules.oneWay && isLongOneWay(rules, km)) {
+    const ow = rules.oneWay;
+    return {
+      ...base,
+      dayRate: (km ?? 0) * ow.perKm,
+      extraHourRate: 0,
+      returnHourRate: ow.homeHour,
+      long: { km: km ?? 0, kmRate: ow.perKm, minimum: ow.minimum },
+    };
+  }
   const dayRate = dayRateFor(rules, km).from;
   return oneWay && km ? { ...base, dayRate, time: { km } } : { ...base, dayRate };
 }
@@ -234,7 +249,9 @@ export function bookingBill(b: Bill, nonstop: boolean): Omit<BookingBill, 'at'> 
     ...(b.route && { awayHours: b.route.awayHours, km: b.route.km }),
     // Priced by the driver's time: the km (with no route hours) says so; a long one-way drop: its km.
     ...(b.time && { km: b.time.km }),
-    ...(b.long && { km: b.long.km }),
+    ...(b.v2Long && { km: b.v2Long.km }),
+    // By the km (v3): the km, the price a km, the minimum and the round-off or top-up.
+    ...(b.long && { km: b.long.km, kmRate: b.long.kmRate, minimum: b.long.minimum, adjust: b.long.adjust }),
     ticket: b.ticket,
     nonstop,
   };
@@ -258,22 +275,40 @@ export function billLines(
     | 'returnCharge'
     | 'ticket'
   > &
-    Partial<Pick<Bill, 'route' | 'time' | 'long'>>,
+    Partial<Pick<Bill, 'route' | 'time' | 'long' | 'v2Long'>>,
   rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): { label: string; amount: string }[] {
   const lines: { label: string; amount: string }[] = [];
-  // A long one-way drop (24 Nov 2026): the driving days, then his way home.
+  // A long one-way drop by the km (24 Nov 2026, v3): the drive, his way home, the round-off or the minimum.
   if (b.long) {
+    const l = b.long;
+    lines.push({ label: `Driving ${inr.format(l.km)} km × ${rupees(l.kmRate)}`, amount: rupees(b.dayRate) });
+    const parts = [
+      l.homeFullDays ? `${plural(l.homeFullDays, 'day')} × ${rupees(l.homeDayMax)}` : null,
+      l.homeLeftoverHours ? `${l.homeLeftoverHours} h × ${rupees(b.returnHourRate)}` : null,
+    ].filter(Boolean);
     lines.push({
-      label: `Driving (start → drop, ${inr.format(b.long.km)} km): ${plural(b.days, 'driving day')} × ${rupees(b.dayRate)}`,
+      label: `His way home (drop → home), ${b.returnHours} h: ${parts.join(' + ') || 'nothing'} (never more than ${rupees(l.homeDayMax)} a day)`,
+      amount: rupees(b.returnCharge),
+    });
+    if (l.minimumApplies) lines.push({ label: `Up to the ${rupees(l.minimum)} minimum`, amount: `+${rupees(l.adjust)}` });
+    else if (l.adjust !== 0)
+      lines.push({ label: `Rounded to the nearest ${rupees(l.roundTo)}`, amount: `${l.adjust > 0 ? '+' : '−'}${rupees(Math.abs(l.adjust))}` });
+    if (b.ticket > 0) lines.push({ label: 'Ticket home (we bought it)', amount: rupees(b.ticket) });
+    return lines;
+  }
+  // A long one-way drop agreed under v2 (24 Nov 2026): the driving days, then his way home.
+  if (b.v2Long) {
+    lines.push({
+      label: `Driving (start → drop, ${inr.format(b.v2Long.km)} km): ${plural(b.days, 'driving day')} × ${rupees(b.dayRate)}`,
       amount: rupees(b.days * b.dayRate),
     });
     const parts = [
-      b.long.returnFullDays ? `${plural(b.long.returnFullDays, 'day')} × ${rupees(b.long.returnDay)}` : null,
-      b.long.returnLeftoverHours ? `${b.long.returnLeftoverHours} h × ${rupees(b.returnHourRate)}` : null,
+      b.v2Long.returnFullDays ? `${plural(b.v2Long.returnFullDays, 'day')} × ${rupees(b.v2Long.returnDay)}` : null,
+      b.v2Long.returnLeftoverHours ? `${b.v2Long.returnLeftoverHours} h × ${rupees(b.returnHourRate)}` : null,
     ].filter(Boolean);
     lines.push({
-      label: `His way home (drop → home), ${b.returnHours} h: ${parts.join(' + ') || 'nothing'} (never more than ${rupees(b.long.returnDay)} a day)`,
+      label: `His way home (drop → home), ${b.returnHours} h: ${parts.join(' + ') || 'nothing'} (never more than ${rupees(b.v2Long.returnDay)} a day)`,
       amount: rupees(b.returnCharge),
     });
     if (b.ticket > 0) lines.push({ label: 'Ticket home (we bought it)', amount: rupees(b.ticket) });
@@ -343,8 +378,25 @@ export function billLines(
 /** "₹1,750 × 2 × 24 h of the driver’s time + ₹390 for 3 h past them + ₹650 ticket" — for the customer's booking. */
 export function billBreakdown(
   b: Pick<Bill, 'days' | 'dayRate' | 'extraHours' | 'extraCharge' | 'returnHours' | 'returnCharge' | 'ticket'> &
-    Partial<Pick<Bill, 'route' | 'time' | 'long'>> & { awayHours?: number; km?: number },
+    Partial<Pick<Bill, 'route' | 'time' | 'long' | 'v2Long'>> & { awayHours?: number; km?: number; kmRate?: number; minimum?: number; adjust?: number },
 ): string {
+  // By the km (a bill from finalBill, or one saved on a booking from 24 Nov 2026, v3).
+  if (b.long || pricedByKm(b)) {
+    const km = b.long?.km ?? b.km ?? 0;
+    const adjust = b.long?.adjust ?? b.adjust ?? 0;
+    const minimum = b.long?.minimum ?? b.minimum ?? 0;
+    const atMinimum = b.long ? b.long.minimumApplies : adjust > 0 && minimum > 0 && b.dayRate + b.returnCharge + adjust === minimum;
+    return (
+      [
+        `${rupees(b.dayRate)} for ${inr.format(km)} km`,
+        `${rupees(b.returnCharge)} way home (${b.returnHours} h)`,
+        atMinimum ? `${rupees(adjust)} up to the ${rupees(minimum)} minimum` : adjust > 0 ? `${rupees(adjust)} rounding` : null,
+        b.ticket > 0 ? `${rupees(b.ticket)} ticket` : null,
+      ]
+        .filter(Boolean)
+        .join(' + ') + (adjust < 0 ? ` − ${rupees(-adjust)} rounding` : '')
+    );
+  }
   // The driver's time (a bill from finalBill, or one saved on a booking from 8 Nov 2026).
   if (b.time || pricedByTime(b)) {
     const hours = b.time ? ` (${b.time.hours} h, leaves → home)` : '';
@@ -369,7 +421,7 @@ export function billBreakdown(
       .filter(Boolean)
       .join(' + ');
   return [
-    b.days > 0 ? `${rupees(b.dayRate)} × ${plural(b.days, b.long ? 'driving day' : 'day')}` : null,
+    b.days > 0 ? `${rupees(b.dayRate)} × ${plural(b.days, b.v2Long ? 'driving day' : 'day')}` : null,
     b.extraHours > 0
       ? b.days === 0
         ? `${rupees(b.extraCharge)} for ${b.extraHours} h of driving`
@@ -383,8 +435,10 @@ export function billBreakdown(
 }
 
 /** "2 days + 5 h" — the driving as charged; the driver's time: "56 h away: 2 × 24 h + 8 h"; a route price: "route price, 62 h away". */
-export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bill, 'route' | 'time'>>) =>
-  b.time
+export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bill, 'route' | 'time' | 'long'>>) =>
+  b.long
+    ? `${inr.format(b.long.km)} km, the drive’s price`
+    : b.time
     ? `${b.time.hours} h away: ${b.days} × 24 h${b.extraHours > 0 ? ` + ${b.extraHours} h` : ''}`
     : b.route
     ? `route price, ${b.route.realAwayHours} h away`
@@ -401,14 +455,17 @@ export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bil
  * maximum in hours as the customer's. Admin-only: never saved on the booking.
  */
 export function driverPay(
-  b: Pick<Bill, 'days' | 'extraHours' | 'returnHours'> & Partial<Pick<Bill, 'route' | 'time' | 'long'>>,
+  b: Pick<Bill, 'days' | 'extraHours' | 'returnHours'> &
+    Partial<Pick<Bill, 'route' | 'time' | 'long' | 'v2Long' | 'driveMinutes' | 'returnMinutes'>>,
   dayCost: number,
   hourPay: number,
   rules: Pick<TripRules, 'hoursPerDay' | 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): number {
   const returnHourPay = hourPay;
-  // A long one-way drop: his day for each driving day and each full 24 h home, his hourly pay for the rest (at most a day).
-  if (b.long) return (b.days + b.long.returnFullDays) * dayCost + Math.min(dayCost, b.long.returnLeftoverHours * hourPay);
+  // A long one-way drop by the km (v3): his whole time, start → home — each 24 h his day, the hours left over his hour (at most a day).
+  if (b.long) return wholeTimePay(((b.driveMinutes ?? 0) + (b.returnMinutes ?? 0)) / 60, dayCost, hourPay);
+  // v2: his day for each driving day and each full 24 h home, his hourly pay for the rest (at most a day).
+  if (b.v2Long) return (b.days + b.v2Long.returnFullDays) * dayCost + Math.min(dayCost, b.v2Long.returnLeftoverHours * hourPay);
   if (b.time) return b.days * dayCost + Math.min(b.extraHours * hourPay, dayCost);
   // A route price: his day cost for each day paid, and his hourly pay for the hours past them (at most a day for each 24 h).
   if (b.route) {

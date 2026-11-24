@@ -1345,23 +1345,30 @@ describe('job dispatch', () => {
       }
     });
 
-    test('pure: what the rate card pays — full day, one-way (driving days + his way home), outstation; null otherwise', () => {
+    test('pure: what the rate card pays — full day, one-way (his whole time: the road + his way home), outstation; null otherwise', () => {
       const pay = (b, nearKm = 160) => env.ctx.rateCardPayOf(b, 9999, RATES, nearKm);
       assert.equal(pay({ package: 'local-full-day' }), 500);
       assert.equal(pay({ package: 'local-12-hours' }), 700, '12 hours: the 12-hour rate');
-      // 2 driving days; home 27 h = 1 day + 3 hours.
-      assert.equal(pay({ package: 'one-way-drop', trip: { km: 600, days: 2, returnHours: 27 } }), 2 * 1000 + 1000 + 3 * 100);
-      // Home 35 h = 1 day + 11 hours, the 11 hours capped at one day.
-      assert.equal(pay({ package: 'one-way-drop', trip: { km: 600, days: 2, returnHours: 35 } }), 2 * 1000 + 1000 + 1000);
-      assert.equal(pay({ package: 'one-way-drop', trip: { km: 300, days: 1, returnHours: 5 } }), 1000 + 500);
-      assert.equal(pay({ package: 'one-way-drop', trip: { km: 300, days: 0, returnHours: 0 } }), 1000, 'at least one driving day');
+      // 600 km: 10.9 h of driving + 2 breaks = 12.1 h on the road (one day); home 27 h → 39.1 h = 1 day + 16 h (at most a day).
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 600, days: 1, returnHours: 27 } }), 1000 + 1000);
+      // Home 3 h: 15.1 h in all → 16 h × 100, at most a day.
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 600, days: 1, returnHours: 3 } }), 1000);
+      // 300 km: 5.5 h + 1 break = 6 h; home 2 h → 8.1 h → 9 h × 100, at least a day.
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 300, days: 1, returnHours: 2 } }), 1000, 'at least one day');
+      // 1,370 km: 24.9 h + 6 breaks = 28.4 h on the road, two nights' rest → drops at 52.4 h; home 35 h → 87.4 h = 3 days + 16 h.
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 1370, days: 3, returnHours: 35 } }), 3 * 1000 + 1000);
+      // Day and night (the booking's note): drops at 28.4 h; home 35 h → 63.4 h = 2 days + 16 h.
+      const nonstop = { package: 'one-way-drop', notes: 'Day and night driving (non-stop). Two of us.', trip: { km: 1370, days: 2, returnHours: 35 } };
+      assert.equal(pay(nonstop), 2 * 1000 + 1000);
+      // 616 km, home 11 h: 12.4 h on the road + 11 h = 23.4 h → 24 h × 100, at most a day.
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 616, days: 1, returnHours: 11 } }), 1000);
       assert.equal(pay({ package: 'outstation', trip: { km: 400, days: 3, returnHours: 0 } }), 3000);
       // Same-day drops and trips (up to the site's first nearby tier) and an unknown distance: the % cut.
       for (const km of [113, 160, 0, undefined]) {
         assert.equal(pay({ package: 'one-way-drop', trip: { km, days: 1, returnHours: 4 } }), null, `one-way ${km} km`);
         assert.equal(pay({ package: 'outstation', trip: { km, days: 1, returnHours: 0 } }), null, `outstation ${km} km`);
       }
-      assert.equal(pay({ package: 'one-way-drop', trip: { km: 161, days: 1, returnHours: 4 } }), 1400);
+      assert.equal(pay({ package: 'one-way-drop', trip: { km: 161, days: 1, returnHours: 4 } }), 1000);
       assert.equal(pay({ package: 'one-way-drop', trip: { km: 180, days: 1, returnHours: 4 } }, 200), null, 'the site’s own limit');
       assert.equal(env.ctx.nearKmOf({ outstationNear: [{ upToKm: 200, from: 1, to: 2 }] }), 200);
       assert.equal(env.ctx.nearKmOf({}), 160, 'no site config: 160');
@@ -1371,6 +1378,21 @@ describe('job dispatch', () => {
         assert.equal(pay(b), null, b.package);
       }
       assert.equal(env.ctx.rateCardPayOf({ package: 'local-full-day' }, 1200, null), null, 'no rate card');
+    });
+
+    test('pure: a one-way drive’s timing (the site’s outstation.drive) and the pay for his whole time', () => {
+      const { dropHoursOf, driveOf, wholeTimePay, DRIVE_DEFAULT } = env.ctx;
+      assert.deepEqual({ ...driveOf(null) }, { ...DRIVE_DEFAULT });
+      assert.deepEqual({ ...driveOf({ drive: { kmh: 60, breakEveryHours: 3, breakMinutes: 30, maxRoadHoursPerDay: 10 } }) },
+        { kmh: 60, breakEveryHours: 3, breakMinutes: 30, maxRoadHoursPerDay: 10 });
+      assert.equal(driveOf({ drive: { kmh: 'fast', breakEveryHours: 0 } }).kmh, DRIVE_DEFAULT.kmh, 'odd values: the default');
+      const h = (km, nonstop = false) => Math.round(dropHoursOf(km, DRIVE_DEFAULT, nonstop) * 100) / 100;
+      assert.equal(h(616), 12.37, '11.2 h + 2 × 35 min: within the day and its hour');
+      assert.equal(h(1370), 52.41, 'two nights’ rest');
+      assert.equal(h(1370, true), 28.41, 'day and night');
+      assert.equal(h(110), 2, 'under 4 h: no break');
+      assert.deepEqual([wholeTimePay(5, 1000, 100), wholeTimePay(9.5, 1000, 100), wholeTimePay(24, 1000, 100), wholeTimePay(24.1, 1000, 100), wholeTimePay(47.9, 1000, 100)],
+        [1000, 1000, 1000, 1100, 2000]);
     });
 
     test('pure: the raise — a step at a time, at most the cap, never up to the price', () => {
@@ -1395,7 +1417,8 @@ describe('job dispatch', () => {
       const f = offerOf('f1');
       assert.deepEqual([f.price, f.driverPay, f.cutPercent, f.payBy], [1200, 500, 58, 'rates']);
       const t = offerOf('t1');
-      assert.deepEqual([t.price, t.driverPay, t.cutPercent, t.payBy], [4000, 3300, 18, 'rates']);
+      // 284 km: 5.7 h on the road + 27 h home = 32.7 h → a day + 9 h.
+      assert.deepEqual([t.price, t.driverPay, t.cutPercent, t.payBy], [4000, 1900, 53, 'rates']);
       assert.deepEqual([offerOf('o1').driverPay, offerOf('o1').payBy], [3000, 'rates']);
       const h = offerOf('h1');
       assert.deepEqual([h.price, h.driverPay, h.cutPercent, h.payBy], [600, 420, 30, 'cut'], 'not on the card: the % cut');
@@ -1409,21 +1432,21 @@ describe('job dispatch', () => {
       const short = offerOf('s1');
       assert.deepEqual([short.price, short.driverPay, short.cutPercent, short.payBy], [1200, 840, 30, 'cut']);
       const long = offerOf('l1');
-      assert.deepEqual([long.price, long.driverPay, long.payBy], [2500, 1400, 'rates']);
+      assert.deepEqual([long.price, long.driverPay, long.payBy], [2500, 1000, 'rates']);
       assert.equal(env.telegram.filter((m) => /below the driver/.test(m.text)).length, 0);
     });
 
     test('the price below his rate: no offer, Telegram once — the office checks the price', () => {
       useRates();
-      confirm('t2', 'one-way-drop', { trip: trip(3000, 2, 35) }); // his rate 4000
+      confirm('t2', 'one-way-drop', { trip: trip(1500, 2, 35) }); // his whole time 40.7 h: his rate 2000
       env.ctx.autoOffers_();
       env.store.docs.get('bookings/t2').updatedAt = ts(-1000);
       env.ctx.autoOffers_();
       assert.equal(offerOf('t2'), null);
       const warned = env.telegram.filter((m) => /below the driver/.test(m.text));
       assert.equal(warned.length, 1);
-      assert.equal(warned[0].text, "⚠️ DB-1042: the price ₹3,000 is below the driver's rate ₹4,000 — check the price");
-      confirm('t3', 'one-way-drop', { trip: trip(4000, 2, 35) }); // equal: still not below his rate
+      assert.equal(warned[0].text, "⚠️ DB-1042: the price ₹1,500 is below the driver's rate ₹2,000 — check the price");
+      confirm('t3', 'one-way-drop', { trip: trip(2000, 2, 35) }); // equal: still not below his rate
       env.ctx.autoOffers_();
       assert.equal(offerOf('t3'), null);
     });

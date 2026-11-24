@@ -94,6 +94,15 @@ export type BookingQuote = {
    * way-home charge.
    */
   km?: number;
+  /**
+   * A long one-way drop priced by the km (quotes from 24 Nov 2026, v3,
+   * lib/outstation.ts pricedByKm): the price a km — then days = 1 at dayRate
+   * = km × kmRate, his way home in returnHours / returnCharge, `minimum` the
+   * least the drop costs and `adjust` the round-off or the top-up to it.
+   */
+  kmRate?: number;
+  minimum?: number;
+  adjust?: number;
   ticket: number;
   at?: Date;
 };
@@ -118,6 +127,10 @@ export type BookingBill = {
   awayHours?: number;
   /** The one-way km; without awayHours (from 8 Nov 2026): priced by the driver's time (24-hour blocks, the hours past them). */
   km?: number;
+  /** A long one-way drop by the km (from 24 Nov 2026, v3): the price a km, the minimum and the round-off / top-up (as on the quote). */
+  kmRate?: number;
+  minimum?: number;
+  adjust?: number;
   ticket: number;
   /** Driven day and night (every 12 h a day). */
   nonstop: boolean;
@@ -403,6 +416,8 @@ export function toBill(v: unknown): BookingBill | null {
     // A route price (bills from 1 Nov 2026): the planned hours away and the km; the km alone: the driver's time.
     ...(n('awayHours') > 0 && { awayHours: n('awayHours') }),
     ...(n('km') > 0 && { km: n('km') }),
+    // By the km (from 24 Nov 2026, v3): its price a km, the minimum and the round-off or top-up.
+    ...(n('kmRate') > 0 && { kmRate: n('kmRate'), minimum: Number.isNaN(n('minimum')) ? 0 : n('minimum'), adjust: Number.isNaN(n('adjust')) ? 0 : n('adjust') }),
     nonstop: b.nonstop === true,
     at: toDate(b.at),
   };

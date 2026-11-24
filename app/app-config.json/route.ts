@@ -65,13 +65,24 @@ export function GET() {
       nearFromKm: outstation.nearFromKm,
       dayTopFromKm: outstation.dayTopFromKm,
       hoursPerDay: outstation.hoursPerDay,
-      /* One-way drops farther than prices.outstationNear[0].upToKm (24 Nov 2026): driving days and his way home. */
+      /* One-way drops farther than prices.outstationNear[0].upToKm (24 Nov 2026, v3): the customer pays
+         max(minimum, toNearest(km × perKm + home, roundTo)), home = floor(H / 24) × homeDayMax +
+         min(homeDayMax, ceil(H mod 24) × homeHour), H = the wait + the ride home (lib/outstation.ts longOneWayPrice). */
       oneWay: {
-        driveDay: outstation.oneWay.driveDay,
-        returnDay: outstation.oneWay.returnDay,
-        returnHour: outstation.oneWay.returnHour,
-        driveHoursPerDay: outstation.oneWay.driveHoursPerDay,
-        driveGraceHours: outstation.oneWay.driveGraceHours,
+        perKm: outstation.oneWay.perKm,
+        homeHour: outstation.oneWay.homeHour,
+        homeDayMax: outstation.oneWay.homeDayMax,
+        minimum: outstation.oneWay.minimum,
+        roundTo: outstation.oneWay.roundTo,
+      },
+      /* One-way timings (planTrip, roadTime): km / kmh of driving, a break of breakMinutes after each full
+         breakEveryHours of driving; more than maxRoadHoursPerDay on the road (+ 1 h to finish that evening)
+         and he rests the night, unless driven day and night. Round trips: averageKmh. */
+      drive: {
+        kmh: outstation.drive.kmh,
+        breakEveryHours: outstation.drive.breakEveryHours,
+        breakMinutes: outstation.drive.breakMinutes,
+        maxRoadHoursPerDay: outstation.drive.maxRoadHoursPerDay,
       },
       graceMinutes: outstation.graceMinutes,
       sameDayMaxHours: outstation.sameDayMaxHours,

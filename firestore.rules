@@ -215,7 +215,7 @@ service cloud.firestore {
     // admin-only timeline, never here.
     function isQuote(q) {
       return q is map
-        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'extraCharge', 'awayHours', 'km', 'ticket', 'at'])
+        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'extraCharge', 'awayHours', 'km', 'kmRate', 'minimum', 'adjust', 'ticket', 'at'])
         && q.keys().hasAll(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'ticket', 'at'])
         && q.amount is int && q.amount > 0 && q.amount <= 1000000
         && q.dayRate is int && q.dayRate > 0 && q.dayRate <= 100000
@@ -224,9 +224,11 @@ service cloud.firestore {
         && q.returnHours is int && q.returnHours >= 0 && q.returnHours <= 200
         && q.returnHourRate is int && q.returnHourRate >= 0 && q.returnHourRate <= 10000
         // The way home: each 24 h a day (10 hours' worth), the hours left over by
-        // the hour or — more than 6 — one more day. Never more than that.
+        // the hour or — more than 6 — one more day. Never more than that. By the
+        // km (isKmPrice): never more than each hour at the rate.
         && q.returnCharge is int && q.returnCharge >= 0
-        && q.returnCharge <= q.returnHourRate * 10 * (q.returnHours / 24 + 1)
+        && ((!('kmRate' in q) && q.returnCharge <= q.returnHourRate * 10 * (q.returnHours / 24 + 1))
+            || ('kmRate' in q && q.returnCharge <= q.returnHourRate * q.returnHours))
         && q.extraHours is int && q.extraHours >= 0 && q.extraHours <= 200
         && q.extraHourRate is int && q.extraHourRate >= 0 && q.extraHourRate <= 10000
         // The extra hours' charge (newer quotes): hours × rate, or — a one-way
@@ -237,8 +239,25 @@ service cloud.firestore {
         && q.ticket is int && q.ticket >= 0 && q.ticket <= 100000
         // A route price (quotes from 1 Nov 2026): one day at the route price, nothing else but the ticket.
         && isRoute(q, 0)
-        && q.amount == q.dayRate * q.days + q.returnCharge + q.get('extraCharge', q.extraHourRate * q.extraHours) + q.ticket
+        && isKmPrice(q)
+        && q.amount == q.dayRate * q.days + q.returnCharge + q.get('extraCharge', q.extraHourRate * q.extraHours) + q.get('adjust', 0) + q.ticket
         && q.at == request.time;
+    }
+
+    // A long one-way drop priced by the km (quotes and bills from 24 Nov 2026):
+    // `kmRate` the price a km — then one "day" at dayRate = km × kmRate (the
+    // drive), no extra hours, his way home in returnHours / returnCharge; and
+    // `adjust`, added to the amount: the round-off to the nearest ₹50 (at most
+    // ₹100 either way) or, when the price is `minimum`, the top-up to it.
+    // Without kmRate, neither minimum nor adjust: every older shape as it was.
+    function isKmPrice(m) {
+      return (!('kmRate' in m) && !('minimum' in m) && !('adjust' in m))
+        || ('kmRate' in m && m.kmRate is int && m.kmRate >= 1 && m.kmRate <= 100
+          && 'km' in m && m.days == 1 && m.dayRate == m.km * m.kmRate
+          && !('awayHours' in m) && m.extraHours == 0 && m.get('extraCharge', 0) == 0
+          && 'minimum' in m && m.minimum is int && m.minimum >= 0 && m.minimum <= 100000
+          && 'adjust' in m && m.adjust is int
+          && ((m.adjust >= -100 && m.adjust <= 100) || (m.adjust > 0 && m.amount - m.ticket == m.minimum)));
     }
 
     // A route price on a quote or bill (from 1 Nov 2026): the hours away it is
@@ -284,7 +303,7 @@ service cloud.firestore {
     // driver's pay and the profit go in the admin-only timeline.
     function isBill(b) {
       return b is map
-        && b.keys().hasOnly(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'awayHours', 'km', 'ticket', 'nonstop', 'at'])
+        && b.keys().hasOnly(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'awayHours', 'km', 'kmRate', 'minimum', 'adjust', 'ticket', 'nonstop', 'at'])
         && b.keys().hasAll(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'ticket', 'nonstop', 'at'])
         && b.amount is int && b.amount > 0 && b.amount <= 1000000
         && b.dayRate is int && b.dayRate > 0 && b.dayRate <= 100000
@@ -298,12 +317,14 @@ service cloud.firestore {
         && b.returnHours is int && b.returnHours >= 0 && b.returnHours <= 400
         && b.returnHourRate is int && b.returnHourRate >= 0 && b.returnHourRate <= 10000
         && b.returnCharge is int && b.returnCharge >= 0
-        && b.returnCharge <= b.returnHourRate * 10 * (b.returnHours / 24 + 1)
+        && ((!('kmRate' in b) && b.returnCharge <= b.returnHourRate * 10 * (b.returnHours / 24 + 1))
+            || ('kmRate' in b && b.returnCharge <= b.returnHourRate * b.returnHours))
         && b.ticket is int && b.ticket >= 0 && b.ticket <= 100000
         && b.nonstop is bool
         // A route price: one day at the price, the hours late at the hourly rate (checked above).
         && isRoute(b, 200)
-        && b.amount == b.dayRate * b.days + b.extraCharge + b.returnCharge + b.ticket
+        && isKmPrice(b)
+        && b.amount == b.dayRate * b.days + b.extraCharge + b.returnCharge + b.get('adjust', 0) + b.ticket
         && b.at == request.time;
     }
 

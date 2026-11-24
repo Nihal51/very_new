@@ -64,10 +64,10 @@ const awayText = (id: string) => {
   return h ? `about ${h} hours` : 'a day or more';
 };
 
-/** "Same day — one price" / "1 driving day + 11 h home" — what a route in the table is charged. */
+/** "Same day — one price" / "616 km + 21 h home" — what a route in the table is charged. */
 const chargedText = (t: (typeof ROUTES)[number]) => {
   const l = t.est?.long;
-  if (l) return `${l.drivingDays} driving day${l.drivingDays === 1 ? '' : 's'} + ${l.returnHours} h home`;
+  if (l) return `${new Intl.NumberFormat('en-IN').format(l.km)} km + ${l.homeHours} h home${l.minimumApplies ? ' (the minimum)' : ''}`;
   const x = t.est?.time;
   if (!x) return '';
   if (x.short && x.days === 1) return 'Same day — one price';
@@ -125,7 +125,7 @@ const notIncluded = [
 const faqs = [
   {
     q: 'Can I travel with the driver and my car?',
-    a: `Yes. Many one-way drops are families travelling in their own car. The driver drives you to the address you give, then comes home on his own by bus or train. The price is the same whether you ride along or send the car alone: the driver’s time — ${priceText.timeRule}.`,
+    a: `Yes. Many one-way drops are families travelling in their own car. The driver drives you to the address you give, then comes home on his own by bus or train. The price is the same whether you ride along or send the car alone: up to ${priceText.sameDayKm} one price for the trip; farther, ${priceText.timeRule}.`,
   },
   {
     q: 'Can a driver take my car to another city without me?',
@@ -133,7 +133,7 @@ const faqs = [
   },
   {
     q: 'Is the driver’s way home included?',
-    a: `Yes — the price is for his time, from when he leaves until he is home: the drive, waiting for his train and the ride home. ${priceText.oneWayRule} Until you pick the date, the estimate uses the route’s average wait and ride home from the timetables (Raipur → Nagpur: ${awayText('nagpur')} in all; Raipur → Mumbai: ${awayText('mumbai')}); with your date, the train home you pick. The final bill uses the real times. You book his train or bus ticket.`,
+    a: `Yes — the price covers the drive, waiting for his train and the ride home. ${priceText.oneWayRule} Until you pick the date, the estimate uses the route’s average wait and ride home from the timetables (Raipur → Nagpur: ${awayText('nagpur')} in all; Raipur → Mumbai: ${awayText('mumbai')}); with your date, the train home you pick. The final bill uses the real times. You book his train or bus ticket.`,
   },
   {
     q: 'How many days will my drop take?',
@@ -155,7 +155,7 @@ export default function OneWayDropPage() {
       <PageHero
         eyebrow="One-way drop"
         title="One-way drop to another city — you and your car, or just the car"
-        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. Priced by the driver’s time — ${priceText.sameDayDrop} for a same-day drop up to ${priceText.sameDayKm}; farther, ${priceText.timeRule}. His wait and his train home are included.`}
+        lede={`A verified driver drives your car from Raipur, Bhilai, Durg or Bilaspur to any city, then comes home by bus or train. ${priceText.sameDayDrop} for a same-day drop up to ${priceText.sameDayKm}; farther, ${priceText.timeRule}. His wait and his train home are included.`}
         trail={trail}
         actions={
           <>

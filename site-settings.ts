@@ -146,20 +146,33 @@ export const settings = {
     dayTopFromKm: 300, //      … and reaches prices.outstation.to here (farther: the same)
     hoursPerDay: 12, //        driving hours in one outstation day (about 600 km)
     /* One-way drops FARTHER than the first nearby tier (prices.outstationNear,
-       160 km) — what the CUSTOMER pays (decided 24 Nov 2026): driveDay for
-       each day of driving (driveHoursPerDay hours; the last day up to
-       driveGraceHours longer, as the plan finishes that evening), then his
-       way home — waiting for his train plus the ride — returnDay for each
-       full 24 hours and returnHour for each started hour left over, never
-       more than returnDay for those. The customer books and pays his ticket.
+       160 km) — what the CUSTOMER pays (decided 24 Nov 2026, v3): the drive
+       by the km (perKm × the one-way road km), plus his way home — waiting
+       for his train plus the ride, H — homeDayMax for each full 24 hours and
+       homeHour for each started hour left over, never more than homeDayMax
+       for those; the total to the nearest roundTo, at least `minimum`. The
+       customer books and pays his ticket, and gives his meals.
        Customer prices only: the driver's pay is set in Script Properties.
-         Raipur → Ranchi, 616 km: 1 driving day + home in 10 h 41 m = 1,600 + 1,600 = 3,200. */
+         Raipur → Ranchi, 616 km, home in 10 h 41 m: 1,848 + 1,100 = 2,948 → 2,950.
+         Raipur → Bengaluru, 1,370 km, home in about 35 h: 4,110 + 1,500 + 1,100 = 6,710 → 6,700. */
     oneWay: {
-      driveDay: 1600, //        decide: each day of driving
-      returnDay: 1600, //       decide: each full 24 hours of his way home — must be 10 × returnHour
-      returnHour: 160, //       decide: each started hour of his way home left over
-      driveHoursPerDay: 12, //  driving hours in one day
-      driveGraceHours: 1, //    the last day may run this much longer and still be one day
+      perKm: 3, //          decide: each km of the drive (one way, by road)
+      homeHour: 100, //     decide: each started hour of his way home
+      homeDayMax: 1500, //  decide: never more than this for any 24 hours of his way home (at most 24 × homeHour)
+      minimum: 1500, //     decide: the least a drop this far costs (before his ticket)
+      roundTo: 50, //       the total to the nearest this many rupees
+    },
+    /* One-way drops: how long the drive takes (the arrival, the train he can
+       catch, his wait, the days). Driving at kmh, a break of breakMinutes
+       after each full breakEveryHours of driving; more than
+       maxRoadHoursPerDay on the road (an hour more finishes that evening)
+       and he rests the night — unless the customer wants it driven day and
+       night. Round trips use averageKmh. */
+    drive: {
+      kmh: 55, //                 highway driving speed
+      breakEveryHours: 4, //      a break after each full 4 hours of driving …
+      breakMinutes: 35, //        … this long
+      maxRoadHoursPerDay: 12, //  hours on the road in a day (driving and breaks)
     },
     sameDayMaxHours: 14, //    a round trip with up to this much driving there and back (700 km) is home within the 24 h: ONE day
     extraHour: 130, //         each hour past the 24-hour blocks of a one-way drop, and each driving hour beyond hoursPerDay on a round trip

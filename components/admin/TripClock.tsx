@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Field';
 import { formatDateTime, wantsNonstop, type Booking, type TripPackage } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
-import { pricedByTime, pricedLong } from '@/lib/outstation';
+import { pricedByKm, pricedByTime, pricedV2Long } from '@/lib/outstation';
 import { rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import { asset } from '@/lib/site';
 import { tripFor } from '@/lib/trip';
@@ -44,8 +44,8 @@ const { targetProfitPercent: TARGET, minProfitPercent: MIN_PROFIT, maxProfitPerc
 const DEFAULT_RETURN_PAY = Math.floor((tripRules.returnHour * (1 - MIN_PROFIT / 100)) / 10) * 10;
 /** By the driver's time: what he usually gets for an hour past the 24-hour blocks — the customer's hourly rate less the profit, to ₹10 (as the quote). */
 const DEFAULT_HOUR_PAY = Math.round((tripRules.extraHour * (1 - TARGET / 100)) / 10) * 10;
-/** A long one-way drop: what a driver usually gets for an hour of his way home — the customer's hourly rate less the profit, to ₹10. */
-const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWay?.returnHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
+/** A long one-way drop: what a driver usually gets for an hour past his 24-hour blocks — the customer's hour home less the profit, to ₹10. */
+const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWay?.homeHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
 /** Warn when driving or the way home took this many hours longer than the plan for the real start. */
 const LATE_DRIVE_HOURS = 4;
 const LATE_HOME_HOURS = 3;
@@ -341,23 +341,29 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
         ...(saved.awayHours && {
           route: { price: saved.dayRate, awayHours: saved.awayHours, km: saved.km ?? b.trip?.km ?? 0 },
         }),
+        // By the km (24 Nov 2026, v3): the km, the price a km and the minimum.
+        ...(link.kind === 'one-way' &&
+          pricedByKm(saved) && { long: { km: saved.km ?? 0, kmRate: saved.kmRate ?? 0, minimum: saved.minimum ?? 0 } }),
         // Priced by the driver's time (from 8 Nov 2026): the km with no route hours.
-        ...(pricedByTime(saved) && { time: { km: saved.km ?? 0 } }),
-        // A long one-way drop (24 Nov 2026): driving days and his way home.
-        ...(link.kind === 'one-way' && pricedLong(tripRules, saved) && { long: { km: saved.km ?? 0 } }),
+        ...(!pricedByKm(saved) && pricedByTime(saved) && { time: { km: saved.km ?? 0 } }),
+        // Agreed under v2 (24 Nov 2026): driving days and his way home.
+        ...(link.kind === 'one-way' && pricedV2Long(tripRules, saved) && { v2Long: { km: saved.km ?? 0 } }),
       }
     : billRates(b.quote, tripRules, b.trip?.km, link.kind === 'one-way');
-  const [dayRate, setDayRate] = useState(String(rates.dayRate));
+  // By the km, the price to change is the price a km; otherwise the day (or route) price.
+  const [dayRate, setDayRate] = useState(String(rates.long ? rates.long.kmRate : rates.dayRate));
   const [cost, setCost] = useState('');
   const [returnPay, setReturnPay] = useState(String(rates.time ? DEFAULT_HOUR_PAY : rates.long ? DEFAULT_LONG_HOUR_PAY : DEFAULT_RETURN_PAY));
   const [editing, setEditing] = useState(!b.bill);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
-  const price = int(dayRate) || rates.dayRate;
+  const price = int(dayRate) || (rates.long ? rates.long.kmRate : rates.dayRate);
   const res = billNow(
     link,
-    { ...rates, dayRate: price, ...(rates.route && { route: { ...rates.route, price } }) },
+    rates.long
+      ? { ...rates, long: { ...rates.long, kmRate: price } }
+      : { ...rates, dayRate: price, ...(rates.route && { route: { ...rates.route, price } }) },
     tripRules,
     GRACE,
     now,
@@ -406,7 +412,7 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
         `Final bill ${rupees(bill.amount)} (${billBreakdown(bill)}). ` +
         `Driving ${durationText(bill.driveMinutes)}${link.kind === 'one-way' ? `, way home ${durationText(bill.returnMinutes)}` : ''}${link.nonstop ? ', day and night' : ''}.` +
         (pay
-          ? rates.time
+          ? rates.time || rates.long
             ? ` Driver ${rupees(int(cost))} for each 24 h, ${rupees(int(returnPay))} an hour past them → driver gets ${rupees(pay)}, profit ${rupees(profit)} (${profitPct}%).`
             : ` Driver ${rupees(int(cost))} a day, ${rupees(int(returnPay))} an hour home → driver gets ${rupees(pay)}, profit ${rupees(profit)} (${profitPct}%).`
           : '');
@@ -499,7 +505,12 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
           </p>
           <p className="text-fg-subtle mt-1 text-xs">
             The first {GRACE} minutes of an hour are free. Rates from{' '}
-            {b.quote ? 'the agreed price' : rates.time ? 'the price customers are shown for the distance' : 'the lowest shown'}.
+            {b.quote
+              ? 'the agreed price'
+              : rates.time || rates.long
+                ? 'the price customers are shown for the distance'
+                : 'the lowest shown'}
+            .
           </p>
 
           {warnings.map((w) => (
@@ -511,19 +522,19 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
           <div className="mt-3 grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1">
               <span className="font-medium">
-                {rates.route ? 'Route price' : rates.time ? 'Price for each 24 h' : 'Day rate'}
+                {rates.route ? 'Route price' : rates.long ? 'Price a km' : rates.time ? 'Price for each 24 h' : 'Day rate'}
               </span>
               <Input
                 type="number"
                 inputMode="numeric"
                 min={0}
-                step={50}
+                step={rates.long ? 1 : 50}
                 value={dayRate}
                 onChange={(e) => setDayRate(e.target.value)}
               />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="font-medium">{rates.time ? 'Driver’s cost for each 24 h' : 'Driver’s cost a day'}</span>
+              <span className="font-medium">{rates.time || rates.long ? 'Driver’s cost for each 24 h' : 'Driver’s cost a day'}</span>
               <Input
                 type="number"
                 inputMode="numeric"
@@ -537,7 +548,7 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
             {link.kind === 'one-way' && (
               <label className="flex flex-col gap-1">
                 <span className="font-medium">
-                  {rates.time ? 'His pay an hour past the 24-h blocks' : 'Driver’s pay an hour home'}
+                  {rates.time || rates.long ? 'His pay an hour past the 24-h blocks' : 'Driver’s pay an hour home'}
                 </span>
                 <Input
                   type="number"

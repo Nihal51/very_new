@@ -56,19 +56,21 @@ export const priceText = {
   sameDayKm: `${p.outstationNear[0]?.upToKm ?? 0} km`,
   /** Each hour past the 24-hour blocks (and of driving beyond the day on a round trip). */
   outstationExtraHour: rupees(settings.outstation.extraHour),
-  /** A long one-way drop's driving day, the way home's 24 hours and its hour (outstation.oneWay, 24 Nov 2026). */
-  oneWayDrivingDay: rupees(settings.outstation.oneWay.driveDay),
-  oneWayReturnDay: rupees(settings.outstation.oneWay.returnDay),
-  oneWayReturnHour: rupees(settings.outstation.oneWay.returnHour),
+  /** A long one-way drop (outstation.oneWay, 24 Nov 2026 v3): a km of the drive, an hour of his way home, its most a day, the least in all. */
+  oneWayPerKm: rupees(settings.outstation.oneWay.perKm),
+  oneWayHomeHour: rupees(settings.outstation.oneWay.homeHour),
+  oneWayHomeDayMax: rupees(settings.outstation.oneWay.homeDayMax),
+  oneWayMinimum: rupees(settings.outstation.oneWay.minimum),
   /** One-way drops farther than the same-day distance, in a few words (24 Nov 2026). */
-  timeRule: `${rupees(settings.outstation.oneWay.driveDay)} for each day of driving, then his way home (the wait and the train) at ${rupees(settings.outstation.oneWay.returnHour)} an hour, never more than ${rupees(settings.outstation.oneWay.returnDay)} a day`,
-  /** The whole one-way drop price: up to the same-day distance one price; farther, driving days and his way home. */
+  timeRule: `${rupees(settings.outstation.oneWay.perKm)} a km, plus his way home (the wait and the train) at ${rupees(settings.outstation.oneWay.homeHour)} an hour, never more than ${rupees(settings.outstation.oneWay.homeDayMax)} a day`,
+  /** The whole one-way drop price: up to the same-day distance one price; farther, the km and his way home. */
   get oneWayRule() {
+    const ow = settings.outstation.oneWay;
     return (
       `Up to ${this.sameDayKm} he is home the same day: one price for the trip, ${this.sameDayDrop} by distance. ` +
-      `Farther: ${rupees(settings.outstation.oneWay.driveDay)} for each day of driving (${settings.outstation.oneWay.driveHoursPerDay} hours; the last day up to ${settings.outstation.oneWay.driveHoursPerDay + settings.outstation.oneWay.driveGraceHours}), ` +
-      `then his way home — waiting for the train he takes and the ride — ${rupees(settings.outstation.oneWay.returnDay)} for each full 24 hours and ${rupees(settings.outstation.oneWay.returnHour)} for each started hour of the rest, never more than ${rupees(settings.outstation.oneWay.returnDay)} for those hours. ` +
-      `You book and pay his ticket.`
+      `Farther: ${rupees(ow.perKm)} a km for the drive (one way, by road), plus his way home — waiting for the train he takes and the ride — ` +
+      `${rupees(ow.homeHour)} for each started hour, never more than ${rupees(ow.homeDayMax)} for any 24 hours; ` +
+      `the total to the nearest ${rupees(ow.roundTo)}, at least ${rupees(ow.minimum)}. You book and pay his ticket.`
     );
   },
   outstationHours: `${settings.outstation.hoursPerDay} hours`,
@@ -128,6 +130,7 @@ export const tripRules: TripRules = {
   extraHour: settings.outstation.extraHour,
   hoursPerDay: settings.outstation.hoursPerDay,
   oneWay: { ...settings.outstation.oneWay },
+  drive: { ...settings.outstation.drive },
   sameDayMaxHours: settings.outstation.sameDayMaxHours,
   kmPerDay: settings.outstation.kmPerDay,
   averageKmh: settings.outstation.averageKmh,

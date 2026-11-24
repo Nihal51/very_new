@@ -1583,6 +1583,78 @@ function siteNearKm_() {
   }
 }
 
+/**
+ * How a one-way drive is timed (site-settings.ts outstation.drive, from
+ * app-config.json): km/h, a break of breakMinutes after each full
+ * breakEveryHours of driving, hours on the road a day. These when the site
+ * cannot be read (the site's own values, 24 Nov 2026).
+ */
+var DRIVE_DEFAULT = { kmh: 55, breakEveryHours: 4, breakMinutes: 35, maxRoadHoursPerDay: 12 };
+
+/** The site's drive settings (outstation.drive), each checked; DRIVE_DEFAULT for anything missing or odd. */
+function driveOf(outstation) {
+  var d = (outstation && outstation.drive) || {};
+  var pick = function (k, lo, hi) {
+    var n = Number(d[k]);
+    return Number.isFinite(n) && n >= lo && n <= hi ? n : DRIVE_DEFAULT[k];
+  };
+  return {
+    kmh: pick('kmh', 20, 100),
+    breakEveryHours: pick('breakEveryHours', 1, 12),
+    breakMinutes: pick('breakMinutes', 0, 120),
+    maxRoadHoursPerDay: pick('maxRoadHoursPerDay', 6, 16),
+  };
+}
+
+/** driveOf from the site's config (cached for an hour); DRIVE_DEFAULT when it cannot be read. */
+function siteDrive_() {
+  try {
+    var c = siteConfig_();
+    return driveOf(c && c.outstation);
+  } catch (err) {
+    return driveOf(null);
+  }
+}
+
+/** The booking asked for day and night driving (lib/bookings.ts NONSTOP_NOTE, at the start of the notes). */
+function wantsNonstop(b) {
+  return String((b && b.notes) || '').trim().indexOf('Day and night driving (non-stop).') === 0;
+}
+
+/**
+ * Hours from the start until he drops the car on a one-way drive of `km`
+ * (lib/outstation.ts roadTime + dropTime): driving at drive.kmh, a break
+ * after each full breakEveryHours of driving; day and night straight
+ * through, otherwise maxRoadHoursPerDay on the road and the rest of the 24
+ * hours resting — up to an hour more finishes that evening.
+ *   616 km: 11.2 h + 2 × 35 min = 12.37 h → 12.37.  1,370 km: 28.41 h → 52.41.
+ */
+function dropHoursOf(km, drive, nonstop) {
+  drive = drive || DRIVE_DEFAULT;
+  var h = Math.max(0, Number(km) || 0) / drive.kmh;
+  var road = h + (Math.floor(h / drive.breakEveryHours) * drive.breakMinutes) / 60;
+  if (nonstop) return road;
+  var day = drive.maxRoadHoursPerDay;
+  var full = Math.floor(road / day + 1e-9);
+  var rest = road - full * day;
+  if (full === 0) return road;
+  if (rest <= 1e-9) return (full - 1) * 24 + day;
+  if (rest <= 1 + 1e-9) return (full - 1) * 24 + day + rest;
+  return full * 24 + rest;
+}
+
+/**
+ * The driver's pay for his WHOLE time of `hours` (lib/outstation.ts
+ * wholeTimePay): each full 24 hours his day, each started hour left over
+ * his hour, never more than his day for those — and at least one day.
+ */
+function wholeTimePay(hours, dayPay, hourPay) {
+  var m = Math.max(0, Math.round((Number(hours) || 0) * 60));
+  var full = Math.floor(m / 1440);
+  var left = Math.ceil((m - full * 1440) / 60);
+  return Math.max(dayPay, full * dayPay + Math.min(dayPay, left * hourPay));
+}
+
 /** DRIVER_RATES → { local8h, local12h, localExtraHour, tripDay, returnHour }, every one a whole number 1–100000; anything else → null (the % cut). */
 function driverRatesOf(raw) {
   var r;
@@ -1608,17 +1680,18 @@ function driverRates_() {
 /**
  * What the rate card pays the driver for this booking, or null (= the % cut):
  *   local full day → local8h (the 8-hour package); 12 hours in the city → local12h;
- *   one-way drop → trip.days driving days × tripDay, plus his way home
+ *   one-way drop (24 Nov 2026) → his WHOLE time T: on the road start → drop
+ *     (trip.km at `drive`, its breaks and any night's rest — dropHoursOf,
+ *     day and night when the booking asked) plus his way home
  *     (trip.returnHours, the booking's estimate of the wait and the ride):
- *     each full 24 hours a tripDay, the hours left over × returnHour, those
- *     never more than one tripDay;
+ *     max(tripDay, floor(T/24) × tripDay + min(tripDay, ceil(T mod 24) × returnHour));
  *   outstation (round trip) → trip.days × tripDay.
  * Trips only when long: farther than `nearKm` (nearKmOf; same-day ones and
  * an unknown distance stay on the % cut). Night driver, 1 hour, 3 hours and
  * everything else → null. `price` is not used here: the caller checks the
- * pay stays below it.
+ * pay stays below it. `drive`: the site's (siteDrive_), else DRIVE_DEFAULT.
  */
-function rateCardPayOf(b, price, rates, nearKm) {
+function rateCardPayOf(b, price, rates, nearKm, drive) {
   if (!rates || !b) return null;
   if (b.package === 'local-full-day') return rates.local8h;
   if (b.package === 'local-12-hours') return rates.local12h;
@@ -1630,9 +1703,7 @@ function rateCardPayOf(b, price, rates, nearKm) {
   if (b.package === 'outstation') return days * rates.tripDay;
   if (b.package !== 'one-way-drop') return null;
   var home = Math.max(0, Number(t.returnHours) || 0);
-  var fullDays = Math.floor(home / 24);
-  var leftover = Math.ceil(home - fullDays * 24); // a started hour counts
-  return days * rates.tripDay + fullDays * rates.tripDay + Math.min(rates.tripDay, leftover * rates.returnHour);
+  return wholeTimePay(dropHoursOf(km, drive || DRIVE_DEFAULT, wantsNonstop(b)) + home, rates.tripDay, rates.returnHour);
 }
 
 /** DriveBuddy's share of the price, in whole percent, for reference on a rate-card offer. */
@@ -1654,14 +1725,14 @@ function rateRaiseAt(ageMs, basePay, price, stepMs) {
 }
 
 /** The offer fields that pay by the rate card, or null when the card does not price this booking or its pay is not below the price. */
-function rateCardFields(b, price, rates, nearKm) {
-  var pay = rateCardPayOf(b, price, rates, nearKm);
+function rateCardFields(b, price, rates, nearKm, drive) {
+  var pay = rateCardPayOf(b, price, rates, nearKm, drive);
   if (pay === null || !(pay < price)) return null;
   return { driverPay: pay, cutPercent: keepPercentOf(price, pay), payBy: 'rates' };
 }
 
 /** The automatic offer for a confirmed booking with a price, in the exact shape firestore.rules checks; null if not one. */
-function autoOfferFor(id, b, prices, cut, now, rates, nearKm) {
+function autoOfferFor(id, b, prices, cut, now, rates, nearKm, drive) {
   var price = estimateOf(b, prices).amount;
   if (!price || b.status !== 'confirmed' || b.assignedDriver) return null;
   var area = offerAreaOf(b.pickup);
@@ -1673,7 +1744,7 @@ function autoOfferFor(id, b, prices, cut, now, rates, nearKm) {
     paidAt: null, createdAt: now, updatedAt: now, by: 'robot', cities: zoneOf(b.city), payBy: 'cut',
   };
   // The rate card, when it prices this job (autoOffers_ holds a job whose rate is not below its price).
-  var card = rateCardFields(b, offer.price, rates, nearKm);
+  var card = rateCardFields(b, offer.price, rates, nearKm, drive);
   if (card) Object.keys(card).forEach(function (k) { offer[k] = card[k]; });
   return offer;
 }
@@ -1695,7 +1766,7 @@ function offerPush(offer, token, raised) {
 
 /**
  * The website's public settings (SITE_URL/app-config.json, made from
- * site-settings.ts): { prices, google, payments }, kept for an hour. null when
+ * site-settings.ts): { prices, google, payments, outstation.drive }, kept for an hour. null when
  * the site cannot be reached.
  */
 function siteConfig_() {
@@ -1706,7 +1777,8 @@ function siteConfig_() {
   if (res.getResponseCode() !== 200) return null;
   var all = JSON.parse(res.getContentText()) || {};
   if (!all.prices) return null;
-  var keep = { prices: all.prices, google: all.google || {}, payments: all.payments || {} };
+  // outstation: the drive timing for a one-way drop's rate-card pay (outstation.drive).
+  var keep = { prices: all.prices, google: all.google || {}, payments: all.payments || {}, outstation: { drive: (all.outstation && all.outstation.drive) || null } };
   cache.put('siteConfig', JSON.stringify(keep), 3600);
   return keep;
 }
@@ -1738,6 +1810,7 @@ function autoOffers_() {
     var prices = null;
     var rates; // the rate card, read once a run when needed
     var nearKm; // the site's same-day trip limit, likewise
+    var drive; // the site's drive timing (one-way pay), likewise
     var cut = autoCuts(prop_('AUTO_OFFER_CUTS'))[0];
     rows.forEach(function (row) {
       var b = row.data;
@@ -1750,8 +1823,9 @@ function autoOffers_() {
       if (rates === undefined) rates = driverRates_();
       // How long a same-day trip is, from the site — only for a trip with a rate card (cached for an hour).
       if (rates && b.trip && nearKm === undefined) nearKm = siteNearKm_();
+      if (rates && b.trip && drive === undefined) drive = siteDrive_();
       var price = estimateOf(b, prices || {}).amount;
-      var ratePay = rateCardPayOf(b, price, rates, nearKm);
+      var ratePay = rateCardPayOf(b, price, rates, nearKm, drive);
       if (price && ratePay !== null && ratePay >= price) {
         // The price is below what the driver is paid: never offered at a loss. Telegram once per price.
         var key = price + ':' + ratePay;
@@ -1761,7 +1835,7 @@ function autoOffers_() {
         }
         return;
       }
-      var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date(), rates, nearKm);
+      var offer = autoOfferFor(row.id, b, prices || {}, cut, new Date(), rates, nearKm, drive);
       if (!offer) return;
       fsCommit_([{ update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } }]);
       dispatchOn_();
@@ -2080,12 +2154,12 @@ function driverReminderPush(b, id, token) {
  * the first step, to its whole zone — at the rate card's pay when it prices
  * the booking `b` (payBy 'rates'), else at the first % cut (payBy 'cut').
  */
-function reopenedOffer(o, cut, now, b, rates, nearKm) {
+function reopenedOffer(o, cut, now, b, rates, nearKm, drive) {
   var fields = {
     status: 'open', takenBy: null, takenAt: null, done: false, cities: zoneOf(o.city), cutPercent: cut,
     driverPay: driverPayOf(o.price, cut), createdAt: now, updatedAt: now, by: 'robot', payBy: 'cut',
   };
-  var card = rateCardFields(b, o.price, rates, nearKm);
+  var card = rateCardFields(b, o.price, rates, nearKm, drive);
   if (card) Object.keys(card).forEach(function (k) { fields[k] = card[k]; });
   return fields;
 }
@@ -2684,7 +2758,7 @@ function releasedOffers_(rows) {
     var reopen = Boolean(b && b.status === 'confirmed' && !b.assignedDriver);
     if (reopen) {
       var rates = driverRates_();
-      var fields = reopenedOffer(o, cut, now, b, rates, rates && b.trip ? siteNearKm_() : 0);
+      var fields = reopenedOffer(o, cut, now, b, rates, rates && b.trip ? siteNearKm_() : 0, rates && b.trip ? siteDrive_() : null);
       fsCommit_([
         {
           update: { name: docName_('offers/' + row.id), fields: toFields(fields) },
@@ -2933,7 +3007,7 @@ function giveToAnother_(id, b, e) {
   if (skip.indexOf(e.driverId) < 0) skip.push(e.driverId);
   var now = new Date();
   var rates = driverRates_();
-  var fields = reopenedOffer(o, autoCuts(prop_('AUTO_OFFER_CUTS'))[0], now, b, rates, rates && b.trip ? siteNearKm_() : 0);
+  var fields = reopenedOffer(o, autoCuts(prop_('AUTO_OFFER_CUTS'))[0], now, b, rates, rates && b.trip ? siteNearKm_() : 0, rates && b.trip ? siteDrive_() : null);
   fsCommit_([
     {
       // driverConfirmed is in the mask but not the fields: removed, it was about him.
@@ -4625,7 +4699,7 @@ if (typeof module !== 'undefined') {
     parseTrainQueries: parseTrainQueries, railTrain: railTrain, railResult: railResult, istDay: istDay, dayPlus: dayPlus,
     estimateOf: estimateOf,
     instantConfirmable: instantConfirmable, localBillOf: localBillOf, LOCAL_BASE_HOURS: LOCAL_BASE_HOURS, NEARBY_CITIES: NEARBY_CITIES,
-    tapsPrint: tapsPrint, ZONES: ZONES, zoneOf: zoneOf, LOCAL_GRACE_MIN: LOCAL_GRACE_MIN, usedHours: usedHours, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt, nearKmOf: nearKmOf,
+    tapsPrint: tapsPrint, ZONES: ZONES, zoneOf: zoneOf, LOCAL_GRACE_MIN: LOCAL_GRACE_MIN, usedHours: usedHours, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt, nearKmOf: nearKmOf, driveOf: driveOf, dropHoursOf: dropHoursOf, wholeTimePay: wholeTimePay, DRIVE_DEFAULT: DRIVE_DEFAULT,
     parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen, confirmedFor: confirmedFor,
     UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
   };

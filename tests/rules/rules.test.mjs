@@ -357,7 +357,7 @@ describe('bookings — admin workflow', () => {
     await assertFails(save({ ...route, km: -5 }));
   });
 
-  test('a long one-way drop: driving days, then his way home by the hour, at most a day each 24 h (24 Nov 2026)', async () => {
+  test('a long one-way drop agreed under v2: driving days, then his way home by the hour, at most a day each 24 h (still accepted)', async () => {
     await seedBooking('b1', { package: 'one-way-drop' });
     const db = admin();
     const save = (q) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: q }));
@@ -373,6 +373,44 @@ describe('bookings — admin workflow', () => {
     // Never more than a day for the 11 hours left over, and it must add up.
     await assertFails(save({ ...ranchi, returnCharge: 2400, amount: 1600 + 2400 }));
     await assertFails(save({ ...ranchi, amount: 3000 }));
+  });
+
+  test('a long one-way drop by the km (24 Nov 2026, v3): the drive, his way home by the hour, the round-off or the minimum', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    const db = admin();
+    const save = (q) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: q }));
+    // Raipur → Ranchi: 616 km × ₹3 = ₹1,848 + home 11 h × ₹100 = ₹1,100 → ₹2,948, to the nearest ₹50: +2 → ₹2,950.
+    const ranchi = agreed({
+      dayRate: 1848, days: 1, returnHours: 11, returnHourRate: 100, returnCharge: 1100,
+      extraHours: 0, extraHourRate: 0, extraCharge: 0, km: 616, kmRate: 3, minimum: 1500, adjust: 2, ticket: 0, amount: 2950,
+    });
+    await assertSucceeds(save(ranchi));
+    await assertSucceeds(save({ ...ranchi, ticket: 650, amount: 2950 + 650 }));
+    // Raipur → Ambikapur: 334 km × ₹3 = ₹1,002 + 9 h × ₹100 = ₹1,902 → −2 → ₹1,900.
+    await assertSucceeds(save({ ...ranchi, dayRate: 1002, km: 334, returnHours: 9, returnCharge: 900, adjust: -2, amount: 1900 }));
+    // Raipur → Bengaluru: 4,110 + home 35 h (₹1,500 + 11 × ₹100) = 6,710 → −10 → ₹6,700 (more than 10 hours' worth a day: by the km, each hour at most).
+    await assertSucceeds(save({ ...ranchi, dayRate: 4110, km: 1370, returnHours: 35, returnCharge: 2600, adjust: -10, amount: 6700 }));
+    // The minimum: 170 km × ₹3 = ₹510 + 3 h = ₹300 → ₹810, topped up to ₹1,500.
+    const small = { ...ranchi, dayRate: 510, km: 170, returnHours: 3, returnCharge: 300, adjust: 690, amount: 1500 };
+    await assertSucceeds(save(small));
+    await assertSucceeds(save({ ...small, ticket: 400, amount: 1900 }));
+    // A top-up must land exactly on the minimum; a big "adjust" otherwise is refused.
+    await assertFails(save({ ...small, adjust: 790, amount: 1600 }));
+    await assertFails(save({ ...ranchi, adjust: 302, amount: 3250 }));
+    // The way home never more than each hour at the rate; the drive exactly km × kmRate; one "day"; it must add up.
+    await assertFails(save({ ...ranchi, returnCharge: 1200, adjust: -98, amount: 2950 }));
+    await assertFails(save({ ...ranchi, dayRate: 1900, adjust: -50, amount: 2950 }));
+    await assertFails(save({ ...ranchi, days: 2, amount: 1848 * 2 + 1100 + 2 }));
+    await assertFails(save({ ...ranchi, amount: 3000 }));
+    await assertFails(save({ ...ranchi, extraHours: 2, extraHourRate: 100, extraCharge: 200, amount: 3150 }));
+    await assertFails(save({ ...ranchi, awayHours: 30 }));
+    // minimum and adjust only with a price a km; and not without them.
+    const { kmRate: _k, ...noRate } = ranchi;
+    await assertFails(save(noRate));
+    const { minimum: _m, ...noMinimum } = ranchi;
+    await assertFails(save(noMinimum));
+    const { adjust: _a, ...noAdjust } = ranchi;
+    await assertFails(save({ ...noAdjust, amount: 2948 }));
   });
 
   test('customers and guests cannot change a booking', async () => {
@@ -536,6 +574,24 @@ describe('trip links and the final bill', () => {
     // 27 h home: a day + 3 h.
     await assertSucceeds(save({ ...ranchi, days: 2, returnHours: 27, returnCharge: 1600 + 480, km: 1200, amount: 3200 + 2080 }));
     await assertFails(save({ ...ranchi, returnCharge: 2400, amount: 1600 + 2400 }));
+  });
+
+  test('a long one-way drop’s final bill by the km (24 Nov 2026, v3): the drive fixed, drop → home his way home', async () => {
+    await seedLink();
+    const db = admin();
+    const save = (b) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ bill: b }));
+    const ranchi = finalBill({
+      dayRate: 1848, days: 1, extraHours: 0, extraHourRate: 0, extraCharge: 0, returnHours: 11, returnHourRate: 100,
+      returnCharge: 1100, km: 616, kmRate: 3, minimum: 1500, adjust: 2, ticket: 0, nonstop: false, amount: 2950,
+    });
+    await assertSucceeds(save(ranchi));
+    // 27 h home: a day (₹1,500) + 3 h → 1,848 + 1,800 = 3,648 → ₹3,650.
+    await assertSucceeds(save({ ...ranchi, returnHours: 27, returnCharge: 1800, adjust: 2, amount: 3650 }));
+    // The minimum.
+    await assertSucceeds(save({ ...ranchi, dayRate: 510, km: 170, returnHours: 3, returnCharge: 300, adjust: 690, amount: 1500 }));
+    await assertFails(save({ ...ranchi, returnCharge: 1200, adjust: -98, amount: 2950 }));
+    await assertFails(save({ ...ranchi, amount: 2948 }));
+    await assertFails(save({ ...ranchi, adjust: 500, amount: 3448 }));
   });
 });
 

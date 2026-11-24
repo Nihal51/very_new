@@ -14,7 +14,7 @@ import { PACKAGE_NAMES, UPI_ID, isDriverConfirmed, isInstantBooking, isUpiPayUrl
 import { RATE_RAISE, ZONES, citiesText, offerCitiesFor, offerSettlement } from '../lib/offers.ts';
 import { estimateBasisText, estimateOf } from '../lib/estimate.ts';
 import { LOCAL_BASE_HOURS, LOCAL_GRACE_MINUTES, localHours, usedHours } from '../lib/local-bill.ts';
-import { destinations, estimate, homeWay, pickupCities, planTrip, roadKm } from '../lib/outstation.ts';
+import { destinations, estimate, homeWay, pickupCities, planTrip, roadKm, wholeTimePay } from '../lib/outstation.ts';
 import { checkSettings } from '../lib/settings-schema.ts';
 import { settings } from '../site-settings.ts';
 
@@ -219,49 +219,70 @@ test('the local bill’s hours: lib/local-bill.ts is the robot’s rule (base ho
 
 test('long one-way drops: the settings reach the apps (app-config.json), and the robot prices and pays a Ranchi-like booking consistently', () => {
   const route = read('app/app-config.json/route.ts');
-  for (const key of ['driveDay', 'returnDay', 'returnHour', 'driveHoursPerDay', 'driveGraceHours'])
-    assert.ok(route.includes(`${key}: outstation.oneWay.${key},`), key);
+  for (const key of ['perKm', 'homeHour', 'homeDayMax', 'minimum', 'roundTo']) assert.ok(route.includes(`${key}: outstation.oneWay.${key},`), key);
+  for (const key of ['kmh', 'breakEveryHours', 'breakMinutes', 'maxRoadHoursPerDay']) assert.ok(route.includes(`${key}: outstation.drive.${key},`), key);
   assert.ok(route.includes('graceMinutes: outstation.graceMinutes'));
-  assert.ok(!/oneWayLong|drivingGraceHours/.test(route), 'the first draft’s names are gone');
-  // Raipur → Ranchi as saved on the booking (trip.days = the driving days, returnHours = the hours charged).
-  const b = { package: 'one-way-drop', trip: { km: 616, days: 1, returnHours: 11, estFrom: 3200, estTo: 3200 } };
-  assert.deepEqual({ ...robot.estimateOf(b, settings.prices) }, { amount: 3200, basis: 'trip' });
-  // Generic test rates (the real ones are only in the Script Properties): his pay stays below the price.
+  assert.ok(!/oneWayLong|drivingGraceHours|driveDay|returnDay/.test(route), 'the earlier drafts’ names are gone');
+  // The robot's drive defaults are the site's settings (it uses them when the site cannot be read).
+  assert.deepEqual({ ...robot.DRIVE_DEFAULT }, { ...settings.outstation.drive });
+  // Raipur → Ranchi as saved on the booking (with a train home 10 h 41 m after the drop: 11 h charged).
+  const b = { package: 'one-way-drop', trip: { km: 616, days: 1, returnHours: 11, estFrom: 2950, estTo: 2950 } };
+  assert.deepEqual({ ...robot.estimateOf(b, settings.prices) }, { amount: 2950, basis: 'trip' });
+  // Generic test rates (the real ones are only in the Script Properties): his whole time 12.4 + 11 h → a day.
   const rates = robot.driverRatesOf(JSON.stringify({ local8h: 500, local12h: 700, localExtraHour: 10, tripDay: 1000, returnHour: 100 }));
-  const pay = robot.rateCardPayOf(b, 3200, rates, 160);
-  assert.equal(pay, 1000 + Math.min(1000, 11 * 100));
-  assert.ok(pay < 3200);
+  const pay = robot.rateCardPayOf(b, 2950, rates, 160, robot.driveOf({ drive: settings.outstation.drive }));
+  assert.equal(pay, 1000);
+  assert.ok(pay < 2950);
 });
 
-test('margin guard: a long one-way drop’s customer price covers the rate card’s pay, from every pickup city to every place', () => {
-  const ow = settings.outstation.oneWay;
-  const longRules = {
+test('the robot times a one-way drive as the website plans it (roadTime + dropTime), day and night too', () => {
+  const longRules = tripRulesForTest();
+  const drive = robot.driveOf({ drive: settings.outstation.drive });
+  for (const from of pickupCities)
+    for (const d of destinations) {
+      const km = roadKm(from, d);
+      if (!(km > 0)) continue;
+      for (const nonstop of [false, true]) {
+        const plan = planTrip(longRules, km, 'one-way', 0, homeWay(d, from), 7, nonstop);
+        assert.ok(Math.abs(robot.dropHoursOf(km, drive, nonstop) - plan.dropAt) < 1e-9, `${from} → ${d.id} nonstop ${nonstop}`);
+      }
+    }
+  for (const [h, day, hour] of [[0, 1000, 100], [9.2, 1000, 100], [24.05, 1000, 100], [87.2, 1000, 100], [33.1, 800, 70]])
+    assert.equal(robot.wholeTimePay(h, day, hour), wholeTimePay(h, day, hour), `${h} h`);
+});
+
+/** lib/settings.ts tripRules (which uses the @/ alias Node cannot read). */
+function tripRulesForTest() {
+  const o = settings.outstation;
+  return {
     dayRate: { ...settings.prices.outstation },
     nearRates: settings.prices.outstationNear,
-    nearFromKm: settings.outstation.nearFromKm,
-    dayTopFromKm: settings.outstation.dayTopFromKm,
-    returnHour: settings.outstation.returnHour,
-    returnMaxPerDay: settings.outstation.returnMaxPerDay,
-    returnFullDayAfter: settings.outstation.returnFullDayAfterHours,
-    extraFullDayAfter: settings.outstation.extraFullDayAfterHours,
-    extraHour: settings.outstation.extraHour,
-    hoursPerDay: settings.outstation.hoursPerDay,
-    sameDayMaxHours: settings.outstation.sameDayMaxHours,
-    kmPerDay: settings.outstation.kmPerDay,
-    averageKmh: settings.outstation.averageKmh,
-    busKmh: settings.outstation.busKmh,
-    stationHours: settings.outstation.stationHours,
-    localWithinKm: settings.outstation.localWithinKm,
-    oneWay: { ...ow },
+    nearFromKm: o.nearFromKm,
+    dayTopFromKm: o.dayTopFromKm,
+    returnHour: o.returnHour,
+    returnMaxPerDay: o.returnMaxPerDay,
+    returnFullDayAfter: o.returnFullDayAfterHours,
+    extraFullDayAfter: o.extraFullDayAfterHours,
+    extraHour: o.extraHour,
+    hoursPerDay: o.hoursPerDay,
+    sameDayMaxHours: o.sameDayMaxHours,
+    kmPerDay: o.kmPerDay,
+    averageKmh: o.averageKmh,
+    busKmh: o.busKmh,
+    stationHours: o.stationHours,
+    localWithinKm: o.localWithinKm,
+    oneWay: { ...o.oneWay },
+    drive: { ...o.drive },
   };
+}
+
+test('margin guard: a long one-way drop’s customer price covers the rate card’s pay for his whole time, from every pickup city to every place', () => {
+  const longRules = tripRulesForTest();
   const nearKm = robot.nearKmOf(settings.prices);
-  // The private card's shape with generic numbers: a made-up card below the customer prices, and the
-  // highest card the guard allows — his day and his hour home equal to the customer's (then pay ≤ price).
-  const cards = [
-    { local8h: 500, local12h: 700, localExtraHour: 10, tripDay: 1000, returnHour: 100 },
-    { local8h: 500, local12h: 700, localExtraHour: 10, tripDay: ow.driveDay, returnHour: ow.returnHour },
-  ].map((c) => robot.driverRatesOf(JSON.stringify(c)));
-  assert.ok(cards.every(Boolean), 'the cards parse as DRIVER_RATES');
+  const drive = robot.driveOf({ drive: settings.outstation.drive });
+  // The private card's shape with generic numbers (the real ones are only in the Script Properties).
+  const card = robot.driverRatesOf(JSON.stringify({ local8h: 500, local12h: 700, localExtraHour: 10, tripDay: 1000, returnHour: 100 }));
+  assert.ok(card, 'the card parses as DRIVER_RATES');
   let checked = 0;
   for (const from of pickupCities)
     for (const d of destinations) {
@@ -271,10 +292,15 @@ test('margin guard: a long one-way drop’s customer price covers the rate card�
         const plan = planTrip(longRules, km, 'one-way', 0, homeWay(d, from), 7, nonstop);
         const est = estimate(longRules, plan);
         assert.ok(est.long, `${from} → ${d.id}`);
-        const b = { package: 'one-way-drop', trip: { km: plan.km, days: est.long.drivingDays, returnHours: plan.returnHours, estFrom: est.from, estTo: est.to } };
-        const [low, high] = cards.map((c) => robot.rateCardPayOf(b, est.to, c, nearKm));
-        assert.ok(low < est.from, `${from} → ${d.id}: ${low} < ${est.from}`);
-        assert.ok(high <= est.from, `${from} → ${d.id}: ${high} ≤ ${est.from}`);
+        const b = {
+          package: 'one-way-drop',
+          ...(nonstop && { notes: 'Day and night driving (non-stop).' }),
+          trip: { km: plan.km, days: plan.days, returnHours: plan.returnHours, estFrom: est.from, estTo: est.to },
+        };
+        const pay = robot.rateCardPayOf(b, est.to, card, nearKm, drive);
+        // The website's own sum: the same as the robot's.
+        assert.equal(pay, wholeTimePay(plan.dropAt + plan.returnHours, 1000, 100), `${from} → ${d.id}`);
+        assert.ok(pay < est.from, `${from} → ${d.id}: pay ${pay} < price ${est.from}`);
         checked++;
       }
     }
