@@ -283,6 +283,11 @@ test('a long one-way drop, v4 (24 Nov 2026): the meter and the final bill — th
   // A missed train: boarded 14 h after the drop → 10 h × 100, the customer pays (at most 1,200).
   const missed = billNow({ ...home, boardAt: at(26 + 22 / 60), homeAt: at(36) }, rates, longRules, GRACE, Date.now()).bill;
   assert.deepEqual([missed.v4.waitHours, missed.v4.waitCharge, missed.amount], [10, 1000, 3650]);
+  // No train soon at the drop and none chosen (/admin passes waitHours 0): by bus, no Boarded tap — no wait charge.
+  const busRates = billRates(undefined, longRules, 616, true, { ...plan, waitHours: 0 });
+  const bus = billNow({ ...dropped, homeAt: at(30) }, busRates, longRules, GRACE, Date.now()).bill;
+  assert.deepEqual([bus.v4.waitFrom, bus.v4.waitCharge, bus.amount], ['estimate', 0, 2650]);
+  assert.equal(billLines(bus, longRules)[1].label, 'Train wait (by bus, no Boarded tap), 0 m: free (the first 4 h)');
   // The driver's pay is as before: his whole time (made-up costs).
   assert.equal(driverPay(bill, 1000, 80, longRules), 1000 + Math.min(1000, 1 * 80));
   // An agreed v4 quote keeps its own drive, nights and rates.

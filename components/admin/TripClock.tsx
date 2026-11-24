@@ -334,9 +334,11 @@ function BillPanel({ b, link, user, now }: { b: Booking; link: TripLink; user: U
   // v4: the plan for the real start (nights, road time, the usual wait) and the train chosen at the drop (returnChoice).
   const oneWay = link.kind === 'one-way';
   const chosenDepartAt = b.returnChoice?.dep?.getTime();
+  // No train soon at the drop (returnCheck.bus) and none chosen: he went by bus — no wait charge without a Boarded tap.
+  const byBus = !!b.returnCheck?.bus && !b.returnChoice;
   const timing = {
     nights: plan ? nightsOf(plan) : 0,
-    ...(plan?.dropAt !== undefined && { plannedRoadHours: plan.dropAt, waitHours: waitHoursOfPlan(plan) }),
+    ...(plan?.dropAt !== undefined && { plannedRoadHours: plan.dropAt, waitHours: byBus ? 0 : waitHoursOfPlan(plan) }),
     ...(chosenDepartAt !== undefined && { chosenDepartAt }),
   };
   // A saved bill keeps its rates; otherwise the agreed price's (or the estimate's: the driver's time at the day price for the distance).

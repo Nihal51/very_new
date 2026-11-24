@@ -351,7 +351,7 @@ export function billLines(
     lines.push({ label: `Drive ${inr.format(v.km)} km`, amount: rupees(b.dayRate) });
     if (v.nights) lines.push({ label: `${plural(v.nights, 'night')} on the road × ${rupees(v.nightRate)}`, amount: rupees(v.nights * v.nightRate) });
     if (v.waitApplies) {
-      const from = v.waitFrom === 'boarded' ? 'drop → boarded' : v.waitFrom === 'train' ? 'drop → his train, no Boarded tap' : 'the usual wait, no Boarded tap';
+      const from = v.waitFrom === 'boarded' ? 'drop → boarded' : v.waitFrom === 'train' ? 'drop → his train, no Boarded tap' : v.waitActualHours > 0 ? 'the usual wait, no Boarded tap' : 'by bus, no Boarded tap';
       lines.push({
         label:
           `Train wait (${from}), ${durationText(v.waitActualHours * 60)}: ` +
