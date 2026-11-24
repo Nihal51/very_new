@@ -453,9 +453,9 @@ function reminderTelegram(c) {
 
 /* ----------------------------------------------------------- trip clock */
 
-var TRIP_STEPS = ['start', 'drop', 'home'];
+var TRIP_STEPS = ['start', 'drop', 'board', 'home'];
 
-/** The times on a trip link → the booking's clock: { startAt, dropAt, homeAt }, only those there. */
+/** The times on a trip link → the booking's clock: { startAt, dropAt, boardAt, homeAt }, only those there. */
 function tripClockOf(link) {
   var c = {};
   TRIP_STEPS.forEach(function (s) { if (link[s + 'At']) c[s + 'At'] = link[s + 'At']; });
@@ -492,6 +492,9 @@ function tripTelegram(c) {
   var text;
   if (c.step === 'start') {
     text = '🚗 <b>' + ref + ': trip started</b>\n' + who + ' left for ' + escapeHtml(l.to) + ' – ' + at;
+  } else if (c.step === 'board') {
+    text = '🚆 <b>' + ref + ': ' + who + ' boarded his train home</b> – ' + at +
+      (l.dropAt ? ' (' + hoursText(l.boardAt.getTime() - l.dropAt.getTime()) + ' after the drop)' : '') + '.';
   } else if (c.step === 'drop') {
     text = '📍 <b>' + ref + ': car dropped in ' + escapeHtml(l.to) + '</b>\n' + at +
       (l.startAt ? ' – ' + hoursText(l.dropAt.getTime() - l.startAt.getTime()) + ' after the start' : '') +
@@ -1778,8 +1781,17 @@ function siteConfig_() {
   if (res.getResponseCode() !== 200) return null;
   var all = JSON.parse(res.getContentText()) || {};
   if (!all.prices) return null;
-  // outstation: the drive timing for a one-way drop's rate-card pay (outstation.drive).
-  var keep = { prices: all.prices, google: all.google || {}, payments: all.payments || {}, outstation: { drive: (all.outstation && all.outstation.drive) || null } };
+  // outstation: the drive timing for a one-way drop's rate-card pay (outstation.drive) and the v4 prices for the
+  // train check at the drop (outstation.oneWay); trains: its rules; destinations: each place's stations and change stations.
+  var dest = {};
+  (Array.isArray(all.destinations) ? all.destinations : []).forEach(function (d) {
+    if (d && d.id && d.rail) dest[d.id] = { stations: d.rail.stations || [], hubs: d.rail.hubs || [] };
+  });
+  var o = all.outstation || {};
+  var keep = {
+    prices: all.prices, google: all.google || {}, payments: all.payments || {},
+    outstation: { drive: o.drive || null, oneWay: o.oneWay || null }, trains: all.trains || {}, destinations: dest,
+  };
   cache.put('siteConfig', JSON.stringify(keep), 3600);
   return keep;
 }
@@ -2092,6 +2104,7 @@ function tapsClockOf(pkg, taps) {
   if (taps.leftAt) c.startAt = taps.leftAt;
   if (kind === 'one-way') {
     if (taps.doneAt) c.dropAt = taps.doneAt;
+    if (taps.boardAt) c.boardAt = taps.boardAt;
     if (taps.homeAt) c.homeAt = taps.homeAt;
   } else if (taps.doneAt) {
     c.homeAt = taps.doneAt;
@@ -2492,6 +2505,9 @@ function watchChanges_() {
   var all = !inRun_ || pingRun_;
   var jobs = [{ spec: bookingStreamSpec_(), mark: 'robotBookingsMs', run: changedBookings_ }];
   if (all || m % 4 === 2) jobs.push({ spec: sinceSpec_('bookings', 'acceptedPriceMs', 'acceptedPrice.at'), run: acceptedPrices_ });
+  // The train the customer booked for the driver at the drop ("I booked this train"): its final price — looked
+  // for only while a train check waits for its choice (returnWatch), so an idle robot asks nothing more.
+  if ((all || m % 4 === 2) && returnWatching_()) jobs.push({ spec: sinceSpec_('bookings', 'returnChoiceMs', 'returnChoice.at'), run: returnChoices_ });
   if (all || m % 4 === 0) jobs.push({ spec: { collection: 'offers', where: fieldFilter_('status', 'EQUAL', 'released'), field: 'status', limit: 20 }, run: releasedOffers_ });
   var results = fsQueryAll_(jobs.map(function (j) { return j.spec; }));
   if (!results[0].error) keepStream_(results[0].rows);
@@ -3095,11 +3111,13 @@ function syncTaps_(id, taps) {
     }
     var link = {
       ref: b.ref, to: (b.trip && b.trip.to) || '?', kind: TRIP_TAP_KINDS[b.package], driverName: (b.assignedDriver && b.assignedDriver.name) || '',
-      startAt: clock.startAt, dropAt: clock.dropAt, homeAt: clock.homeAt,
+      startAt: clock.startAt, dropAt: clock.dropAt, boardAt: clock.boardAt, homeAt: clock.homeAt,
     };
     news.forEach(function (step) {
       sendTelegram_(tripTelegram({ link: link, step: step, booking: b, id: id, siteUrl: prop_('SITE_URL') }));
     });
+    // The drop: the trains home (once; the trip link's tap may have done it first).
+    if (news.indexOf('drop') >= 0) returnCheckFor_(id, b, clock.dropAt, '');
     return;
   }
   if (!LOCAL_BASE_HOURS[b.package] || b.status !== 'assigned') return;
@@ -4412,6 +4430,8 @@ function syncTripClock_(key, link) {
   news.forEach(function (step) {
     sendTelegram_(tripTelegram({ link: link, step: step, booking: b, id: link.bookingId, siteUrl: prop_('SITE_URL') }));
   });
+  // The drop: the trains home (once; the Driver app's Job done may have done it first).
+  if (news.indexOf('drop') >= 0) returnCheckFor_(link.bookingId, b, clock.dropAt, key);
 }
 
 /** A booking still New 10 minutes after it came in gets one Telegram nudge. */
@@ -4686,6 +4706,451 @@ function testAlert() {
   SpreadsheetApp.getUi().alert(r === 'sent' ? 'Sent ✅ Check Telegram.' : 'Telegram is not connected yet. Use DriveBuddy → Connect Telegram and start.');
 }
 
+/* ================================================== the train check at the drop
+   (24 Nov 2026, SPEC-v4 §2.) When a one-way drop farther than the same-day
+   distance gets its drop time — the trip link's Car dropped or the Driver
+   app's Job done, whichever comes first — the robot looks up the trains home
+   from the place's station(s) to the pickup city's home station (the same
+   saved timetables and RailRadar budget as the booking form's lookup), and
+   writes bookings/{id}.returnCheck: up to 3 trains, each with the whole price
+   with it (the wait from the drop to its departure, lib/outstation.ts v4).
+   The office hears on Telegram; the customer gets a push to book his ticket.
+   When the customer (or the office) picks one — returnChoice — the robot
+   writes returnPrice and tells them the final price. The final bill still
+   goes by the real taps (Boarded, Home). */
+
+/** The pickup cities' home stations (lib/outstation.ts pickupStations). */
+var PICKUP_STATIONS = { Raipur: 'R', Bhilai: 'DURG', Durg: 'DURG', Bilaspur: 'BSP' };
+
+/** Station codes renamed since the place list was made (lib/places.ts RENAMED_STATIONS). */
+var RENAMED_STATIONS = { ALD: 'PRYJ', ALY: 'PRRB', MGS: 'DDU', FD: 'AYC', HBJ: 'RKMP', JHS: 'VGLB', MUV: 'BSBS' };
+
+/** The site's one-way prices (site-settings.ts outstation.oneWay, v4), used when the site cannot be read. */
+var ONE_WAY_DEFAULT = {
+  firstKm: 200, first: 1500, perKm: 2.5, fartherFromKm: 500, perKmFarther: 3.25, night: 300,
+  waitFromKm: 500, waitFreeHours: 4, waitHour: 100, waitMax: 1200, stopsFreeHours: 1, stopsHour: 100, minimum: 1500, roundTo: 50,
+};
+
+/** The site's train rules (site-settings.ts trains), used when the site cannot be read. */
+var TRAINS_DEFAULT = { transferBufferMinutes: 90, maxTransferHours: 12, directWithinHours: 24, maxWaitHours: 48, toStationMinutes: 90 };
+
+/** How many trains the check offers, and how late the first may leave before a bus is suggested. */
+var RETURN_OPTIONS = 3;
+var RETURN_BUS_AFTER_HOURS = 12;
+
+/** The site's v4 one-way prices, each checked; ONE_WAY_DEFAULT for anything missing or odd. */
+function oneWayOf(outstation) {
+  var o = (outstation && outstation.oneWay) || {};
+  var out = {};
+  Object.keys(ONE_WAY_DEFAULT).forEach(function (k) {
+    var n = Number(o[k]);
+    out[k] = Number.isFinite(n) && n >= 0 && n <= 100000 ? n : ONE_WAY_DEFAULT[k];
+  });
+  return out;
+}
+
+/** The site's train rules, each checked; TRAINS_DEFAULT for anything missing or odd. */
+function trainRulesOf(trains) {
+  var t = trains || {};
+  var out = {};
+  Object.keys(TRAINS_DEFAULT).forEach(function (k) {
+    var n = Number(t[k]);
+    out[k] = Number.isFinite(n) && n >= 0 && n <= 1000 ? n : TRAINS_DEFAULT[k];
+  });
+  return out;
+}
+
+/** The customer's price for the drive (lib/outstation.ts driveCharge). */
+function v4Drive(r, km) {
+  var d = Math.max(0, Math.round(Number(km) || 0));
+  return r.first + r.perKm * Math.min(Math.max(d - r.firstKm, 0), r.fartherFromKm - r.firstKm) + r.perKmFarther * Math.max(0, d - r.fartherFromKm);
+}
+
+/** His wait's charge for `hours` from the drop to boarding (lib/outstation.ts waitChargeOf); 0 up to waitFromKm. */
+function v4WaitCharge(r, km, hours) {
+  if (!(Math.round(Number(km) || 0) > r.waitFromKm)) return 0;
+  var w = Math.max(0, (Number(hours) || 0) - r.waitFreeHours);
+  var h = w > 1e-9 ? Math.ceil(w - 1e-9) : 0;
+  return Math.min(r.waitMax, h * r.waitHour);
+}
+
+/** max(minimum, the nearest roundTo of `sum`) (lib/outstation.ts longOneWayPrice). */
+function v4Total(r, sum, minimum) {
+  var step = r.roundTo > 0 ? r.roundTo : 1;
+  return Math.max(minimum, Math.round(sum / step) * step);
+}
+
+/**
+ * What a train home changes in the booking's price: its base (the agreed v4
+ * drive and nights, else the settings' for the trip's km and days) and the
+ * minimum and hourly wait rate to use; null for a booking agreed under an
+ * earlier rule (its agreed price stands, whatever the train).
+ */
+function returnBaseOf(b, r) {
+  var q = b.quote;
+  if (q && typeof q.nightRate === 'number')
+    return { base: Number(q.dayRate) + (Number(q.nights) || 0) * q.nightRate, minimum: Number(q.minimum) || 0, waitHour: Number(q.waitHourRate) || 0, km: Number(q.km) || 0 };
+  if (q) return null;
+  var t = b.trip || {};
+  var nights = wantsNonstop(b) ? 0 : Math.max(0, Math.floor(Number(t.days) || 1) - 1);
+  return { base: v4Drive(r, t.km) + nights * r.night, minimum: r.minimum, waitHour: r.waitHour, km: Number(t.km) || 0 };
+}
+
+/** The whole price (before his ticket) with a train leaving `depMs`, the drop at `dropMs`. */
+function returnPriceOf(b, r, dropMs, depMs) {
+  var base = returnBaseOf(b, r);
+  if (!base) {
+    var q = b.quote || {};
+    return { price: Math.max(0, Math.round((Number(q.amount) || 0) - (Number(q.ticket) || 0))), waitCharge: 0 };
+  }
+  var rr = {}; Object.keys(r).forEach(function (k) { rr[k] = r[k]; });
+  rr.waitHour = base.waitHour;
+  var wait = depMs ? v4WaitCharge(rr, base.km, (depMs - dropMs) / 3600000) : 0;
+  return { price: v4Total(rr, base.base + wait, base.minimum), waitCharge: wait };
+}
+
+/** "2026-10-31" + "23:40" (India time) + day offset → epoch ms (lib/rail.ts istInstant); NaN when not valid. */
+function istMs(date, hhmm, plusDays) {
+  var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
+  var t = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(hhmm || ''));
+  if (!d || !t) return NaN;
+  return Date.UTC(+d[1], +d[2] - 1, +d[3] + (plusDays || 0), +t[1], +t[2]) - 330 * 60000;
+}
+
+var RAIL_WEEKDAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
+/**
+ * A saved timetable (trainsLookup_'s answer for a pair) → the rides leaving
+ * `from` on `date`, with real instants (lib/rail.ts legsFrom for a
+ * timetable): valid numbers and times, running that day, no special trains.
+ */
+function railLegs(result, date) {
+  var legs = [];
+  if (!result || result.ok !== true || !Array.isArray(result.trains)) return legs;
+  var p = String(result.q || '').split('-');
+  var from = (result.from && result.from.code) || p[0];
+  var to = (result.to && result.to.code) || p[1];
+  result.trains.forEach(function (t) {
+    var number = String(t.number || '').trim();
+    var name = String(t.name || '').trim();
+    if (!/^\d{4,5}$/.test(number) || !name) return;
+    if (!(t.depDay >= 1) || !(t.arrDay >= t.depDay) || t.arrDay > 8) return;
+    var dep = istMs(date, t.dep, 0);
+    var arr = istMs(date, t.arr, t.arrDay - t.depDay);
+    if (!(arr > dep)) return;
+    if (typeof t.duration === 'number' && Math.abs((arr - dep) / 60000 - t.duration) > 10) return;
+    if (!Array.isArray(t.runDays) || !t.runDays.length) return;
+    if (/special/i.test(String(t.type || '')) || /\b(spl|special)\b/i.test(name)) return;
+    var started = dayPlus(date, -(t.depDay - 1));
+    var wd = RAIL_WEEKDAYS[new Date(started + 'T00:00:00Z').getUTCDay()];
+    var days = t.runDays.map(function (x) { return String(x).toLowerCase().slice(0, 3); });
+    if (days.indexOf(wd) < 0) return;
+    legs.push({ number: number, name: name, from: from, to: to, dep: dep, arr: arr });
+  });
+  return legs;
+}
+
+/**
+ * The trains home (lib/rail.ts planReturn): direct first, then one change at
+ * a change station within the buffer and the longest gap; leaving after he
+ * is ready and within maxWaitHours; by arrival, a route that ends on the same
+ * last train once; at most `max`.
+ */
+function planReturnRobot(input) {
+  var rules = input.rules;
+  var latest = input.ready + rules.maxWaitHours * 3600000;
+  var usable = function (l) { return l.dep >= input.ready && l.dep <= latest; };
+  var order = input.stations;
+  var dedupe = function (legs) {
+    var best = {};
+    legs.forEach(function (l) {
+      var k = l.number + '@' + l.arr;
+      if (!best[k] || order.indexOf(l.from) < order.indexOf(best[k].from)) best[k] = l;
+    });
+    return Object.keys(best).map(function (k) { return best[k]; });
+  };
+  var opts = [];
+  dedupe(input.direct.filter(usable)).forEach(function (l) { opts.push({ legs: [l], dep: l.dep, arr: l.arr, gap: 0 }); });
+  var buffer = rules.transferBufferMinutes * 60000;
+  var maxGap = rules.maxTransferHours * 3600000;
+  dedupe((input.toHub || []).filter(usable)).forEach(function (a) {
+    (input.fromHub || []).forEach(function (b) {
+      if (b.from !== a.to || b.number === a.number) return;
+      var gap = b.dep - a.arr;
+      if (gap < buffer || gap > maxGap) return;
+      opts.push({ legs: [a, b], dep: a.dep, arr: b.arr, gap: gap });
+    });
+  });
+  opts.sort(function (x, y) { return x.arr - y.arr || x.legs.length - y.legs.length || y.gap - x.gap || y.dep - x.dep; });
+  var seen = {};
+  return opts.filter(function (o) {
+    var l = o.legs[o.legs.length - 1];
+    var k = l.number + '@' + l.arr;
+    if (seen[k]) return false;
+    seen[k] = true;
+    return true;
+  }).slice(0, input.max || RETURN_OPTIONS);
+}
+
+/**
+ * The check for a drop: up to 3 trains home with their prices. `lookup(pairs)`
+ * answers whole timetables ({ 'SBC-R': result }), so the tests can pass a fake.
+ * → the returnCheck document (without `at`), or { failed: true } when nothing
+ * could be checked.
+ */
+function returnCheckOf(b, dropMs, stations, hubs, home, r, rules, lookup) {
+  var empty = { dropAt: new Date(dropMs), options: [], bus: true, failed: true };
+  var valid = (stations || []).filter(function (s) { return /^[A-Z]{1,5}$/.test(s) && s !== home; });
+  if (!valid.length || !/^[A-Z]{1,5}$/.test(home || '')) return empty;
+  var ready = dropMs + rules.toStationMinutes * 60000;
+  var day = istDay(ready);
+  var pairs = valid.map(function (s) { return s + '-' + home; });
+  var answers = lookup(pairs) || {};
+  var failed = pairs.every(function (p) { return !answers[p] || answers[p].ok !== true; });
+  var direct = [];
+  valid.forEach(function (s) {
+    [0, 1].forEach(function (n) { direct = direct.concat(railLegs(answers[s + '-' + home], dayPlus(day, n))); });
+  });
+  var toHub = [];
+  var fromHub = [];
+  var hubCodes = (hubs || []).filter(function (h) { return /^[A-Z]{1,5}$/.test(h) && h !== home && valid.indexOf(h) < 0; });
+  var goodDirect = direct.some(function (l) { return l.dep >= ready && l.dep <= ready + rules.directWithinHours * 3600000; });
+  if (hubCodes.length && !goodDirect) {
+    var hubPairs = [];
+    hubCodes.forEach(function (h) {
+      valid.forEach(function (s) { hubPairs.push(s + '-' + h); });
+      hubPairs.push(h + '-' + home);
+    });
+    var more = lookup(hubPairs) || {};
+    hubCodes.forEach(function (h) {
+      valid.forEach(function (s) { [0, 1].forEach(function (n) { toHub = toHub.concat(railLegs(more[s + '-' + h], dayPlus(day, n))); }); });
+      [0, 1, 2].forEach(function (n) { fromHub = fromHub.concat(railLegs(more[h + '-' + home], dayPlus(day, n))); });
+    });
+    failed = failed && hubPairs.every(function (p) { return !more[p] || more[p].ok !== true; });
+  }
+  var routes = planReturnRobot({ ready: ready, direct: direct, toHub: toHub, fromHub: fromHub, stations: valid, rules: rules, max: RETURN_OPTIONS });
+  if (!routes.length && failed) return empty;
+  var options = routes.map(function (o) {
+    var first = o.legs[0];
+    var last = o.legs[o.legs.length - 1];
+    var priced = returnPriceOf(b, r, dropMs, first.dep);
+    return {
+      train: first.number,
+      name: first.name,
+      from: first.from,
+      dep: new Date(first.dep),
+      arr: new Date(last.arr),
+      change: o.legs.length > 1 ? { station: last.from, train: last.number, dep: new Date(last.dep) } : null,
+      waitMin: Math.round((first.dep - dropMs) / 60000),
+      waitCharge: priced.waitCharge,
+      price: priced.price,
+    };
+  });
+  var bus = !options.length || options[0].dep.getTime() > ready + RETURN_BUS_AFTER_HOURS * 3600000;
+  return { dropAt: new Date(dropMs), options: options, bus: bus, failed: false };
+}
+
+/** "7:30 PM" (India time). */
+function istTime(date) {
+  var ist = new Date(date.getTime() + 330 * 60000);
+  var h = ist.getUTCHours();
+  return (((h + 11) % 12) + 1) + ':' + ('0' + ist.getUTCMinutes()).slice(-2) + ' ' + (h < 12 ? 'AM' : 'PM');
+}
+
+/** Telegram for the office: "DB-1042: car dropped 7:30 PM at Ranchi. Trains home: 1) 18452 9:40 PM → Raipur 7:10 AM · ₹2,650 …" */
+function returnCheckTelegram(b, id, check) {
+  var ref = escapeHtml(b.ref || id);
+  var head = '🚆 <b>' + ref + ': car dropped ' + istTime(check.dropAt) + ' at ' + escapeHtml((b.trip && b.trip.to) || '?') + '.</b> ';
+  if (check.failed) return head + 'The trains home could not be checked — call the customer about his ticket.';
+  var busPrice = returnPriceOf(b, oneWayOf(siteOutstation_()), check.dropAt.getTime(), 0).price;
+  if (!check.options.length) return head + 'No train home soon — a bus (₹' + inr(busPrice) + '). The customer books his ticket.';
+  var list = check.options.map(function (o, i) {
+    return (i + 1) + ') ' + o.train + ' ' + istTime(o.dep) + (o.change ? ' (change at ' + escapeHtml(o.change.station) + ')' : '') +
+      ' → ' + escapeHtml(b.city || 'home') + ' ' + istTime(o.arr) + ' · ₹' + inr(o.price);
+  }).join('  ');
+  return head + 'Trains home: ' + list + (check.bus ? '  (or a bus: ₹' + inr(busPrice) + ')' : '') + ' — the customer books his ticket.';
+}
+
+var RETURN_PUSH = {
+  en: {
+    check: function () { return { title: 'Car dropped', body: 'Your driver has dropped the car. Book his ticket home — pick a train.' }; },
+    price: function (c) { return { title: 'Final price', body: 'Final price ₹' + inr(c.price) + ' with train ' + c.train }; },
+  },
+  hi: {
+    check: function () { return { title: 'गाड़ी पहुँच गई', body: 'ड्राइवर ने गाड़ी छोड़ दी है। उनके घर का टिकट बुक करें — एक ट्रेन चुनें।' }; },
+    price: function (c) { return { title: 'अंतिम कीमत', body: 'ट्रेन ' + c.train + ' के साथ अंतिम कीमत ₹' + inr(c.price) }; },
+  },
+};
+
+/** The site's outstation block as the robot keeps it (drive, oneWay), or null. */
+function siteOutstation_() {
+  try {
+    var c = siteConfig_();
+    return c && c.outstation;
+  } catch (err) {
+    return null;
+  }
+}
+
+/** The drop place's stations and change stations: ours from the site's destinations, a place from the map from the place list. */
+function returnStations_(b) {
+  var t = b.trip || {};
+  var c = null;
+  try { c = siteConfig_(); } catch (err) { c = null; }
+  if (t.destId) {
+    var d = c && c.destinations && c.destinations[t.destId];
+    return d ? { stations: d.stations || [], hubs: d.hubs || [] } : { stations: [], hubs: [] };
+  }
+  // A place from the list of all India ("Name, State"): its nearest station, as the booking form used it.
+  var label = String(t.to || '');
+  if (!label || !(t.km > 0)) return { stations: [], hubs: [] };
+  var res = fetch_(prop_('SITE_URL') + '/data/india-places.json', { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return { stations: [], hubs: [] };
+  var rows = (JSON.parse(res.getContentText()) || {}).places || [];
+  for (var i = 0; i < rows.length; i++) {
+    var p = rows[i];
+    if (Array.isArray(p) && p[0] + ', ' + p[1] === label && p[5]) {
+      var code = RENAMED_STATIONS[p[5]] || p[5];
+      return { stations: [code], hubs: [] };
+    }
+  }
+  return { stations: [], hubs: [] };
+}
+
+/**
+ * At the drop (the clock's first dropAt): the train check for a one-way drop
+ * farther than the same-day distance, once. Writes returnCheck on the booking
+ * (and on the trip link `linkKey`, for the driver's page), tells the office
+ * and the customer. Never throws: a failure is written as failed.
+ */
+function returnCheckFor_(id, b, dropAt, linkKey) {
+  if (!b || b.package !== 'one-way-drop' || b.returnCheck || !dropAt) return;
+  if (!(Number(b.trip && b.trip.km) > siteNearKm_())) return;
+  var check;
+  try {
+    var c = siteConfig_() || {};
+    var r = oneWayOf(c.outstation);
+    var rules = trainRulesOf(c.trains);
+    var where = returnStations_(b);
+    var now = Date.now();
+    var lookup = function (pairs) {
+      var out = {};
+      if (!pairs.length) return out;
+      var answer = trainsLookup_({ q: pairs.join(','), live: '0' }, now);
+      (answer && answer.results || []).forEach(function (res) { if (res && res.q) out[res.q] = res; });
+      return out;
+    };
+    check = returnCheckOf(b, dropAt.getTime(), where.stations, where.hubs, PICKUP_STATIONS[b.city] || '', r, rules, lookup);
+  } catch (err) {
+    console.warn('returnCheckFor_ ' + id + ': ' + (err && err.stack || err));
+    check = { dropAt: dropAt, options: [], bus: true, failed: true };
+  }
+  check.at = new Date();
+  var writes = [{
+    update: { name: docName_('bookings/' + id), fields: toFields({ returnCheck: check }) },
+    updateMask: { fieldPaths: ['returnCheck'] },
+    currentDocument: { exists: true },
+  }];
+  if (linkKey) writes.push({
+    update: { name: docName_('tripLinks/' + linkKey), fields: toFields({ returnCheck: check }) },
+    updateMask: { fieldPaths: ['returnCheck'] },
+    currentDocument: { exists: true },
+  });
+  fsCommit_(writes);
+  returnWatch_(id, true); // the customer's choice, or the office's (also after a failed check)
+  try { sendTelegram_({ text: returnCheckTelegram(b, id, check), parse_mode: 'HTML' }); } catch (err) { console.warn('returnCheck telegram: ' + err); }
+  if (b.customerUid && !check.failed) {
+    try {
+      pushToCustomer_(b.customerUid, function (lang, token) {
+        return pushMsg_(token, (RETURN_PUSH[lang] || RETURN_PUSH.en).check(), { bookingId: id }, 'bookings');
+      });
+    } catch (err) {
+      console.warn('returnCheck push ' + id + ': ' + err);
+    }
+  }
+}
+
+/** How long a train check waits for the customer's choice before the robot stops looking (the office can still set it). */
+var RETURN_WATCH_MS = 3 * 86400000;
+
+/** Bookings whose train check waits for a choice: { id: until (epoch ms) } in a script property, kept small. */
+function returnWatchList_() {
+  try {
+    return JSON.parse(PropertiesService.getScriptProperties().getProperty('returnWatch') || '{}') || {};
+  } catch (err) {
+    return {};
+  }
+}
+
+/** Start (on) or stop (off) watching a booking's choice of train. */
+function returnWatch_(id, on) {
+  var list = returnWatchList_();
+  var now = Date.now();
+  Object.keys(list).forEach(function (k) { if (!(list[k] > now)) delete list[k]; });
+  if (on) list[id] = now + RETURN_WATCH_MS;
+  else delete list[id];
+  PropertiesService.getScriptProperties().setProperty('returnWatch', JSON.stringify(list));
+}
+
+/** Is any train check waiting for its choice? */
+function returnWatching_() {
+  var list = returnWatchList_();
+  var now = Date.now();
+  return Object.keys(list).some(function (k) { return list[k] > now; });
+}
+
+/**
+ * The customer (or the office) picked the train home (returnChoice): the
+ * final price with it — returnPrice — once per choice, copied to the trip
+ * link for the driver's page, with a push and a Telegram line.
+ */
+function returnChoices_(rows) {
+  rows.forEach(function (row) {
+    var b = fsGet_('bookings/' + row.id); // fresh
+    var choice = b && b.returnChoice;
+    if (!choice || !choice.train || !b.returnCheck) return;
+    if (b.returnPrice && b.returnPrice.train === choice.train && b.returnPrice.at && choice.at && b.returnPrice.at >= choice.at) return;
+    var options = b.returnCheck.options || [];
+    // The same train can be offered on two days: the one leaving when the choice says, else the first.
+    var offered = null;
+    for (var i = 0; i < options.length; i++) {
+      var o = options[i];
+      if (o.train !== choice.train) continue;
+      if (choice.dep && o.dep && o.dep.getTime() === choice.dep.getTime()) { offered = o; break; }
+      if (!offered) offered = o;
+    }
+    var priced = offered
+      ? { price: offered.price, waitCharge: offered.waitCharge }
+      : returnPriceOf(b, oneWayOf(siteOutstation_()), (b.returnCheck.dropAt || new Date()).getTime(), choice.dep ? choice.dep.getTime() : 0);
+    var price = { price: priced.price, waitCharge: priced.waitCharge, train: choice.train, at: new Date() };
+    var writes = [{
+      update: { name: docName_('bookings/' + row.id), fields: toFields({ returnPrice: price }) },
+      updateMask: { fieldPaths: ['returnPrice'] },
+      currentDocument: { exists: true },
+    }];
+    // Ordered by the filtered field itself: no composite index needed.
+    fsQuery_('tripLinks', fieldFilter_('bookingId', 'EQUAL', row.id), 'ASCENDING', 5, 'bookingId').forEach(function (l) {
+      writes.push({
+        update: { name: docName_('tripLinks/' + l.id), fields: toFields({ returnChoice: { train: choice.train, dep: choice.dep || null } }) },
+        updateMask: { fieldPaths: ['returnChoice'] },
+        currentDocument: { exists: true },
+      });
+    });
+    fsCommit_(writes);
+    returnWatch_(row.id, false);
+    telegramLine_('🎫 ' + (b.ref || row.id) + ': the customer booked train ' + choice.train + (choice.dep ? ' (' + istTime(choice.dep) + ')' : '') + ' — final price ₹' + inr(price.price) + '.');
+    if (b.customerUid) {
+      try {
+        pushToCustomer_(b.customerUid, function (lang, token) {
+          return pushMsg_(token, (RETURN_PUSH[lang] || RETURN_PUSH.en).price({ price: price.price, train: choice.train }), { bookingId: row.id }, 'bookings');
+        });
+      } catch (err) {
+        console.warn('returnPrice push ' + row.id + ': ' + err);
+      }
+    }
+  });
+}
+
 /* Node test hook — ignored by Apps Script, where "module" does not exist. */
 if (typeof module !== 'undefined') {
   module.exports = {
@@ -4703,5 +5168,9 @@ if (typeof module !== 'undefined') {
     tapsPrint: tapsPrint, ZONES: ZONES, zoneOf: zoneOf, LOCAL_GRACE_MIN: LOCAL_GRACE_MIN, usedHours: usedHours, RATE_RAISE: RATE_RAISE, driverRatesOf: driverRatesOf, rateCardPayOf: rateCardPayOf, rateRaiseAt: rateRaiseAt, nearKmOf: nearKmOf, driveOf: driveOf, dropHoursOf: dropHoursOf, wholeTimePay: wholeTimePay, DRIVE_DEFAULT: DRIVE_DEFAULT,
     parseConfirmCallback: parseConfirmCallback, shortWhen: shortWhen, confirmedFor: confirmedFor,
     UPI_ID_RE: UPI_ID_RE, upiIdOf: upiIdOf, upiPayUrl: upiPayUrl, payoutGroups: payoutGroups, cashLimitOf: cashLimitOf, overCashLimit: overCashLimit,
+    ONE_WAY_DEFAULT: ONE_WAY_DEFAULT, TRAINS_DEFAULT: TRAINS_DEFAULT, PICKUP_STATIONS: PICKUP_STATIONS, RENAMED_STATIONS: RENAMED_STATIONS,
+    oneWayOf: oneWayOf, trainRulesOf: trainRulesOf, v4Drive: v4Drive, v4WaitCharge: v4WaitCharge, v4Total: v4Total,
+    returnBaseOf: returnBaseOf, returnPriceOf: returnPriceOf, railLegs: railLegs, planReturnRobot: planReturnRobot, returnCheckOf: returnCheckOf,
+    istTime: istTime, tapsClockOf: tapsClockOf,
   };
 }

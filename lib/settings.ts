@@ -20,6 +20,10 @@ const inr = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 });
 /** 16000 → "₹16,000" */
 export const rupees = (n: number) => `₹${inr.format(n)}`;
 
+const inrPaise = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** A price a km with paise: 2.5 → "₹2.50", 3.25 → "₹3.25", 3 → "₹3". */
+export const paise = (n: number) => `₹${Number.isInteger(n) ? inr.format(n) : inrPaise.format(n)}`;
+
 /** (1000, 1200) → "₹1,000–1,200"; a range whose ends match collapses to one price. */
 export const rupeeRange = (from: number, to: number) =>
   from === to ? rupees(from) : `₹${inr.format(from)}–${inr.format(to)}`;
@@ -56,21 +60,35 @@ export const priceText = {
   sameDayKm: `${p.outstationNear[0]?.upToKm ?? 0} km`,
   /** Each hour past the 24-hour blocks (and of driving beyond the day on a round trip). */
   outstationExtraHour: rupees(settings.outstation.extraHour),
-  /** A long one-way drop (outstation.oneWay, 24 Nov 2026 v3): a km of the drive, an hour of his way home, its most a day, the least in all. */
-  oneWayPerKm: rupees(settings.outstation.oneWay.perKm),
-  oneWayHomeHour: rupees(settings.outstation.oneWay.homeHour),
-  oneWayHomeDayMax: rupees(settings.outstation.oneWay.homeDayMax),
+  /** A long one-way drop (outstation.oneWay, 24 Nov 2026 v4): the drive's bands, a night on the road, his wait, the least in all. */
+  oneWayFirst: rupees(settings.outstation.oneWay.first),
+  oneWayFirstKm: `${settings.outstation.oneWay.firstKm} km`,
+  oneWayPerKm: paise(settings.outstation.oneWay.perKm),
+  oneWayPerKmFarther: paise(settings.outstation.oneWay.perKmFarther),
+  oneWayFartherKm: `${settings.outstation.oneWay.fartherFromKm} km`,
+  oneWayNight: rupees(settings.outstation.oneWay.night),
+  oneWayWaitKm: `${settings.outstation.oneWay.waitFromKm} km`,
+  oneWayWaitHour: rupees(settings.outstation.oneWay.waitHour),
+  oneWayWaitMax: rupees(settings.outstation.oneWay.waitMax),
+  oneWayWaitFree: `${settings.outstation.oneWay.waitFreeHours} hours`,
   oneWayMinimum: rupees(settings.outstation.oneWay.minimum),
-  /** One-way drops farther than the same-day distance, in a few words (24 Nov 2026). */
-  timeRule: `${rupees(settings.outstation.oneWay.perKm)} a km, plus his way home (the wait and the train) at ${rupees(settings.outstation.oneWay.homeHour)} an hour, never more than ${rupees(settings.outstation.oneWay.homeDayMax)} a day`,
-  /** The whole one-way drop price: up to the same-day distance one price; farther, the km and his way home. */
+  /** One-way drops farther than the same-day distance, in a few words (24 Nov 2026, v4). */
+  timeRule: (() => {
+    const ow = settings.outstation.oneWay;
+    return (
+      `${rupees(ow.first)} for the first ${ow.firstKm} km, then ${paise(ow.perKm)} a km (${paise(ow.perKmFarther)} after ${ow.fartherFromKm} km), ` +
+      `${rupees(ow.night)} a night on the road, and past ${ow.waitFromKm} km his wait for the train after ${ow.waitFreeHours} hours at ${rupees(ow.waitHour)} an hour`
+    );
+  })(),
+  /** The whole one-way drop price: up to the same-day distance one price; farther, the drive, the nights and his wait. */
   get oneWayRule() {
     const ow = settings.outstation.oneWay;
     return (
       `Up to ${this.sameDayKm} he is home the same day: one price for the trip, ${this.sameDayDrop} by distance. ` +
-      `Farther: ${rupees(ow.perKm)} a km for the drive (one way, by road), plus his way home — waiting for the train he takes and the ride — ` +
-      `${rupees(ow.homeHour)} for each started hour, never more than ${rupees(ow.homeDayMax)} for any 24 hours; ` +
-      `the total to the nearest ${rupees(ow.roundTo)}, at least ${rupees(ow.minimum)}. You book and pay his ticket.`
+      `Farther: the drive — ${rupees(ow.first)} for the first ${ow.firstKm} km, ${paise(ow.perKm)} a km up to ${ow.fartherFromKm} km, ${paise(ow.perKmFarther)} a km after that — ` +
+      `plus ${rupees(ow.night)} for each night he stops on the road. Past ${ow.waitFromKm} km his wait for the train home counts too: ` +
+      `the first ${ow.waitFreeHours} hours free, then ${rupees(ow.waitHour)} an hour, at most ${rupees(ow.waitMax)}. The train ride itself is never charged. ` +
+      `The total to the nearest ${rupees(ow.roundTo)}, at least ${rupees(ow.minimum)}. You book and pay his ticket.`
     );
   },
   outstationHours: `${settings.outstation.hoursPerDay} hours`,

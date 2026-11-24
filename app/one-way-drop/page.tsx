@@ -57,17 +57,19 @@ const ROUTES = [
 const awayHours = (t: (typeof ROUTES)[number]) =>
   t.est?.time?.hours ?? (t.plan?.homeAt !== undefined ? Math.ceil(t.plan.homeAt - 1e-9) : 0);
 
-/** "about 13 h" — the driver's time on a route in the table (leaves → home, the route's average). */
-const awayText = (id: string) => {
-  const t = ROUTES.find((r) => r.dest?.id === id);
-  const h = t ? awayHours(t) : 0;
-  return h ? `about ${h} hours` : 'a day or more';
-};
 
-/** "Same day — one price" / "616 km + 21 h home" — what a route in the table is charged. */
+/** "Same day — one price" / "616 km · wait 7 h" — what a route in the table is charged. */
 const chargedText = (t: (typeof ROUTES)[number]) => {
   const l = t.est?.long;
-  if (l) return `${new Intl.NumberFormat('en-IN').format(l.km)} km + ${l.homeHours} h home${l.minimumApplies ? ' (the minimum)' : ''}`;
+  if (l)
+    return [
+      `${new Intl.NumberFormat('en-IN').format(l.km)} km`,
+      l.nights ? `${l.nights} night${l.nights === 1 ? '' : 's'}` : null,
+      l.waitCharge ? `wait ${l.waitCharged} h` : null,
+      l.minimumApplies ? 'the minimum' : null,
+    ]
+      .filter(Boolean)
+      .join(' · ');
   const x = t.est?.time;
   if (!x) return '';
   if (x.short && x.days === 1) return 'Same day — one price';
@@ -102,7 +104,7 @@ const steps = [
   },
   {
     title: 'He comes home',
-    body: `By bus or train — you book his ticket. His time until he is home is in the price: ${priceText.timeRule}.`,
+    body: `By bus or train — you book his ticket. The ride home is never charged; past ${priceText.oneWayWaitKm} his wait for the train is, after ${priceText.oneWayWaitFree} free, at most ${priceText.oneWayWaitMax}.`,
   },
 ];
 
@@ -110,7 +112,7 @@ const included = [
   'A police-verified, sober, highway-experienced driver',
   `Up to ${priceText.sameDayKm} he is home the same day: one price for the trip, ${priceText.sameDayDrop} by distance`,
   `Farther: ${priceText.timeRule}`,
-  'Waiting for the train you pick and his ride home, by the hour — never more than a day’s price for each 24 hours',
+  `Past ${priceText.oneWayWaitKm}: his wait for the train home after ${priceText.oneWayWaitFree} free, ${priceText.oneWayWaitHour} an hour, at most ${priceText.oneWayWaitMax} — the ride itself never`,
   'The estimate times his train home from your start date and time',
   'Ride along or send the car alone — the same price',
 ];
@@ -119,7 +121,7 @@ const notIncluded = [
   'Fuel, tolls and parking',
   'His bus or train ticket home — you book it',
   `His meals — or ${priceText.mealAllowance} a day`,
-  'His overnight stay on routes longer than a day',
+  'His overnight stay on routes longer than a day (each night on the road is in the price)',
 ];
 
 const faqs = [
@@ -133,7 +135,7 @@ const faqs = [
   },
   {
     q: 'Is the driver’s way home included?',
-    a: `Yes — the price covers the drive, waiting for his train and the ride home. ${priceText.oneWayRule} Until you pick the date, the estimate uses the route’s average wait and ride home from the timetables (Raipur → Nagpur: ${awayText('nagpur')} in all; Raipur → Mumbai: ${awayText('mumbai')}); with your date, the train home you pick. The final bill uses the real times. You book his train or bus ticket.`,
+    a: `His ride home is never charged — you book his train or bus ticket. ${priceText.oneWayRule} Until you pick the date, the estimate uses the route’s usual wait for a train; with your date, the train home you pick. When he drops the car we send you the trains home to choose from, and the final bill counts his real wait, until he boards.`,
   },
   {
     q: 'How many days will my drop take?',

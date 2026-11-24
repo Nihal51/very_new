@@ -16,8 +16,9 @@ import {
   pickupStations,
   airKm,
   planTrip,
-  homeDayMaxFor,
   pricedByKm,
+  pricedV4,
+  v3HomeDayMax,
   pricedByTime,
   pricedV2Long,
   roadKm,
@@ -347,6 +348,20 @@ export function tripTimeline(view: TripView, city: string): { label: string; val
   return rows;
 }
 
+/**
+ * Under the estimate of a long one-way drop (v4): farther than waitFromKm,
+ * "The final price is set by the train he takes home — at most ₹1,200 more
+ * for his wait."; nearer, "No charge for his wait at this distance."
+ */
+export function estimateNote(view: TripView): string {
+  const l = view.est?.long;
+  if (!l) return '';
+  const ow = settings.outstation.oneWay;
+  return l.waitApplies
+    ? `The final price is set by the train he takes home — at most ${rupees(ow.waitMax)} more for his wait.`
+    : 'No charge for his wait at this distance.';
+}
+
 /** The trip as saved on the booking (firestore.rules: isTrip). */
 export function tripRecord(view: TripView, typedPlace: string): BookingTrip {
   return {
@@ -405,33 +420,25 @@ export function estimateLines(view: TripView): { label: string; amount: string }
   const p = view.plan;
   const est = view.est;
   if (!est || !p) return [];
-  // A long one-way drop (24 Nov 2026, v3): the km, then his way home; the total rounded, at least the minimum.
+  // A long one-way drop (24 Nov 2026, v4): the drive, the nights on the road, his wait for the train; rounded, at least the minimum.
+  // "Drive 616 km ₹2,627 · Train wait about 10 h 45 m: 7 h × ₹100 = ₹700 · = ₹3,350 (to the nearest ₹50)".
   const l = est.long;
   if (l) {
-    const w = wayHome(view);
-    const split = view.ret
-      ? `waiting ${hmText(view.ret.waitMinutes)} + train ${hmText(l.homeMinutes - view.ret.waitMinutes)}`
-      : w
-        ? `waiting ${hmText(w.wait * 60)} + ${view.home?.by ?? 'train'} ${hmText(w.travel * 60)}, the route’s average`
-        : '';
-    // "Driving 616 km × ₹3 = ₹1,848" · "His way home about 10 h 41 m (…): 11 h × ₹100 (never more than ₹1,500 a day) = ₹1,100".
-    const parts = [
-      l.homeFullDays ? `${plural(l.homeFullDays, 'day')} × ${rupees(l.homeDayMax)}` : null,
-      l.homeLeftoverHours ? `${l.homeLeftoverHours} h × ${rupees(l.homeHour)}` : null,
-    ].filter(Boolean);
-    const lines = [
-      { label: `Driving ${kmText(l.km)} × ${rupees(l.perKm)}`, amount: `= ${rupees(l.driving)}` },
-      {
+    const ow = settings.outstation.oneWay;
+    const lines = [{ label: `Drive ${kmText(l.km)}`, amount: rupees(l.drive) }];
+    if (l.nights) lines.push({ label: `${plural(l.nights, 'night')} on the road × ${rupees(l.night)}`, amount: rupees(l.nightsCharge) });
+    if (l.waitApplies)
+      lines.push({
         label:
-          `His way home about ${hmText(l.homeMinutes)}${split ? ` (${split})` : ''}: ${parts.join(' + ') || 'nothing'}` +
-          ` (never more than ${rupees(l.homeDayMax)} a day)`,
-        amount: `= ${rupees(l.home)}`,
-      },
-    ];
-    if (l.minimumApplies)
-      lines.push({ label: `Minimum ${rupees(l.minimum)} (the drive and his way home come to ${rupees(l.subtotal)})`, amount: rupees(l.price) });
-    else if (l.adjust !== 0)
-      lines.push({ label: `${rupees(l.subtotal)} to the nearest ${rupees(l.roundTo)}`, amount: rupees(l.price) });
+          `Train wait about ${hmText(Math.round((l.waitHours * 60) / 5) * 5)}` +
+          (view.ret ? ' (the train you picked)' : ' (the route’s usual wait)') +
+          (l.waitCharged
+            ? `: ${l.waitCharged} h × ${rupees(l.waitHour)} (the first ${ow.waitFreeHours} h free, at most ${rupees(ow.waitMax)})`
+            : `: free (the first ${ow.waitFreeHours} h)`),
+        amount: rupees(l.waitCharge),
+      });
+    if (l.minimumApplies) lines.push({ label: `Minimum ${rupees(l.minimum)} (the parts come to ${rupees(l.subtotal)})`, amount: `= ${rupees(l.price)}` });
+    else lines.push({ label: `To the nearest ${rupees(l.roundTo)}`, amount: `= ${rupees(l.price)}` });
     lines.push({ label: 'His ticket home: you book and pay for it', amount: '+ his ticket' });
     return lines;
   }
@@ -481,6 +488,23 @@ export function notIncluded(view: TripView): string[] {
 
 /** "₹1,750 × 2 × 24 h of his time + ₹130 × 9 h + ₹650 ticket" — the agreed price, itemised. */
 export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
+  // A long one-way drop, v4 (24 Nov 2026): the drive, the nights, his wait for the train, the round-off or the minimum.
+  if (pricedV4(q)) {
+    const adjust = q.adjust ?? 0;
+    const minimum = q.minimum ?? 0;
+    const atMinimum = adjust > 0 && minimum > 0 && q.amount - q.ticket === minimum;
+    return (
+      [
+        `${rupees(q.dayRate)} drive (${kmText(q.km ?? 0)})`,
+        q.nights ? `${rupees((q.nights ?? 0) * (q.nightRate ?? 0))} for ${plural(q.nights ?? 0, 'night')} on the road` : null,
+        q.waitCharge ? `${rupees(q.waitCharge)} train wait (${q.waitHours} h at ${rupees(q.waitHourRate ?? 0)})` : null,
+        atMinimum ? `${rupees(adjust)} up to the ${rupees(minimum)} minimum` : adjust > 0 ? `${rupees(adjust)} rounding` : null,
+        q.ticket > 0 ? `${rupees(q.ticket)} ticket` : null,
+      ]
+        .filter(Boolean)
+        .join(' + ') + (adjust < 0 ? ` − ${rupees(-adjust)} rounding` : '')
+    );
+  }
   // A long one-way drop by the km (24 Nov 2026, v3): the drive, his way home, the round-off or the minimum.
   if (pricedByKm(q)) {
     const adjust = q.adjust ?? 0;
@@ -488,7 +512,7 @@ export function quoteBreakdown(q: Omit<BookingQuote, 'at'>): string {
     const atMinimum = adjust > 0 && minimum > 0 && q.amount - q.ticket === minimum;
     return [
       `${rupees(q.dayRate)} for ${kmText(q.km ?? 0)} (${rupees(q.kmRate ?? 0)} a km)`,
-      `${rupees(q.returnCharge)} his way home (${q.returnHours} h at ${rupees(q.returnHourRate)} an hour, never more than ${rupees(homeDayMaxFor(tripRules, q.returnHourRate))} a day)`,
+      `${rupees(q.returnCharge)} his way home (${q.returnHours} h at ${rupees(q.returnHourRate)} an hour, never more than ${rupees(v3HomeDayMax(q.returnHourRate))} a day)`,
       atMinimum
         ? `${rupees(adjust)} up to the ${rupees(minimum)} minimum`
         : adjust > 0

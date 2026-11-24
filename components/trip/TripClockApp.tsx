@@ -29,6 +29,10 @@ const HINT: Record<TripStep, { hi: string; en: string }> = {
     hi: 'गाड़ी और चाबी सौंपते समय दबाइए।',
     en: 'Press when you hand over the car and keys.',
   },
+  board: {
+    hi: 'घर की ट्रेन में बैठते ही दबाइए। बस से जा रहे हैं तो नीचे "घर पहुँच गए" दबाइए।',
+    en: 'Press when you board your train home. Going by bus? Press “Home” below when you get there.',
+  },
   home: { hi: 'घर पहुँचते ही दबाइए।', en: 'Press as soon as you reach home.' },
 };
 const ROUND_HOME_HINT = {
@@ -84,6 +88,63 @@ export function TripClockApp() {
   return <Trip link={state.link} demo={key === DEMO_KEY} onDemo={(link) => setState({ kind: 'ok', link })} />;
 }
 
+/**
+ * After the drop: the trains home the robot found (the customer books his
+ * ticket), and once one is chosen, "Your train: 18452 at 9:40 PM".
+ */
+function TrainsHome({ link }: { link: TripLink }) {
+  const check = link.returnCheck;
+  const choice = link.returnChoice;
+  if (choice)
+    return (
+      <Alert tone="success">
+        <p className="font-semibold">
+          आपकी ट्रेन: {choice.train}
+          {choice.dep ? `, ${timeText(choice.dep)}` : ''} — टिकट ग्राहक ने बुक किया है।
+        </p>
+        <p>
+          Your train: {choice.train}
+          {choice.dep ? ` at ${timeText(choice.dep)}` : ''} — the customer booked the ticket.
+        </p>
+      </Alert>
+    );
+  if (!check)
+    return (
+      <p className="text-fg-muted text-sm">
+        घर की ट्रेनें देखी जा रही हैं… / Looking up trains home…
+      </p>
+    );
+  if (check.failed || (check.bus && !check.options.length))
+    return (
+      <Alert tone="info">
+        <p className="font-semibold">
+          {check.failed ? 'ट्रेनें देखी नहीं जा सकीं — ऑफ़िस कॉल करेगा।' : 'जल्दी कोई ट्रेन नहीं है — बस से आइए।'}
+        </p>
+        <p>{check.failed ? 'The trains could not be checked — the office will call you.' : 'No train soon — come home by bus.'}</p>
+      </Alert>
+    );
+  return (
+    <Card tone="subtle">
+      <p className="font-semibold">
+        घर की ट्रेनें (टिकट ग्राहक बुक करेंगे) <span className="text-fg-muted font-normal">/ Trains home (the customer books the ticket)</span>
+      </p>
+      <ul className="mt-2 flex flex-col gap-1.5 text-sm">
+        {check.options.map((o) => (
+          <li key={`${o.train}-${o.dep?.getTime() ?? ''}`} className="tabular">
+            <span className="font-semibold">{o.train}</span> {o.name} · {o.from} {o.dep ? whenText(o.dep) : ''}
+            {o.change ? ` · बदलें / change at ${o.change.station} → ${o.change.train}` : ''}
+          </li>
+        ))}
+      </ul>
+      {check.bus && (
+        <p className="text-fg-muted mt-2 text-sm">
+          पहली ट्रेन देर से है — बस भी ले सकते हैं। / The first train is late — a bus is fine too.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function Problem({ hi, en }: { hi: string; en: string }) {
   return (
     <div className="flex flex-col gap-4">
@@ -121,7 +182,12 @@ function Trip({ link, demo, onDemo }: { link: TripLink; demo: boolean; onDemo: (
     return () => clearInterval(t);
   }, []);
 
+  // "Home" straight after the drop (he came by bus): the step he chose, not the next one.
+  const [chosenStep, setChosenStep] = useState<TripStep | null>(null);
+  const tapping = chosenStep ?? step;
+
   async function save() {
+    const step = tapping;
     if (!step) return;
     setBusy(true);
     setErr('');
@@ -136,6 +202,7 @@ function Trip({ link, demo, onDemo }: { link: TripLink; demo: boolean; onDemo: (
         await tapStep(link.key, step, loc);
       }
       setConfirming(false);
+      setChosenStep(null);
     } catch (e) {
       const code = typeof e === 'object' && e && 'code' in e ? String((e as { code: unknown }).code) : '';
       setErr(
@@ -150,7 +217,7 @@ function Trip({ link, demo, onDemo }: { link: TripLink; demo: boolean; onDemo: (
     }
   }
 
-  const hint = step === 'home' && link.kind === 'round' ? ROUND_HOME_HINT : step ? HINT[step] : null;
+  const hint = tapping === 'home' && link.kind === 'round' ? ROUND_HOME_HINT : tapping ? HINT[tapping] : null;
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-5">
@@ -174,7 +241,9 @@ function Trip({ link, demo, onDemo }: { link: TripLink; demo: boolean; onDemo: (
         </p>
 
         <ol className="mt-5 flex flex-col gap-3">
-          {stepsFor(link.kind).map((s) => {
+          {stepsFor(link.kind)
+            .filter((s) => s !== 'board' || !link.homeAt || link.boardAt)
+            .map((s) => {
             const at = link[`${s}At` as const];
             const current = s === step;
             return (
@@ -200,18 +269,33 @@ function Trip({ link, demo, onDemo }: { link: TripLink; demo: boolean; onDemo: (
         </ol>
       </Card>
 
-      {step && hint ? (
+      {link.kind === 'one-way' && link.dropAt && <TrainsHome link={link} />}
+
+      {tapping && hint ? (
         <div className="flex flex-col gap-3">
           {!confirming ? (
             <>
               <Button size="lg" fullWidth className="h-16 text-lg" onClick={() => setConfirming(true)} disabled={link.closed}>
-                {stepName(step, link.kind, 'hi')} — {stepName(step, link.kind)}
+                {stepName(tapping, link.kind, 'hi')} — {stepName(tapping, link.kind)}
               </Button>
               <p className="text-fg-muted text-center text-sm">
                 {hint.hi}
                 <br />
                 {hint.en}
               </p>
+              {step === 'board' && (
+                <Button
+                  variant="outline"
+                  fullWidth
+                  disabled={link.closed}
+                  onClick={() => {
+                    setChosenStep('home');
+                    setConfirming(true);
+                  }}
+                >
+                  {stepName('home', link.kind, 'hi')} — {stepName('home', link.kind)} (बस से / by bus)
+                </Button>
+              )}
             </>
           ) : (
             <Card tone="subtle" className="flex flex-col gap-3">
@@ -224,7 +308,15 @@ function Trip({ link, demo, onDemo }: { link: TripLink; demo: boolean; onDemo: (
                 <Button size="lg" onClick={save} loading={busy}>
                   हाँ / Yes
                 </Button>
-                <Button size="lg" variant="outline" onClick={() => setConfirming(false)} disabled={busy}>
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={() => {
+                    setConfirming(false);
+                    setChosenStep(null);
+                  }}
+                  disabled={busy}
+                >
                   रुकें / Wait
                 </Button>
               </div>

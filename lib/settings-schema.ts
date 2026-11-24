@@ -31,6 +31,8 @@ export type SiteSettings = {
     directWithinHours: number;
     maxWaitHours: number;
     maxOptions: number;
+    /** The robot's train check at the drop: he can board this many minutes after he hands over the car. */
+    toStationMinutes: number;
   };
   prices: {
     oneHour: number;
@@ -59,11 +61,26 @@ export type SiteSettings = {
     dayTopFromKm: number;
     hoursPerDay: number;
     /**
-     * One-way drops farther than the first nearby tier (customer prices, 24 Nov 2026 v3): each km of the
-     * drive, each started hour of his way home with at most homeDayMax for any 24 hours, the least such a
-     * drop costs, and the total's rounding (lib/outstation.ts longOneWayPrice).
+     * One-way drops farther than the first nearby tier (customer prices, 24 Nov 2026 v4; lib/outstation.ts
+     * longOneWayPrice): the drive by distance bands, each night on the road, his wait for the train home
+     * (farther than waitFromKm), the final bill's stops, the least such a drop costs and the rounding.
      */
-    oneWay: { perKm: number; homeHour: number; homeDayMax: number; minimum: number; roundTo: number };
+    oneWay: {
+      firstKm: number;
+      first: number;
+      perKm: number;
+      fartherFromKm: number;
+      perKmFarther: number;
+      night: number;
+      waitFromKm: number;
+      waitFreeHours: number;
+      waitHour: number;
+      waitMax: number;
+      stopsFreeHours: number;
+      stopsHour: number;
+      minimum: number;
+      roundTo: number;
+    };
     /** One-way drops: the driving speed, a break after each full breakEveryHours of driving, the hours on the road a day. */
     drive: { kmh: number; breakEveryHours: number; breakMinutes: number; maxRoadHoursPerDay: number };
     /** A place not among our destinations: road km ≈ the straight line × this (lib/places.ts placeKm). */
@@ -220,18 +237,20 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
     problems.push(`payments.cashLimit (${s.payments.cashLimit}) is more than 50000 — is a 0 too many?`);
 
   const ow = s.outstation.oneWay;
-  price('outstation.oneWay.perKm', ow.perKm);
-  price('outstation.oneWay.homeHour', ow.homeHour);
-  price('outstation.oneWay.homeDayMax', ow.homeDayMax);
-  price('outstation.oneWay.minimum', ow.minimum);
-  price('outstation.oneWay.roundTo', ow.roundTo);
-  if (ow.perKm > 100) problems.push(`outstation.oneWay.perKm (${ow.perKm}) is more than 100 a km — is a 0 too many?`);
+  for (const k of ['first', 'night', 'waitHour', 'waitMax', 'stopsHour', 'minimum', 'roundTo'] as const) price(`outstation.oneWay.${k}`, ow[k]);
+  for (const k of ['perKm', 'perKmFarther'] as const)
+    if (!(Number.isFinite(ow[k]) && ow[k] > 0 && ow[k] <= 100 && Math.round(ow[k] * 100) === ow[k] * 100))
+      problems.push(`outstation.oneWay.${k} (${ow[k]}) must be a price a km above 0, at most 100, in paise at the finest`);
+  for (const k of ['firstKm', 'fartherFromKm', 'waitFromKm'] as const) count(`outstation.oneWay.${k}`, ow[k], 5000);
+  if (!(ow.firstKm < ow.fartherFromKm))
+    problems.push(`outstation.oneWay.firstKm (${ow.firstKm}) must be less than fartherFromKm (${ow.fartherFromKm})`);
+  count('outstation.oneWay.waitFreeHours', ow.waitFreeHours, 24);
+  count('outstation.oneWay.stopsFreeHours', ow.stopsFreeHours, 24);
   if (ow.roundTo > 500) problems.push(`outstation.oneWay.roundTo (${ow.roundTo}) must be at most 500`);
-  // The saved quotes' and bills' check (firestore.rules isQuote / isBill): the way home never more than each hour at homeHour.
-  if (ow.homeDayMax > 24 * ow.homeHour)
-    problems.push(`outstation.oneWay.homeDayMax (${ow.homeDayMax}) must be at most 24 × homeHour (${24 * ow.homeHour})`);
-  if (ow.homeDayMax < ow.homeHour)
-    problems.push(`outstation.oneWay.homeDayMax (${ow.homeDayMax}) must be at least homeHour (${ow.homeHour})`);
+  // The saved quotes' and bills' check (firestore.rules isQuote / isBill): at most 1,000 an hour, 5,000 a night.
+  if (ow.waitHour > 1000 || ow.stopsHour > 1000) problems.push('outstation.oneWay.waitHour and stopsHour must be at most 1000');
+  if (ow.night > 5000) problems.push(`outstation.oneWay.night (${ow.night}) must be at most 5000`);
+  if (ow.waitMax < ow.waitHour) problems.push(`outstation.oneWay.waitMax (${ow.waitMax}) must be at least waitHour (${ow.waitHour})`);
   const dr = s.outstation.drive;
   count('outstation.drive.kmh', dr.kmh, 100);
   if (dr.kmh < 20) problems.push('outstation.drive.kmh must be at least 20');
@@ -284,6 +303,7 @@ export function checkSettings(s: SiteSettings, driverCosts?: string): SiteSettin
   count('trains.maxWaitHours', tr.maxWaitHours, 96);
   count('trains.maxOptions', tr.maxOptions, 10);
   if (tr.maxOptions < 1) problems.push('trains.maxOptions must be at least 1');
+  count('trains.toStationMinutes', tr.toStationMinutes, 240);
   count('outstation.localWithinKm', o.localWithinKm, 150);
   count('outstation.targetProfitPercent', o.targetProfitPercent, 60);
   count('outstation.minProfitPercent', o.minProfitPercent, 60);

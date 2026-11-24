@@ -51,12 +51,15 @@ const rules = {
 const GRACE = settings.outstation.graceMinutes;
 const ist = (s) => new Date(`${s}:00+05:30`);
 
-test('steps: start → drop → home one way; start → back on a round trip', () => {
-  assert.deepEqual(stepsFor('one-way'), ['start', 'drop', 'home']);
+test('steps: start → drop → boarded → home one way; start → back on a round trip', () => {
+  assert.deepEqual(stepsFor('one-way'), ['start', 'drop', 'board', 'home']);
   assert.deepEqual(stepsFor('round'), ['start', 'home']);
   assert.equal(nextStep({ kind: 'one-way' }), 'start');
   assert.equal(nextStep({ kind: 'one-way', startAt: new Date() }), 'drop');
-  assert.equal(nextStep({ kind: 'one-way', startAt: new Date(), dropAt: new Date() }), 'home');
+  assert.equal(nextStep({ kind: 'one-way', startAt: new Date(), dropAt: new Date() }), 'board');
+  assert.equal(nextStep({ kind: 'one-way', startAt: new Date(), dropAt: new Date(), boardAt: new Date() }), 'home');
+  assert.equal(nextStep({ kind: 'one-way', startAt: new Date(), dropAt: new Date(), boardAt: new Date(), homeAt: new Date() }), null);
+  // Home by bus, without Boarded: done.
   assert.equal(nextStep({ kind: 'one-way', startAt: new Date(), dropAt: new Date(), homeAt: new Date() }), null);
   assert.equal(nextStep({ kind: 'round', startAt: new Date() }), 'home');
 });
@@ -247,47 +250,55 @@ test('a route price on the bill (quotes from 1 Nov to 7 Nov 2026): the agreed on
   assert.match(billMessage({ name: 'Ravi Sahu', ref: 'DB-1', city: 'Raipur' }, lateLink, bill, rules), /Total: ₹6,270$/);
 });
 
-test('a long one-way drop by the km (24 Nov 2026, v3): the meter — the drive fixed once he starts, then his way home', () => {
+test('a long one-way drop, v4 (24 Nov 2026): the meter and the final bill — the wait drop → boarded, the stops; v3 and v2 quotes as agreed', () => {
   const longRules = { ...rules, oneWay: { ...settings.outstation.oneWay }, drive: { ...settings.outstation.drive } };
-  // No quote: the settings' price a km, hour home and minimum.
-  const rates = billRates(undefined, longRules, 616);
-  assert.deepEqual(rates.long, { km: 616, kmRate: 3, minimum: 1500 });
-  assert.equal(rates.returnHourRate, 100);
+  // No quote: the settings' drive, nights from the plan, his wait from the Boarded tap.
+  const plan = { nights: 0, plannedRoadHours: 12 + 22 / 60, waitHours: 10.75 };
+  const rates = billRates(undefined, longRules, 616, true, plan);
+  assert.deepEqual([rates.v4.km, rates.v4.drive, rates.v4.nights, rates.v4.nightRate, rates.v4.waitHourRate, rates.v4.minimum], [616, 2627, 0, 300, 100, 1500]);
   const start = ist('2026-11-25T07:00');
   const at = (h) => new Date(start.getTime() + h * 3_600_000);
   const link = { kind: 'one-way', nonstop: false, to: 'Ranchi', startAt: start };
-  // On the road: the drive's price (1,848 → 1,850), however long it takes.
-  for (const h of [1, 12, 20]) assert.equal(billNow(link, rates, longRules, GRACE, at(h).getTime()).bill.amount, 1850, `${h} h on the road`);
-  // Dropped at 12 h 22 m; 5 h on his way home: 1,848 + 500 = 2,348 → 2,350.
+  // On the road: the drive and the usual wait as estimated (3,350), however long it takes.
+  for (const h of [1, 12]) assert.equal(billNow(link, rates, longRules, GRACE, at(h).getTime()).bill.amount, 3350, `${h} h on the road`);
   const dropped = { ...link, dropAt: at(12 + 22 / 60) };
-  const soFar = billNow(dropped, rates, longRules, GRACE, at(12 + 22 / 60 + 5).getTime());
-  assert.deepEqual([soFar.final, soFar.bill.amount], [false, 2350]);
-  // Home 10 h 41 m after the drop: 11 h → ₹1,100; ₹2,950.
-  const home = { ...dropped, homeAt: new Date(dropped.dropAt.getTime() + (10 * 60 + 41) * 60_000) };
+  // Boarded 2 h after the drop, home 10 h later: no wait charge — 2,650.
+  const home = { ...dropped, boardAt: at(14 + 22 / 60), homeAt: at(24 + 22 / 60) };
   const { bill, final } = billNow(home, rates, longRules, GRACE, Date.now());
-  assert.deepEqual([final, bill.amount, bill.dayRate, bill.days, bill.returnHours, bill.returnCharge, bill.long.adjust], [true, 2950, 1848, 1, 11, 1100, 2]);
+  assert.deepEqual([final, bill.amount, bill.dayRate, bill.v4.waitFrom, bill.v4.waitCharge, bill.v4.stopsHours, bill.v4.adjust], [true, 2650, 2627, 'boarded', 0, 0, 23]);
   assert.deepEqual(billLines(bill, longRules), [
-    { label: 'Driving 616 km × ₹3', amount: '₹1,848' },
-    { label: 'His way home (drop → home), 11 h: 11 h × ₹100 (never more than ₹1,500 a day)', amount: '₹1,100' },
-    { label: 'Rounded to the nearest ₹50', amount: '+₹2' },
+    { label: 'Drive 616 km', amount: '₹2,627' },
+    { label: 'Train wait (drop → boarded), 2 h: free (the first 4 h)', amount: '₹0' },
+    { label: 'Stops the customer asked for: 0 h × ₹100 (on the road 12 h 22 m, planned 12 h 22 m)', amount: '₹0' },
+    { label: 'Rounded to the nearest ₹50', amount: '+₹23' },
   ]);
-  assert.equal(billBreakdown(bill), '₹1,848 for 616 km + ₹1,100 way home (11 h) + ₹2 rounding');
+  assert.equal(billBreakdown(bill), '₹2,627 drive (616 km) + ₹23 rounding');
   const saved = bookingBill(bill, false);
   assert.deepEqual(
-    [saved.km, saved.kmRate, saved.minimum, saved.adjust, saved.amount],
-    [616, 3, 1500, 2, 2950],
+    [saved.km, saved.nights, saved.nightRate, saved.waitHours, saved.waitCharge, saved.stopsHours, saved.stopsCharge, saved.minimum, saved.adjust, saved.amount],
+    [616, 0, 300, 0, 0, 0, 0, 1500, 23, 2650],
   );
-  assert.equal(saved.amount, saved.dayRate * saved.days + saved.returnCharge + saved.adjust + saved.ticket);
-  assert.equal(billBreakdown(saved), '₹1,848 for 616 km + ₹1,100 way home (11 h) + ₹2 rounding', 'the saved bill reads the same');
-  assert.equal(daysText(bill), '616 km, the drive’s price');
-  // The driver (made-up costs): his whole time 12 h 22 m + 10 h 41 m = 23 h 3 m → 24 h × 80, at most his day.
-  assert.equal(driverPay(bill, 1000, 80, longRules), 1000);
-  // An agreed quote by the km keeps its own price a km and minimum.
-  const quote = { amount: 3550, dayRate: 2464, days: 1, returnHours: 11, returnHourRate: 100, returnCharge: 1100, extraHours: 0, extraHourRate: 0, extraCharge: 0, km: 616, kmRate: 4, minimum: 1500, adjust: -14, ticket: 0 };
-  assert.deepEqual(billRates(quote, longRules, 616).long, { km: 616, kmRate: 4, minimum: 1500 });
+  assert.equal(billBreakdown(saved), '₹2,627 drive (616 km) + ₹23 rounding', 'the saved bill reads the same');
+  assert.equal(daysText(bill), '616 km');
+  // A missed train: boarded 14 h after the drop → 10 h × 100, the customer pays (at most 1,200).
+  const missed = billNow({ ...home, boardAt: at(26 + 22 / 60), homeAt: at(36) }, rates, longRules, GRACE, Date.now()).bill;
+  assert.deepEqual([missed.v4.waitHours, missed.v4.waitCharge, missed.amount], [10, 1000, 3650]);
+  // The driver's pay is as before: his whole time (made-up costs).
+  assert.equal(driverPay(bill, 1000, 80, longRules), 1000 + Math.min(1000, 1 * 80));
+  // An agreed v4 quote keeps its own drive, nights and rates.
+  const quote = { amount: 3350, dayRate: 2627, days: 1, returnHours: 0, returnHourRate: 0, returnCharge: 0, extraHours: 0, extraHourRate: 0, extraCharge: 0,
+    km: 616, nights: 0, nightRate: 300, waitHours: 7, waitHourRate: 100, waitCharge: 700, minimum: 1500, adjust: 23, ticket: 0 };
+  assert.deepEqual([billRates(quote, longRules, 616, true, plan).v4.drive, billRates(quote, longRules, 616, true, plan).v4.waitHourRate], [2627, 100]);
+  // A v3 quote (by the km) is billed as agreed.
+  const v3 = { amount: 2950, dayRate: 1848, days: 1, returnHours: 11, returnHourRate: 100, returnCharge: 1100, extraHours: 0, extraHourRate: 0, extraCharge: 0, km: 616, kmRate: 3, minimum: 1500, adjust: 2, ticket: 0 };
+  const v3Rates = billRates(v3, longRules, 616);
+  assert.deepEqual([v3Rates.v3, v3Rates.v4], [{ km: 616, kmRate: 3, minimum: 1500 }, undefined]);
+  const v3Bill = billNow({ ...dropped, homeAt: new Date(dropped.dropAt.getTime() + (10 * 60 + 41) * 60_000) }, v3Rates, longRules, GRACE, Date.now()).bill;
+  assert.deepEqual([v3Bill.amount, v3Bill.dayRate, v3Bill.returnCharge], [2950, 1848, 1100]);
+  assert.deepEqual(billLines(v3Bill, longRules)[0], { label: 'Driving 616 km × ₹3', amount: '₹1,848' });
   // A v2 quote (driving days) is billed as agreed.
   const v2 = { amount: 3200, dayRate: 1600, days: 1, returnHours: 11, returnHourRate: 160, returnCharge: 1600, extraHours: 0, extraHourRate: 0, extraCharge: 0, km: 616, ticket: 0 };
   const v2Rates = billRates(v2, longRules, 616);
-  assert.deepEqual([v2Rates.v2Long, v2Rates.long], [{ km: 616 }, undefined]);
-  assert.equal(billNow(home, v2Rates, longRules, GRACE, Date.now()).bill.amount, 3200);
+  assert.deepEqual([v2Rates.v2Long, v2Rates.v3, v2Rates.v4], [{ km: 616 }, undefined, undefined]);
+  assert.equal(billNow({ ...dropped, homeAt: new Date(dropped.dropAt.getTime() + (10 * 60 + 41) * 60_000) }, v2Rates, longRules, GRACE, Date.now()).bill.amount, 3200);
 });

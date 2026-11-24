@@ -188,8 +188,8 @@ describe('bookings — creating', () => {
 
   test('a place from the list of all India (not one of ours): its "Name, State", no id, the km from the map', async () => {
     const db = guest();
-    // Raipur → Gaya: 524 km straight × 1.3 = 681 km; 681 × ₹3 + his way home (the bus/train average).
-    const gaya = trip({ to: 'Gaya, Bihar', destId: '', km: 681, days: 2, returnHours: 15, estFrom: 3550, estTo: 3550 });
+    // Raipur → Gaya: 524 km straight × 1.3 = 681 km; the drive 2,838.25 + a night on the road 300 → 3,150 (v4).
+    const gaya = trip({ to: 'Gaya, Bihar', destId: '', km: 681, days: 2, returnHours: 15, estFrom: 3150, estTo: 3150 });
     await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'one-way-drop', trip: gaya })));
     await assertSucceeds(addDoc(collection(db, 'bookings'), booking({ package: 'outstation', trip: { ...gaya, kind: 'round', days: 3, returnHours: 0 } })));
     // The longest label the form makes is 60 characters; more is refused.
@@ -426,6 +426,40 @@ describe('bookings — admin workflow', () => {
     await assertFails(save({ ...noAdjust, amount: 2948 }));
   });
 
+  test('a long one-way drop, v4 (24 Nov 2026): the drive, the nights, his wait for the train, the round-off or the minimum', async () => {
+    await seedBooking('b1', { package: 'one-way-drop' });
+    const db = admin();
+    const save = (q) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ quote: q }));
+    // Raipur → Ranchi: drive 2,627 + wait about 10¾ h → 7 h × ₹100 = ₹700 → 3,327, to the nearest ₹50: +23 → ₹3,350.
+    const ranchi = agreed({
+      dayRate: 2627, days: 1, returnHours: 0, returnHourRate: 0, returnCharge: 0, extraHours: 0, extraHourRate: 0, extraCharge: 0,
+      km: 616, nights: 0, nightRate: 300, waitHours: 7, waitHourRate: 100, waitCharge: 700, minimum: 1500, adjust: 23, ticket: 0, amount: 3350,
+    });
+    await assertSucceeds(save(ranchi));
+    await assertSucceeds(save({ ...ranchi, ticket: 650, amount: 3350 + 650 }));
+    // Raipur → Bengaluru: drive 5,078 (5,077.50) + 2 nights × ₹300 + 5 h wait = 6,178 → +22 → ₹6,200.
+    await assertSucceeds(save({ ...ranchi, dayRate: 5078, km: 1370, nights: 2, waitHours: 5, waitCharge: 500, adjust: 22, amount: 6200 }));
+    // His wait at its most: 12 h × ₹100 = ₹1,200 (and 20 h waited still ₹1,200).
+    await assertSucceeds(save({ ...ranchi, waitHours: 20, waitCharge: 1200, adjust: -27, amount: 2627 + 1200 - 27 }));
+    // The minimum: a drive of 1,502.50 (201 km) → 1,503 − 3 = ₹1,500.
+    await assertSucceeds(save({ ...ranchi, dayRate: 1503, km: 201, waitHours: 0, waitCharge: 0, adjust: -3, amount: 1500 }));
+    // Never more for the wait than its hours at the rate; no stops on a quote; no way home or extra hours; it must add up.
+    await assertFails(save({ ...ranchi, waitCharge: 800, adjust: -77, amount: 3350 }));
+    await assertFails(save({ ...ranchi, stopsHours: 1, stopsHourRate: 100, stopsCharge: 100, adjust: -77, amount: 3350 }));
+    await assertFails(save({ ...ranchi, returnHours: 1, returnHourRate: 100, returnCharge: 100, adjust: -77, amount: 3350 }));
+    await assertFails(save({ ...ranchi, extraHours: 1, extraHourRate: 100, extraCharge: 100, adjust: -77, amount: 3350 }));
+    await assertFails(save({ ...ranchi, days: 2, amount: 2627 * 2 + 700 + 23 }));
+    await assertFails(save({ ...ranchi, amount: 3400 }));
+    await assertFails(save({ ...ranchi, adjust: 223, amount: 3550 }));
+    await assertFails(save({ ...ranchi, nights: 1.5 }));
+    // The fields go together: nightRate says v4; v4 is not also v3.
+    const { nightRate: _n, ...noRate } = ranchi;
+    await assertFails(save({ ...noRate, amount: 3350 }));
+    const { waitHours: _w, ...noWait } = ranchi;
+    await assertFails(save(noWait));
+    await assertFails(save({ ...ranchi, kmRate: 3 }));
+  });
+
   test('customers and guests cannot change a booking', async () => {
     await seedBooking('b1', { customerUid: 'cust1' });
     await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { status: 'cancelled' }));
@@ -487,6 +521,34 @@ describe('trip links and the final bill', () => {
     await assertSucceeds(updateDoc(ref, tap('drop')));
     await assertSucceeds(updateDoc(ref, tap('home')));
     await assertFails(updateDoc(ref, tap('home')));
+  });
+
+  test('one-way: Boarded the train between Car dropped and Home — once, after the drop, never after home', async () => {
+    await seedLink();
+    const ref = doc(guest(), 'tripLinks', KEY);
+    await assertSucceeds(updateDoc(ref, tap('start')));
+    await assertFails(updateDoc(ref, tap('board')));
+    await assertSucceeds(updateDoc(ref, tap('drop')));
+    await assertSucceeds(updateDoc(ref, tap('board', { boardLoc: { lat: 23.35, lng: 85.33, acc: 30 } })));
+    await assertFails(updateDoc(ref, tap('board')));
+    await assertSucceeds(updateDoc(ref, tap('home')));
+    // By bus: Home without Boarded, and no Boarded after Home.
+    await seedLink();
+    await assertSucceeds(updateDoc(ref, tap('start')));
+    await assertSucceeds(updateDoc(ref, tap('drop')));
+    await assertSucceeds(updateDoc(ref, tap('home')));
+    await assertFails(updateDoc(ref, tap('board')));
+    // A round trip has no train home to board.
+    await seedLink({ kind: 'round' });
+    await assertSucceeds(updateDoc(ref, tap('start')));
+    await assertFails(updateDoc(ref, tap('board')));
+    // The office corrects Boarded in order.
+    await seedLink();
+    const fix = (extra) => updateDoc(doc(admin(), 'tripLinks', KEY), { ...extra, updatedAt: serverTimestamp(), by: 'admin1' });
+    const at = (h) => new Date(Date.UTC(2026, 10, 25, 2) + h * 3600_000);
+    await assertSucceeds(fix({ startAt: at(0), dropAt: at(12), boardAt: at(14), homeAt: at(24) }));
+    await assertFails(fix({ boardAt: at(11) }));
+    await assertFails(fix({ boardAt: at(30) }));
   });
 
   test('a round trip has no drop: start → home', async () => {
@@ -587,6 +649,29 @@ describe('trip links and the final bill', () => {
     // 27 h home: a day + 3 h.
     await assertSucceeds(save({ ...ranchi, days: 2, returnHours: 27, returnCharge: 1600 + 480, km: 1200, amount: 3200 + 2080 }));
     await assertFails(save({ ...ranchi, returnCharge: 2400, amount: 1600 + 2400 }));
+  });
+
+  test('a long one-way drop’s final bill, v4: his wait drop → Boarded, the stops the customer asked for; the clock with Boarded', async () => {
+    await seedLink();
+    const db = admin();
+    const save = (b) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ bill: b }));
+    const ranchi = finalBill({
+      dayRate: 2627, days: 1, extraHours: 0, extraHourRate: 0, extraCharge: 0, returnHours: 0, returnHourRate: 0, returnCharge: 0,
+      km: 616, nights: 0, nightRate: 300, waitHours: 0, waitHourRate: 100, waitCharge: 0, stopsHours: 0, stopsHourRate: 100, stopsCharge: 0,
+      minimum: 1500, adjust: 23, ticket: 0, nonstop: false, amount: 2650,
+    });
+    await assertSucceeds(save(ranchi));
+    // Stops the customer asked for: 3 h × ₹100; a missed train: the most for his wait.
+    await assertSucceeds(save({ ...ranchi, stopsHours: 3, stopsCharge: 300, waitHours: 12, waitCharge: 1200, adjust: 23, amount: 2627 + 300 + 1200 + 23 }));
+    await assertFails(save({ ...ranchi, stopsHours: 1, stopsCharge: 300, adjust: -277, amount: 2650 }));
+    await assertFails(save({ ...ranchi, amount: 2700 }));
+    // The clock may carry his Boarded tap — after the drop, before home.
+    const t = (h) => new Date(Date.UTC(2026, 10, 25, 1, 30) + h * 3600_000);
+    const clock = (extra) => updateDoc(doc(db, 'bookings', 'b1'), stamp({ clock: { startAt: t(0), dropAt: t(12), homeAt: t(24), ...extra } }));
+    await assertSucceeds(clock({ boardAt: t(14) }));
+    await assertFails(clock({ boardAt: t(11) }));
+    await assertFails(clock({ boardAt: t(25) }));
+    await assertFails(updateDoc(doc(db, 'bookings', 'b1'), stamp({ clock: { startAt: t(0), boardAt: t(14), homeAt: t(24) } })));
   });
 
   test('a long one-way drop’s final bill by the km (24 Nov 2026, v3): the drive fixed, drop → home his way home', async () => {
@@ -1118,6 +1203,30 @@ describe('trip taps — Start, Arrived, Job done, Reached home (5)', () => {
     await assertSucceeds(start(db));
   });
 
+  test('a one-way drop: Boarded the train after Job done, once, never after Reached home; not on a local job', async () => {
+    const db = drvDb(RAJU);
+    await assertSucceeds(start(db, 't1'));
+    await assertSucceeds(tap(db, 'arrivedAt', 't1'));
+    await assertFails(tap(db, 'boardAt', 't1'));
+    await assertSucceeds(tap(db, 'doneAt', 't1'));
+    await assertSucceeds(tap(db, 'boardAt', 't1'));
+    await assertFails(tap(db, 'boardAt', 't1'));
+    await assertSucceeds(tap(db, 'homeAt', 't1'));
+    await assertSucceeds(start(db));
+    await assertSucceeds(tap(db, 'arrivedAt'));
+    await assertSucceeds(tap(db, 'doneAt'));
+    await assertFails(tap(db, 'boardAt'), 'not a one-way drop');
+  });
+
+  test('Boarded cannot come after Reached home', async () => {
+    const db = drvDb(RAJU);
+    await assertSucceeds(start(db, 't1'));
+    await assertSucceeds(tap(db, 'arrivedAt', 't1'));
+    await assertSucceeds(tap(db, 'doneAt', 't1'));
+    await assertSucceeds(tap(db, 'homeAt', 't1'));
+    await assertFails(tap(db, 'boardAt', 't1'));
+  });
+
   test('a one-way drop ends with Reached home', async () => {
     const db = drvDb(RAJU);
     await assertSucceeds(start(db, 't1'));
@@ -1628,5 +1737,55 @@ describe("the robot's own notes", () => {
       await assertFails(getDoc(doc(db, 'offerAlerts', 'b1')));
       await assertFails(setDoc(doc(db, 'reminders', 'b2'), { remindedAt: new Date() }));
     }
+  });
+});
+
+describe('the train check at the drop (24 Nov 2026): returnCheck and returnPrice are the robot’s; returnChoice', () => {
+  const dep = new Date(Date.UTC(2026, 10, 25, 16, 10));
+  const check = {
+    at: new Date(), dropAt: new Date(Date.UTC(2026, 10, 25, 14)), bus: false, failed: false,
+    options: [
+      { train: '18452', name: 'Tapaswini Exp', from: 'RNC', dep, arr: new Date(Date.UTC(2026, 10, 26, 1, 40)), change: null, waitMin: 130, waitCharge: 0, price: 2650 },
+      { train: '12874', name: 'Ranchi Durg Exp', from: 'HTE', dep: new Date(Date.UTC(2026, 10, 26, 0, 30)), arr: new Date(Date.UTC(2026, 10, 26, 11)), change: null, waitMin: 630, waitCharge: 700, price: 3350 },
+    ],
+  };
+  const choose = (db, train = '18452', extra = {}) =>
+    updateDoc(doc(db, 'bookings', 't1'), { returnChoice: { train, dep, at: serverTimestamp(), ...extra } });
+  const seed = (extra = {}) => seedBooking('t1', { package: 'one-way-drop', customerUid: 'cust1', status: 'assigned', returnCheck: check, ...extra });
+
+  test('the customer picks one of the trains offered, once, while the booking is open', async () => {
+    await seed();
+    await assertFails(choose(customer('cust1'), '11111'), 'not one of the trains offered');
+    await assertFails(choose(customer('cust2')), 'not their booking');
+    await assertFails(choose(guest()));
+    await assertFails(choose(customer('cust1'), '18452', { at: new Date(Date.now() - 60000) }), 'the server’s time');
+    await assertFails(choose(customer('cust1'), '18452', { note: 'x' }));
+    await assertSucceeds(choose(customer('cust1'), '12874'));
+    await assertFails(choose(customer('cust1'), '18452'), 'once');
+  });
+
+  test('not before the robot offered trains, nor once the booking is done or cancelled', async () => {
+    await seed({ returnCheck: null });
+    await assertFails(choose(customer('cust1')));
+    await seed({ status: 'completed' });
+    await assertFails(choose(customer('cust1')));
+    await seed({ status: 'cancelled' });
+    await assertFails(choose(customer('cust1')));
+  });
+
+  test('the office sets any train or clears it; nobody writes the robot’s check or price', async () => {
+    await seed();
+    const stamp = (extra) => ({ ...extra, updatedAt: serverTimestamp(), updatedBy: 'admin1' });
+    await assertSucceeds(updateDoc(doc(admin(), 'bookings', 't1'), stamp({ returnChoice: { train: '22843', dep, at: serverTimestamp() } })));
+    await assertSucceeds(updateDoc(doc(admin(), 'bookings', 't1'), stamp({ returnChoice: null })));
+    await assertSucceeds(choose(customer('cust1')), 'cleared: the customer can pick again');
+    await assertFails(updateDoc(doc(admin(), 'bookings', 't1'), stamp({ returnChoice: { train: 'abc', dep, at: serverTimestamp() } })));
+    await assertFails(updateDoc(doc(admin(), 'bookings', 't1'), stamp({ returnCheck: { ...check, failed: true } })));
+    await assertFails(updateDoc(doc(admin(), 'bookings', 't1'), stamp({ returnPrice: { price: 1, waitCharge: 0, train: '18452', at: serverTimestamp() } })));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { returnPrice: { price: 1, waitCharge: 0, train: '18452', at: serverTimestamp() } }));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 't1'), { returnCheck: null }));
+    await assertFails(addDoc(collection(guest(), 'bookings'), booking({ returnCheck: check })));
+    // The customer reads them on their booking.
+    await assertSucceeds(getDoc(doc(customer('cust1'), 'bookings', 't1')));
   });
 });

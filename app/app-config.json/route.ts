@@ -65,13 +65,25 @@ export function GET() {
       nearFromKm: outstation.nearFromKm,
       dayTopFromKm: outstation.dayTopFromKm,
       hoursPerDay: outstation.hoursPerDay,
-      /* One-way drops farther than prices.outstationNear[0].upToKm (24 Nov 2026, v3): the customer pays
-         max(minimum, toNearest(km × perKm + home, roundTo)), home = floor(H / 24) × homeDayMax +
-         min(homeDayMax, ceil(H mod 24) × homeHour), H = the wait + the ride home (lib/outstation.ts longOneWayPrice). */
+      /* One-way drops farther than prices.outstationNear[0].upToKm (24 Nov 2026, v4; lib/outstation.ts
+         longOneWayPrice): price = max(minimum, toNearest(drive + nights × night + waitCharge, roundTo)),
+         drive = first + perKm × clamp(km − firstKm, 0, fartherFromKm − firstKm) + perKmFarther × max(0, km − fartherFromKm),
+         nights = the plan's calendar days − 1 (0 day and night), waitCharge (km > waitFromKm only) =
+         min(waitMax, waitHour × ceil(max(0, W − waitFreeHours))), W = drop → boarding (the estimate: the route's
+         usual wait). stopsFreeHours / stopsHour: the final bill's stops only. */
       oneWay: {
+        firstKm: outstation.oneWay.firstKm,
+        first: outstation.oneWay.first,
         perKm: outstation.oneWay.perKm,
-        homeHour: outstation.oneWay.homeHour,
-        homeDayMax: outstation.oneWay.homeDayMax,
+        fartherFromKm: outstation.oneWay.fartherFromKm,
+        perKmFarther: outstation.oneWay.perKmFarther,
+        night: outstation.oneWay.night,
+        waitFromKm: outstation.oneWay.waitFromKm,
+        waitFreeHours: outstation.oneWay.waitFreeHours,
+        waitHour: outstation.oneWay.waitHour,
+        waitMax: outstation.oneWay.waitMax,
+        stopsFreeHours: outstation.oneWay.stopsFreeHours,
+        stopsHour: outstation.oneWay.stopsHour,
         minimum: outstation.oneWay.minimum,
         roundTo: outstation.oneWay.roundTo,
       },
@@ -110,6 +122,8 @@ export function GET() {
       directWithinHours: railRules.directWithinHours,
       maxWaitHours: railRules.maxWaitHours,
       maxOptions: railRules.maxOptions,
+      /* The train check at the drop (the robot, 24 Nov 2026): he can board this long after the drop. */
+      toStationMinutes: settings.trains.toStationMinutes,
     },
     /* Cash a driver may hold before he gets no new jobs: the alerts robot
        enforces it, the Driver app's Earnings screen warns him. */

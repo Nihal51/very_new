@@ -14,7 +14,20 @@ import { PACKAGE_NAMES, UPI_ID, isDriverConfirmed, isInstantBooking, isUpiPayUrl
 import { RATE_RAISE, ZONES, citiesText, offerCitiesFor, offerSettlement } from '../lib/offers.ts';
 import { estimateBasisText, estimateOf } from '../lib/estimate.ts';
 import { LOCAL_BASE_HOURS, LOCAL_GRACE_MINUTES, localHours, usedHours } from '../lib/local-bill.ts';
-import { destinations, estimate, homeWay, pickupCities, planTrip, roadKm, wholeTimePay } from '../lib/outstation.ts';
+import {
+  destinations,
+  driveCharge,
+  estimate,
+  homeWay,
+  longOneWayPrice,
+  nightsOf,
+  pickupCities,
+  planTrip,
+  roadKm,
+  waitChargeOf,
+  wholeTimePay,
+} from '../lib/outstation.ts';
+import { legsFrom, planReturn } from '../lib/rail.ts';
 import { checkSettings } from '../lib/settings-schema.ts';
 import { settings } from '../site-settings.ts';
 
@@ -219,20 +232,25 @@ test('the local bill’s hours: lib/local-bill.ts is the robot’s rule (base ho
 
 test('long one-way drops: the settings reach the apps (app-config.json), and the robot prices and pays a Ranchi-like booking consistently', () => {
   const route = read('app/app-config.json/route.ts');
-  for (const key of ['perKm', 'homeHour', 'homeDayMax', 'minimum', 'roundTo']) assert.ok(route.includes(`${key}: outstation.oneWay.${key},`), key);
+  for (const key of Object.keys(settings.outstation.oneWay)) assert.ok(route.includes(`${key}: outstation.oneWay.${key},`), key);
+  assert.ok(route.includes('toStationMinutes: settings.trains.toStationMinutes'));
+  assert.ok(!/homeHour|homeDayMax/.test(route), 'v3 keys are gone');
+  // The robot's fallbacks are the site's settings (it uses them when the site cannot be read).
+  assert.deepEqual({ ...robot.ONE_WAY_DEFAULT }, { ...settings.outstation.oneWay });
+  for (const k of Object.keys(robot.TRAINS_DEFAULT)) assert.equal(robot.TRAINS_DEFAULT[k], settings.trains[k], k);
   for (const key of ['kmh', 'breakEveryHours', 'breakMinutes', 'maxRoadHoursPerDay']) assert.ok(route.includes(`${key}: outstation.drive.${key},`), key);
   assert.ok(route.includes('graceMinutes: outstation.graceMinutes'));
   assert.ok(!/oneWayLong|drivingGraceHours|driveDay|returnDay/.test(route), 'the earlier drafts’ names are gone');
   // The robot's drive defaults are the site's settings (it uses them when the site cannot be read).
   assert.deepEqual({ ...robot.DRIVE_DEFAULT }, { ...settings.outstation.drive });
-  // Raipur → Ranchi as saved on the booking (with a train home 10 h 41 m after the drop: 11 h charged).
-  const b = { package: 'one-way-drop', trip: { km: 616, days: 1, returnHours: 11, estFrom: 2950, estTo: 2950 } };
-  assert.deepEqual({ ...robot.estimateOf(b, settings.prices) }, { amount: 2950, basis: 'trip' });
-  // Generic test rates (the real ones are only in the Script Properties): his whole time 12.4 + 11 h → a day.
+  // Raipur → Ranchi as saved on the booking (v4: the route's usual wait).
+  const b = { package: 'one-way-drop', trip: { km: 616, days: 1, returnHours: 21, estFrom: 3350, estTo: 3350 } };
+  assert.deepEqual({ ...robot.estimateOf(b, settings.prices) }, { amount: 3350, basis: 'trip' });
+  // Generic test rates (the real ones are only in the Script Properties): his whole time 12.4 + 21 h → a day + 10 h — unchanged by v4.
   const rates = robot.driverRatesOf(JSON.stringify({ local8h: 500, local12h: 700, localExtraHour: 10, tripDay: 1000, returnHour: 100 }));
-  const pay = robot.rateCardPayOf(b, 2950, rates, 160, robot.driveOf({ drive: settings.outstation.drive }));
-  assert.equal(pay, 1000);
-  assert.ok(pay < 2950);
+  const pay = robot.rateCardPayOf(b, 3350, rates, 160, robot.driveOf({ drive: settings.outstation.drive }));
+  assert.equal(pay, 2000);
+  assert.ok(pay < 3350);
 });
 
 test('the robot times a one-way drive as the website plans it (roadTime + dropTime), day and night too', () => {
@@ -305,4 +323,84 @@ test('margin guard: a long one-way drop’s customer price covers the rate card�
       }
     }
   assert.ok(checked > 50, `${checked} routes`);
+});
+
+test('v4: the robot prices a train home exactly as the website prices the drop (the drive, the nights, the wait)', () => {
+  const r = robot.oneWayOf({ oneWay: settings.outstation.oneWay });
+  for (const km of [161, 200, 201, 384, 500, 501, 616, 1118, 1370, 2400]) {
+    assert.equal(robot.v4Drive(r, km), driveCharge(settings.outstation.oneWay, km), `${km} km`);
+    for (const h of [0, 3.9, 4, 4.01, 10.75, 15.5, 30]) assert.equal(robot.v4WaitCharge(r, km, h), waitChargeOf(settings.outstation.oneWay, km, h).charge, `${km} km, ${h} h`);
+  }
+  const longRules = tripRulesForTest();
+  for (const from of pickupCities)
+    for (const d of destinations) {
+      const km = roadKm(from, d);
+      if (!(km > 160)) continue;
+      for (const nonstop of [false, true]) {
+        const plan = planTrip(longRules, km, 'one-way', 0, homeWay(d, from), 7, nonstop);
+        const b = { package: 'one-way-drop', ...(nonstop && { notes: 'Day and night driving (non-stop).' }), trip: { km, days: plan.days, returnHours: plan.returnHours } };
+        const drop = Date.UTC(2026, 10, 25, 6);
+        const wait = plan.leaveAt - plan.dropAt;
+        const robotPrice = robot.returnPriceOf(b, r, drop, drop + wait * 3_600_000).price;
+        assert.equal(robotPrice, estimate(longRules, plan).from, `${from} → ${d.id}${nonstop ? ' day and night' : ''}`);
+      }
+    }
+  // An agreed v4 quote: its drive, nights and minimum; an older quote: its price stands.
+  const q = { amount: 3350, dayRate: 2627, km: 616, nights: 0, nightRate: 300, waitHourRate: 100, minimum: 1500, ticket: 0 };
+  const drop = Date.UTC(2026, 10, 25, 6);
+  assert.deepEqual({ ...robot.returnPriceOf({ quote: q, trip: { km: 616, days: 1 } }, r, drop, drop + 2 * 3_600_000) }, { price: 2650, waitCharge: 0 });
+  assert.deepEqual({ ...robot.returnPriceOf({ quote: q, trip: { km: 616, days: 1 } }, r, drop, drop + 9 * 3_600_000) }, { price: 3150, waitCharge: 500 });
+  assert.equal(robot.returnPriceOf({ quote: { amount: 2950, ticket: 0, kmRate: 3 }, trip: { km: 616 } }, r, drop, drop + 9 * 3_600_000).price, 2950);
+  assert.equal(longOneWayPrice(settings.outstation.oneWay, 616, { nights: nightsOf({ days: 1, nonstop: false }), waitHours: 9 }).price, 3150);
+});
+
+test('v4: the robot finds the same trains home as the website’s lookup (direct and one change), from saved timetables', () => {
+  const rules = { ...robot.trainRulesOf(settings.trains), maxOptions: 3 };
+  const tt = (q, trains) => ({ q, ok: true, timetable: true, checkedAt: '2026-11-24T00:00:00Z', from: { code: q.split('-')[0], name: q.split('-')[0] }, to: { code: q.split('-')[1], name: q.split('-')[1] }, trains });
+  const all = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+  const answers = {
+    'RNC-R': tt('RNC-R', [
+      { number: '18452', name: 'Tapaswini Exp', runDays: all, dep: '21:40', depDay: 1, arr: '07:10', arrDay: 2, duration: 570 },
+      { number: '12873', name: 'Jharkhand Swarna Jayanti', runDays: ['tue', 'sat'], dep: '13:05', depDay: 1, arr: '22:40', arrDay: 1, duration: 575 },
+      { number: '08888', name: 'Puja Special', runDays: all, dep: '20:00', depDay: 1, arr: '06:00', arrDay: 2 },
+    ]),
+    'HTE-R': tt('HTE-R', [{ number: '18452', name: 'Tapaswini Exp', runDays: all, dep: '21:50', depDay: 1, arr: '07:10', arrDay: 2 }]),
+  };
+  const drop = Date.parse('2026-11-25T19:30:00+05:30'); // a Wednesday, 7:30 PM
+  const b = { package: 'one-way-drop', city: 'Raipur', trip: { km: 616, days: 1 } };
+  const r = robot.oneWayOf({ oneWay: settings.outstation.oneWay });
+  const check = robot.returnCheckOf(b, drop, ['RNC', 'HTE'], [], 'R', r, rules, (pairs) => Object.fromEntries(pairs.map((p) => [p, answers[p]])));
+  assert.equal(check.failed, false);
+  assert.equal(check.bus, false);
+  assert.deepEqual(check.options.map((o) => [o.train, o.from, o.waitMin, o.waitCharge, o.price]), [
+    ['18452', 'RNC', 130, 0, 2650], // tonight 9:40 PM: 2 h 10 m after the drop — free
+    ['18452', 'RNC', 1570, 1200, 3850], // tomorrow's: 26 h 10 m — the most
+  ]);
+  // The website's planner on the same timetables (lib/rail.ts legsFrom + planReturn) picks the same trains.
+  const ready = drop + settings.trains.toStationMinutes * 60_000;
+  const day = (n) => new Date(ready + 330 * 60_000 + n * 86_400_000).toISOString().slice(0, 10);
+  const legs = [0, 1].flatMap((n) => ['RNC', 'HTE'].flatMap((s) => {
+    const a = answers[`${s}-R`];
+    const result = { ok: true, query: { from: s, to: 'R', date: day(n) }, checkedAt: 0, live: false, timetable: true, fromName: s, toName: 'R', trains: a.trains };
+    return legsFrom(result).legs;
+  }));
+  const web = planReturn({ drop, ready, direct: legs, stations: ['RNC', 'HTE'], rules });
+  assert.deepEqual(check.options.map((o) => [o.train, o.dep.getTime()]), web.map((o) => [o.legs[0].train.number, o.depart]));
+  // Nothing could be asked: failed; the first train more than 12 h after he is ready: a bus too.
+  assert.equal(robot.returnCheckOf(b, drop, ['RNC'], [], 'R', r, rules, () => ({})).failed, true);
+  const lateOnly = { 'RNC-R': tt('RNC-R', [{ number: '12873', name: 'Jharkhand Swarna Jayanti', runDays: ['thu'], dep: '13:05', depDay: 1, arr: '22:40', arrDay: 1 }]) };
+  const late = robot.returnCheckOf(b, drop, ['RNC'], [], 'R', r, rules, (pairs) => Object.fromEntries(pairs.map((p) => [p, lateOnly[p]])));
+  assert.deepEqual([late.bus, late.options.length, late.options[0].waitCharge], [true, 1, 1200]);
+  // One change at a hub when no direct train leaves soon (Prayagraj → Nagpur → Raipur).
+  const hub = {
+    'PRYJ-R': tt('PRYJ-R', []),
+    'PRYJ-NGP': tt('PRYJ-NGP', [{ number: '12321', name: 'Howrah Mumbai Mail', runDays: all, dep: '22:00', depDay: 1, arr: '10:00', arrDay: 2 }]),
+    'NGP-R': tt('NGP-R', [{ number: '12834', name: 'Howrah Exp', runDays: all, dep: '13:00', depDay: 1, arr: '17:30', arrDay: 1 }]),
+  };
+  const viaNagpur = robot.returnCheckOf({ ...b, trip: { km: 578, days: 1 } }, drop, ['PRYJ'], ['NGP'], 'R', r, rules, (pairs) => Object.fromEntries(pairs.map((p) => [p, hub[p]])));
+  // Tonight's and tomorrow night's mail, each with the next afternoon's train from Nagpur (3 h at the change).
+  assert.deepEqual(viaNagpur.options.map((o) => [o.train, o.change && o.change.station, o.change && o.change.train, o.waitMin]), [
+    ['12321', 'NGP', '12834', 150],
+    ['12321', 'NGP', '12834', 150 + 24 * 60],
+  ]);
 });

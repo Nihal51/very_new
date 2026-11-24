@@ -31,6 +31,7 @@ import { AppActivity } from '@/components/admin/AppActivity';
 import { OfferPanel } from '@/components/admin/OfferPanel';
 import { QuoteCalculator } from '@/components/admin/QuoteCalculator';
 import { TripClock } from '@/components/admin/TripClock';
+import { ReturnTrains } from '@/components/admin/ReturnTrains';
 import { WhatsappIcon } from '@/components/icons';
 import {
   addBookingNote,
@@ -798,6 +799,7 @@ function BookingDetail({
 
         {isTripPackage(b.package) && <QuoteCalculator key={b.id} b={b} user={user} />}
         {isTripPackage(b.package) && b.status !== 'cancelled' && <TripClock key={`clock-${b.id}`} b={b} user={user} />}
+        {b.package === 'one-way-drop' && <ReturnTrains key={`trains-${b.id}`} b={b} user={user} />}
 
         <div className="border-border mt-5 border-t pt-5">
           <SectionTitle>History &amp; internal notes</SectionTitle>

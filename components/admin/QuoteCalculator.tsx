@@ -10,8 +10,19 @@ import { Input } from '@/components/ui/Field';
 import { saveQuote } from '@/lib/admin';
 import { formatDateTime, isTripPackage, wantsNonstop, type Booking, type BookingQuote } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
-import { dayRateFor, isLongOneWay, longQuote, pricedByKm, pricedByTime, quote as roundQuote, timeQuote } from '@/lib/outstation';
-import { awayFromNotes } from '@/lib/rail';
+import {
+  dayRateFor,
+  isLongOneWay,
+  longQuote,
+  nightsOf,
+  pricedByTime,
+  pricedV4,
+  quote as roundQuote,
+  timeQuote,
+  v4Fields,
+  waitHoursOfPlan,
+} from '@/lib/outstation';
+import { awayFromNotes, waitFromNotes } from '@/lib/rail';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import { planForBooking, quoteBreakdown } from '@/lib/trip';
 
@@ -32,7 +43,7 @@ const hrs = (v: string) => {
   return Number.isFinite(n) && n > 0 ? n : 0;
 };
 /** A long one-way drop: what a driver usually gets for an hour past his 24-hour blocks — the customer's hour home less the profit, to ₹10. */
-const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWay?.homeHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
+const DEFAULT_LONG_HOUR_PAY = Math.round(((tripRules.oneWay?.waitHour ?? 0) * (1 - TARGET / 100)) / 10) * 10;
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 /**
@@ -70,14 +81,17 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
   const [km, setKm] = useState(String(b.quote?.km ?? b.trip?.km ?? ''));
   const [dayTyped, setDayTyped] = useState('');
 
-  // A long one-way drop (24 Nov 2026, v3): his hours on the road (start → drop: driving, breaks, any night's rest) and
-  // of his way home (the note's train, else the plan's average) — his whole time, for his pay.
+  // A long one-way drop (24 Nov 2026, v4): the customer's nights on the road and his wait for the train (the note's
+  // train, else the route's usual wait); for his pay, his hours on the road (start → drop) and of his way home.
   const planHome = plan?.homeAt !== undefined && plan.dropAt !== undefined ? plan.homeAt - plan.dropAt : 0;
   const noteHome = noteHours && plan?.dropAt !== undefined ? Math.max(0, noteHours - plan.dropAt) : 0;
-  const savedLong = b.quote && pricedByKm(b.quote) ? b.quote : undefined;
+  const noteWait = waitFromNotes(b.notes);
+  const savedV4 = b.quote && pricedV4(b.quote) ? b.quote : undefined;
   const [roadH, setRoadH] = useState(plan?.dropAt ? String(Math.round(plan.dropAt * 10) / 10) : '');
-  const [homeH, setHomeH] = useState(
-    noteHome ? String(Math.round(noteHome * 10) / 10) : planHome ? String(Math.round(planHome * 10) / 10) : savedLong ? String(savedLong.returnHours) : '',
+  const [homeH, setHomeH] = useState(noteHome ? String(Math.round(noteHome * 10) / 10) : planHome ? String(Math.round(planHome * 10) / 10) : '');
+  const [nights, setNights] = useState(String(savedV4?.nights ?? (plan ? nightsOf(plan) : 0)));
+  const [waitH, setWaitH] = useState(
+    noteWait !== undefined ? String(noteWait) : plan ? String(Math.round(waitHoursOfPlan(plan) * 10) / 10) : '',
   );
   const [longHourPay, setLongHourPay] = useState(String(DEFAULT_LONG_HOUR_PAY));
 
@@ -101,11 +115,12 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
       ? longQuote(tripRules, {
           ...band,
           km: int(km),
+          nights: Math.max(0, Math.round(Number(nights)) || 0),
+          waitHours: hrs(waitH),
           roadHours: hrs(roadH),
           homeMinutes: Math.round(hrs(homeH) * 60),
           driverDayCost: int(cost),
           driverHourPay: int(longHourPay),
-          ...(int(dayTyped) > 0 && { perKm: int(dayTyped) }),
           ticket: int(ticket),
           partnerPercent,
         })
@@ -140,21 +155,16 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
   // route hours and no way-home charge, so bills know it is priced by the driver's time (pricedByTime).
   const agreed: Omit<BookingQuote, 'at'> | undefined = lq
     ? {
-        // A long one-way drop by the km: the drive (days 1 at dayRate = km × kmRate), his way home by the hour,
-        // the round-off or the top-up to the minimum (adjust), and the km.
+        // A long one-way drop, v4: the drive (days 1 at dayRate), the nights, his wait for the train, the
+        // round-off or the top-up to the minimum (adjust), and the km — no way-home charge (firestore.rules isV4Price).
         amount: lq.total,
-        dayRate: lq.long.driving,
-        days: 1,
-        returnHours: lq.long.homeHours,
-        returnHourRate: lq.long.homeHour,
-        returnCharge: lq.long.home,
+        ...v4Fields(lq.long),
+        returnHours: 0,
+        returnHourRate: 0,
+        returnCharge: 0,
         extraHours: 0,
         extraHourRate: 0,
         extraCharge: 0,
-        km: lq.long.km,
-        kmRate: lq.long.perKm,
-        minimum: lq.long.minimum,
-        adjust: lq.long.adjust,
         ticket: int(ticket),
       }
     : tq
@@ -220,7 +230,7 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
     try {
       const note =
         `Price ${rupees(view.total)} (${quoteBreakdown(agreed)}). ` +
-        (lq ? `On the road about ${hrs(roadH)} h, his way home ${hrs(homeH)} h. ` : '') +
+        (lq ? `Wait for the train ${hrs(waitH)} h, ${plural(lq.long.nights, 'night')} on the road; on the road about ${hrs(roadH)} h, his way home ${hrs(homeH)} h. ` : '') +
         (tq ? `${int(hours)} h of his time (${hoursFrom || 'typed'}). ` : '') +
         `Driver ${driverWords}` +
         (view.partnerPay ? `, partner ${rupees(view.partnerPay)}` : '') +
@@ -303,21 +313,35 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
                 'Hours on the road',
                 roadH,
                 setRoadH,
-                'Start → drop: driving, the breaks and any night’s rest (the estimate’s). For his pay; the drive’s price is by the km.',
+                'Start → drop: driving, the breaks and any night’s rest (the estimate’s). For his pay only.',
+              )}
+            {long &&
+              num(
+                'Nights on the road',
+                nights,
+                setNights,
+                `The customer pays ${priceText.oneWayNight} a night (the plan’s; 0 driven day and night)`,
+              )}
+            {long &&
+              num(
+                'Hours of his wait for the train',
+                waitH,
+                setWaitH,
+                `Drop → he boards.${noteWait !== undefined ? ' From the train in the booking’s note.' : ' The route’s usual wait.'} Past ${priceText.oneWayWaitKm}: the first ${priceText.oneWayWaitFree} free, then ${priceText.oneWayWaitHour} an hour, at most ${priceText.oneWayWaitMax}. The final bill: drop → Boarded.`,
               )}
             {long &&
               num(
                 'Hours of his way home',
                 homeH,
                 setHomeH,
-                `Waiting for his train plus the ride.${noteHome ? ' From the train in the booking’s note.' : planHome ? ' The route’s average.' : ' Type it.'} The final bill: drop → home.`,
+                `Waiting for his train plus the ride — for his pay only.${noteHome ? ' From the train in the booking’s note.' : planHome ? ' The route’s average.' : ' Type it.'}`,
               )}
             {long &&
               num(
                 'His pay an hour past the 24-h blocks',
                 longHourPay,
                 setLongHourPay,
-                `His whole time: each 24 h his day, the hours left over this much (at most a day). The customer pays ${priceText.oneWayHomeHour} an hour home, never more than ${priceText.oneWayHomeDayMax} a day`,
+                'His whole time: each 24 h his day, the hours left over this much (at most a day)',
               )}
             {oneWay && !long &&
               num(
@@ -343,14 +367,6 @@ export function QuoteCalculator({ b, user }: { b: Booking; user: User }) {
                 setDayTyped,
                 `Leave empty: the driver’s cost and ${TARGET}% profit, rounded. Shown for ${int(km) || b.trip?.km || '?'} km: ${shownDay}`,
                 tq ? String(tq.time.dayRate) : undefined,
-              )}
-            {long &&
-              num(
-                'Customer price a km',
-                dayTyped,
-                setDayTyped,
-                `Leave empty: ${priceText.oneWayPerKm} a km, as the website shows (at least ${priceText.oneWayMinimum} in all)`,
-                lq ? String(lq.long.perKm) : undefined,
               )}
             {!oneWay && num('Days', days, setDays)}
             {!oneWay &&

@@ -14,68 +14,110 @@ or **Outstation Trip**, where to, and **when the driver leaves** (date and
 time; blank = 7 AM). The estimate shows straight away, with the driver's trip
 hour by hour.
 
-### One-way drops farther than 160 km: by the km, plus his way home (24 Nov 2026)
+### One-way drops farther than 160 km: the drive, the nights, his wait for the train (v4, 24 Nov 2026)
 
 A one-way drop farther than the first nearby tier
-(`prices.outstationNear[0].upToKm`, 160 km) is priced by the km and his way
-home (`lib/outstation.ts` `longOneWayPrice`; the mobile app does the same
-from `app-config.json`). All customer prices, in `outstation.oneWay` — never
-the driver's pay (his rate card is set in Script Properties):
+(`prices.outstationNear[0].upToKm`, 160 km) is priced by the km in two
+bands, the nights he stops on the road and — over 500 km — his wait for the
+train home (`lib/outstation.ts` `longOneWayPrice`; the mobile app does the
+same from `app-config.json`). All customer prices, in `outstation.oneWay` —
+never the driver's pay (his rate card is set in Script Properties):
 
 ```
-driving = km × perKm                                 (the one-way road km)
-home    = floor(H / 24) × homeDayMax + min(homeDayMax, ceil(H mod 24) × homeHour)
-price   = max(minimum, the nearest roundTo of driving + home)   + his ticket
+drive  = first + perKm × (km − firstKm, between 0 and fartherFromKm − firstKm)
+               + perKmFarther × (km − fartherFromKm, at least 0)
+nights = the plan's calendar days − 1      (0 when driven day and night)
+wait   = over waitFromKm only: min(waitMax, waitHour × each started hour of W past waitFreeHours)
+price  = max(minimum, the nearest roundTo of drive + nights × night + wait)   + his ticket
 ```
 
-- H = his way home: waiting for the train he takes + the ride (the route's
-  average until a train is picked; on the final bill, drop → home, with the
-  usual first 15 minutes of an hour free, `outstation.graceMinutes`).
-- Today: `perKm` 3, `homeHour` 100, `homeDayMax` 1,500, `minimum` 1,500,
-  `roundTo` 50 (to the NEAREST 50: 1,902 → 1,900, 3,234 → 3,250).
-- `homeDayMax` may be at most 24 × `homeHour` (checked at build): a quote's
-  or bill's way home is then never more than each hour at the rate, which
-  firestore.rules checks.
+- Today: `first` 1,500 for the first `firstKm` 200 km, `perKm` 2.50 to
+  `fartherFromKm` 500, `perKmFarther` 3.25 after it, `night` 300,
+  `waitFromKm` 500, `waitFreeHours` 4, `waitHour` 100, `waitMax` 1,200,
+  `minimum` 1,500, `roundTo` 50 (to the NEAREST 50).
+- W = hours from the drop until he boards: the route's average wait
+  (`home.wait`; `stationHours` for a place from the map) on the estimate; a
+  train picked on the booking form or chosen at the drop: its departure − the
+  drop; the final bill: his **Boarded** tap − the drop (a late or missed train
+  is the customer's, still never more than `waitMax`); no Boarded tap: the
+  chosen train's departure; neither: the estimate. The train ride itself is
+  never charged.
+- Final bill only: **stops the customer asked for** — the real start → drop
+  beyond the plan's road time (driving + breaks + nights) and
+  `stopsFreeHours` (1), each started hour × `stopsHour` (100). /admin shows it
+  as its own line and the office can set it to 0 before saving.
+- Under the estimate: over 500 km "The final price is set by the train he
+  takes home — at most ₹1,200 more for his wait."; 160–500 km "No charge for
+  his wait at this distance."
 - The customer books and pays his ticket and gives his meals, as before.
 
-| From Raipur | Km | His way home | Driving + home | Price |
-| --- | --- | --- | --- | --- |
-| Ambikapur | 334 | 9 h (route average 1.5 + 7.5 h) | 1,002 + 900 = 1,902 | **1,900** |
-| Prayagraj | 578 | 15 h or more (average 20 h 15 m): a day's most | 1,734 + 1,500 = 3,234 | **3,250** |
-| Ranchi | 616 | 10 h 41 m (a picked train) → 11 h | 1,848 + 1,100 = 2,948 | **2,950** |
-| Ranchi, before a train is picked | 616 | route average 20 h 45 m: a day's most | 1,848 + 1,500 = 3,348 | **3,350** |
-| Bengaluru | 1,370 | 34 h 45 m → a day + 11 h | 4,110 + 1,500 + 1,100 = 6,710 | **6,700** |
-| A short long drop | 170 | 3 h | 510 + 300 = 810 | **1,500** (the minimum) |
+| From Raipur, 7 AM | Km | Drive | Nights | Wait (route average) | Price |
+| --- | --- | --- | --- | --- | --- |
+| Gondia | 201 | 1,502.50 | 0 | — | **1,500** |
+| Ambikapur | 334 | 1,835 | 0 | — | **1,850** |
+| Visakhapatnam | 546 | 2,399.50 | 0 | 4 h 45 m → 1 h = 100 | **2,500** |
+| Ranchi | 616 | 2,627 | 0 | 10 h 45 m → 7 h = 700 | **3,350** |
+| Lucknow | 779 | 3,156.75 | 1 = 300 | 20 h 45 m → 17 h: at most 1,200 | **4,650** |
+| Delhi | 1,214 | 4,570.50 | 1 = 300 | 7 h 15 m → 4 h = 400 | **5,250** |
+| Bengaluru | 1,370 | 5,077.50 | 2 = 600 | 8 h 45 m → 5 h = 500 | **6,200** |
+
+All 16 examples of the spec (Gondia 1,500 … Chennai 6,400) are unit tests in
+`scripts/outstation.test.mjs`; the mobile app's tests use the same numbers.
 
 **The drive's timing** (`outstation.drive`: when he arrives, which train he
 can catch, his wait, the days): driving at `kmh` (55), a break of
 `breakMinutes` (35) after each full `breakEveryHours` (4) of driving; more
 than `maxRoadHoursPerDay` (12) on the road — an hour more finishes that
 evening — and he rests the night, unless the customer wants it driven day
-and night (`lib/outstation.ts` `roadTime`, `planTrip`). The booking form
-shows it: "Driving about 11 h 10 m + 2 breaks (1 h 10 m) → arrives about
-12 h 20 m after leaving" (Raipur → Ranchi). Round trips keep `averageKmh`.
+and night (`lib/outstation.ts` `roadTime`, `planTrip`). Round trips keep
+`averageKmh`.
 
-**Saved:** on the booking `trip.days` = the calendar days, `trip.returnHours`
-= H (whole hours, up), `trip.estFrom`/`estTo` = the price (the robot's offers
-use it). The /admin quote and the final bill save `dayRate` = km × `kmRate`
-with `days` 1, `returnHours` = H, `returnHourRate`, `returnCharge`,
-`extraHours` 0, the `km`, `kmRate`, `minimum` and `adjust` (the round-off,
-at most ₹100 either way, or the top-up to the minimum); `amount` = dayRate +
-returnCharge + adjust + ticket (firestore.rules `isKmPrice`). On the final
-bill the drive is fixed once he starts; his way home is drop → home.
+**Saved:** on the booking `trip.days` = the calendar days, `trip.estFrom` /
+`estTo` = the price (the robot's offers use it). The /admin quote and the
+final bill save `dayRate` = the drive (to the rupee) with `days` 1, `km`,
+`nights` and `nightRate`, `waitHours` (the hours charged), `waitHourRate`,
+`waitCharge`, on the bill also `stopsHours`, `stopsHourRate`, `stopsCharge`,
+no way-home or extra-hour charge, `minimum` and `adjust` (the round-off, at
+most ₹100 either way, or the top-up to the minimum); `amount` = dayRate +
+nights × nightRate + waitCharge + stopsCharge + adjust + ticket
+(firestore.rules `isV4Price`). `nightRate` marks a v4 quote or bill.
 
-**The driver's pay** (the robot's rate card, `DRIVER_RATES`): his whole time
-T — on the road start → drop (the km at `outstation.drive`, its breaks and
-any night's rest) plus H — `max(tripDay, floor(T / 24) × tripDay +
-min(tripDay, ceil(T mod 24) × returnHour))`. A test
-(scripts/automation.test.mjs, "margin guard") checks with generic numbers in
-the card's shape that the customer's price covers it from every pickup city
-to every place.
+**The driver's pay** is unchanged (the robot's rate card, `DRIVER_RATES`): his
+whole time T, start → home, `max(tripDay, floor(T / 24) × tripDay +
+min(tripDay, ceil(T mod 24) × returnHour))`.
 
-Quotes and bills saved under the first 24 Nov 2026 rule (driving days at
-1,600 and the way home at 160 an hour, at most 1,600 a day) still read and
-bill as they were agreed (`pricedV2Long`).
+**Older bookings** keep computing as they were agreed, told apart by the
+fields saved on them: v3 (`kmRate`: the drive at km × kmRate plus his way home
+by the hour, at most 15 hours' worth a day) and the first 24 Nov 2026 rule
+(driving days and the way home at an hourly rate, `pricedV2Long`).
+
+### The train check at the drop (24 Nov 2026)
+
+When a one-way drop over 160 km gets its drop time — the trip link's **Car
+dropped** or the Driver app's **Job done**, whichever the robot sees first —
+the robot (`apps-script/Code.js` `returnCheckFor_`) looks up the trains home
+from the drop place's stations (and one change at a hub) to the pickup city's
+home station, through the same RailRadar path and budget. He is ready
+`trains.toStationMinutes` (90) after the drop; up to 3 trains leaving within
+`trains.maxWaitHours`, each with the final price with that train's wait.
+
+- `bookings/{id}.returnCheck` (the robot's alone, also copied to the trip
+  link): `{ at, dropAt, options: [{ train, name, from, dep, arr, change,
+  waitMin, waitCharge, price }], bus, failed }`. `bus` when the first train
+  leaves more than 12 h after he is ready, or there is none; `failed` when the
+  lookup could not run (the message says the team will call).
+- Telegram to the office, with the options; a push to the customer: "Your
+  driver has dropped the car. Book his ticket home — pick a train." (Hindi too).
+- The customer books the ticket (we never check seats: each train has a
+  **Check seats ↗** link) and taps **I booked this train** in My account or the
+  app: `returnChoice = { train, dep, at }`, once, one of the trains offered;
+  the office can set any train or clear it in /admin.
+- The robot then writes `returnPrice = { price, waitCharge, train, at }` and
+  pushes "Final price ₹X with train N" (Telegram too).
+- The trip page and the Driver app show the options, then "Your train: N at
+  …", and a **Boarded the train** tap between Car dropped and Home
+  (`boardAt`, once, after the drop); the robot copies it into the clock and the
+  final bill takes his wait from it. A bus: he taps Home without Boarded.
 
 ### Any place in India (the place box, 24 Nov 2026)
 
@@ -279,7 +321,7 @@ The estimate predicts the times; the final bill uses the real ones.
    no login; the link works for that one trip only. Practice page for a new
    driver: `/trip/?k=demo` (saves nothing).
 2. **He taps.** One big button for the next step: **Trip started** → **Car
-   dropped** (one-way only) → **Home** (round trip: **Back**). Each tap saves
+   dropped** (one-way only) → **Boarded the train** (one-way; skipped when he takes a bus) → **Home** (round trip: **Back**). Each tap saves
    the server's time, his phone's time (in case he had no network) and, if
    he allows it, where he was. He cannot change or undo a tap.
 3. **You watch.** Telegram gets a message for each tap (the alerts robot,
@@ -297,7 +339,8 @@ How the times are charged (`finalBill` in `lib/outstation.ts`):
 
 | | Rule |
 | --- | --- |
-| One-way farther than 160 km (24 Nov 2026 on) | Driving days (start → drop) at the agreed driving day, then his way home (drop → home): each full 24 h at the way-home day, the hours left over at the agreed hourly rate, never more than a day for them (`long`, saved with the km and a way-home rate) |
+| One-way farther than 160 km (v4, 24 Nov 2026 on) | The agreed drive and nights, his wait drop → Boarded (else the chosen train, else the estimate) past the free hours, at most `waitMax`, and the stops the customer asked for (`v4`, saved with `nightRate`) |
+| One-way farther than 160 km (v3 and the first 24 Nov rule) | As agreed: the drive and his way home drop → home (`v3`, saved with `kmRate`), or driving days and the way home (`v2Long`) |
 | One-way up to 160 km (8 Nov 2026 on) | The driver's time, start → home: each 24 h the agreed price for each 24 h, the hours past them the agreed hourly rate, never more than one more day (`time`, saved with the km) |
 | Round trips, and older quotes | as below |
 | Driving | One-way: start → drop. Round trip: start → back |
@@ -337,7 +380,7 @@ All in `site-settings.ts`:
 | Setting | Today | Meaning |
 | --- | --- | --- |
 | `prices.outstation` | 1450–1750 | Customer price for each 24 h of the driver's time, farther than the nearby tiers (rising with the distance) |
-| `outstation.oneWay` | 3 / 100 / 1500 / 1500 / 50 | One-way drops farther than the first tier (customer prices): `perKm`, `homeHour`, `homeDayMax` (≤ 24 × `homeHour`), `minimum`, `roundTo` |
+| `outstation.oneWay` | 1500 for 200 km / 2.50 / 3.25 from 500 km / 300 a night / wait 100 an hour past 4 h, at most 1200, over 500 km / stops 100 an hour past 1 h / 1500 / 50 | One-way drops farther than the first tier (customer prices): `first`, `firstKm`, `perKm`, `perKmFarther`, `fartherFromKm`, `night`, `waitHour`, `waitFreeHours`, `waitMax`, `waitFromKm`, `stopsHour`, `stopsFreeHours`, `minimum`, `roundTo` |
 | `outstation.roadFactor` | 1.3 | A place not among ours: road km ≈ the straight line from the pickup city × this |
 | `outstation.drive` | 55 / 4 / 35 / 12 | One-way timings: `kmh`, a break after each full `breakEveryHours` of driving, `breakMinutes` long, `maxRoadHoursPerDay` on the road |
 | `prices.outstationNear` | ≤160 km 1050–1350 | Same-day drops (one price for the trip) and round-trip days close by; nearest first |
@@ -368,4 +411,5 @@ Never type in train times. Never rename an `id`: bookings store it.
 
 The train lookup's rules are in `site-settings.ts` → `trains`:
 `transferBufferMinutes` (90), `maxTransferHours` (12), `directWithinHours`
-(24), `maxWaitHours` (48), `maxOptions` (5), `lookupUrl`.
+(24), `maxWaitHours` (48), `maxOptions` (5), `toStationMinutes` (90: the
+drop to the station, for the train check at the drop), `lookupUrl`.

@@ -220,9 +220,9 @@ export const pricesHi: { name: string; price: string; unit: string }[] = [
     unit: m.premiumJoiningFeePercent > 0 ? 'प्रति माह + एक बार जॉइनिंग फ़ीस' : 'प्रति माह, कोई जॉइनिंग फ़ीस नहीं',
   },
   {
-    name: 'वन-वे ड्रॉप — ड्राइव किमी के हिसाब से, साथ में ड्राइवर की घर वापसी (ट्रेन का इंतज़ार और सफ़र)',
-    price: `${priceText.oneWayPerKm}/किमी + घर वापसी`,
-    unit: `${priceText.sameDayKm} तक (उसी दिन घर) पूरी ट्रिप की एक कीमत ${priceText.sameDayDrop}; उससे दूर: ड्राइव ${priceText.oneWayPerKm}/किमी, फिर उसका घर लौटने का समय (ट्रेन का इंतज़ार और सफ़र) ${priceText.oneWayHomeHour}/घंटा, हर 24 घंटे में ज़्यादा से ज़्यादा ${priceText.oneWayHomeDayMax}; कम से कम ${priceText.oneWayMinimum}; टिकट आप बुक करें`,
+    name: 'वन-वे ड्रॉप — दूरी के हिसाब से, रास्ते की रातें और ट्रेन का इंतज़ार',
+    price: `पहले ${priceText.oneWayFirstKm} ${priceText.oneWayFirst}`,
+    unit: `${priceText.sameDayKm} तक (उसी दिन घर) पूरी ट्रिप की एक कीमत ${priceText.sameDayDrop}; उससे दूर: पहले ${priceText.oneWayFirstKm} ${priceText.oneWayFirst}, फिर ${priceText.oneWayPerKm}/किमी (${priceText.oneWayFartherKm} के बाद ${priceText.oneWayPerKmFarther}/किमी), रास्ते में हर रात ${priceText.oneWayNight}; ${priceText.oneWayWaitKm} से दूर ट्रेन का इंतज़ार — पहले ${priceText.oneWayWaitFree} मुफ़्त, फिर ${priceText.oneWayWaitHour}/घंटा, ज़्यादा से ज़्यादा ${priceText.oneWayWaitMax}; ट्रेन का सफ़र कभी नहीं जुड़ता; कम से कम ${priceText.oneWayMinimum}; टिकट आप बुक करें`,
   },
   { name: 'शादी / इवेंट', price: 'कॉल पर कोटेशन', unit: 'एक तय कीमत' },
 ];

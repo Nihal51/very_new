@@ -124,6 +124,21 @@ export async function loadProfile(uid: string): Promise<Profile | null> {
   return { name: String(d.name ?? ''), phone: String(d.phone ?? ''), email: String(d.email ?? '') };
 }
 
+/**
+ * "I booked this train": the customer's choice of the driver's train home,
+ * once, from the trains the robot offered at the drop (firestore.rules:
+ * returnChoice). The robot then writes the final price with it.
+ */
+export async function chooseReturnTrain(bookingId: string, train: string, dep: Date) {
+  const [app, { getFirestore, doc, updateDoc, serverTimestamp, Timestamp }] = await Promise.all([
+    getFirebaseApp(),
+    import('firebase/firestore'),
+  ]);
+  await updateDoc(doc(getFirestore(app), 'bookings', bookingId), {
+    returnChoice: { train, dep: Timestamp.fromDate(dep), at: serverTimestamp() },
+  });
+}
+
 export async function saveProfile(uid: string, profile: Profile, isNew: boolean) {
   const [app, { getFirestore, doc, setDoc, updateDoc, serverTimestamp }] = await Promise.all([
     getFirebaseApp(),

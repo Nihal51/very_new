@@ -32,13 +32,16 @@
  *   - The customer books and pays for the driver's ticket home and gives his
  *     meals. The team confirms the exact price on the call (/admin works it
  *     out from what the driver costs, inside the profit band).
- *   - One-way drops FARTHER than the first tier (decided 24 Nov 2026, v3,
- *     longOneWayPrice): the drive by the km (oneWay.perKm × the one-way road
- *     km), plus his way home — waiting for the train he takes plus the ride,
- *     H — each full 24 hours at homeDayMax and each started hour left over at
- *     homeHour, never more than homeDayMax for them (the final bill: the
- *     usual 15 minutes' grace); the total to the nearest roundTo, at least
- *     the minimum. The customer books and pays his ticket.
+ *   - One-way drops FARTHER than the first tier (decided 24 Nov 2026, v4,
+ *     longOneWayPrice): the drive by distance bands (oneWay.first for the
+ *     first firstKm, perKm to fartherFromKm, perKmFarther after), each night
+ *     he stops on the road, and — farther than waitFromKm — his wait for the
+ *     train home after waitFreeHours, by the hour, at most waitMax (the
+ *     estimate: the route's usual wait; the final bill: drop → Boarded); the
+ *     final bill adds stops the customer asked for. To the nearest roundTo,
+ *     at least the minimum. The train ride is never charged; the customer
+ *     books and pays his ticket. Quotes and bills of the earlier rules (v2,
+ *     v3) keep computing as they were saved.
  *   - One-way timings (drive): driving at drive.kmh with a break of
  *     breakMinutes after each full breakEveryHours of driving; more than
  *     maxRoadHoursPerDay on the road (an hour more finishes that evening)
@@ -96,9 +99,9 @@ export type TripRules = {
   /** Driving hours in one outstation day (one-way drops without `drive`: also the hours on the road a day). */
   hoursPerDay: number;
   /**
-   * One-way drops farther than the first nearRates tier (24 Nov 2026, v3):
-   * the customer's price a km of the drive, an hour of his way home and its
-   * most for any 24 hours, the least such a drop costs, and the rounding
+   * One-way drops farther than the first nearRates tier (24 Nov 2026, v4):
+   * the customer's prices for the drive, the nights, his wait for the train
+   * and the bill's stops, the least such a drop costs, and the rounding
    * (site-settings.ts outstation.oneWay). Left out: the driver's time as below.
    */
   oneWay?: OneWayRates;
@@ -122,8 +125,23 @@ export type TripRules = {
   localWithinKm: number;
 };
 
-/** One-way drops farther than the first tier (24 Nov 2026, v3): customer prices (site-settings.ts outstation.oneWay). */
-export type OneWayRates = { perKm: number; homeHour: number; homeDayMax: number; minimum: number; roundTo: number };
+/** One-way drops farther than the first tier (24 Nov 2026, v4): customer prices (site-settings.ts outstation.oneWay). */
+export type OneWayRates = {
+  firstKm: number;
+  first: number;
+  perKm: number;
+  fartherFromKm: number;
+  perKmFarther: number;
+  night: number;
+  waitFromKm: number;
+  waitFreeHours: number;
+  waitHour: number;
+  waitMax: number;
+  stopsFreeHours: number;
+  stopsHour: number;
+  minimum: number;
+  roundTo: number;
+};
 
 /** One-way drops: the drive's timing (site-settings.ts outstation.drive). */
 export type DriveRules = { kmh: number; breakEveryHours: number; breakMinutes: number; maxRoadHoursPerDay: number };
@@ -465,14 +483,137 @@ export function homeCharge(
   return { fullDays, leftoverHours, hours: fullDays * 24 + leftoverHours, charge };
 }
 
+/** The customer's price for the drive itself (v4): `first` for the first firstKm, perKm a km to fartherFromKm, perKmFarther after. */
+export function driveCharge(r: Pick<OneWayRates, 'firstKm' | 'first' | 'perKm' | 'fartherFromKm' | 'perKmFarther'>, km: number): number {
+  const d = Math.max(0, Math.round(Number(km) || 0));
+  return (
+    r.first +
+    r.perKm * Math.min(Math.max(d - r.firstKm, 0), r.fartherFromKm - r.firstKm) +
+    r.perKmFarther * Math.max(0, d - r.fartherFromKm)
+  );
+}
+
+/**
+ * His wait for the train home (v4), only farther than waitFromKm: the
+ * hours from the drop until he boards, after waitFreeHours free, each
+ * started hour at waitHour, never more than waitMax. → the hours charged and the charge.
+ *   Ranchi: about 10 h 45 m → 7 h × ₹100 = ₹700;  20 h → ₹1,200 (the most).
+ */
+export function waitChargeOf(
+  r: Pick<OneWayRates, 'waitFromKm' | 'waitFreeHours' | 'waitHour' | 'waitMax'>,
+  km: number,
+  waitHours: number,
+): { hours: number; charge: number } {
+  if (!(Math.round(Number(km) || 0) > r.waitFromKm)) return { hours: 0, charge: 0 };
+  const w = Math.max(0, (Number.isFinite(waitHours) ? waitHours : 0) - r.waitFreeHours);
+  const hours = w > 1e-9 ? Math.ceil(w - 1e-9) : 0;
+  return { hours, charge: Math.min(r.waitMax, hours * r.waitHour) };
+}
+
+/**
+ * The final bill's stops the customer asked for (v4): start → drop longer
+ * than the plan's road time (driving, breaks, nights) by more than
+ * stopsFreeHours — each started hour at stopsHour.
+ */
+export function stopsChargeOf(
+  r: Pick<OneWayRates, 'stopsFreeHours' | 'stopsHour'>,
+  realRoadHours: number,
+  plannedRoadHours: number,
+): { hours: number; charge: number } {
+  const over = (Number(realRoadHours) || 0) - (Number(plannedRoadHours) || 0) - r.stopsFreeHours;
+  const hours = over > 1e-9 ? Math.ceil(over - 1e-9) : 0;
+  return { hours, charge: hours * r.stopsHour };
+}
+
 export type LongOneWayPrice = {
-  /** What the customer pays before his ticket: max(minimum, driving + home to the nearest roundTo). */
+  /** What the customer pays before his ticket: max(minimum, the drive + nights + his wait (+ stops) to the nearest roundTo). */
   price: number;
   km: number;
-  /** The drive: km × perKm. */
+  /** The drive's price, exact (it can have paise: 2.5 a km). */
+  drive: number;
+  nights: number;
+  night: number;
+  nightsCharge: number;
+  /** His wait for the train home: the hours (drop → boarding), whether it is charged at this distance, the hours charged, the charge. */
+  waitHours: number;
+  waitApplies: boolean;
+  waitCharged: number;
+  waitHour: number;
+  waitCharge: number;
+  /** The final bill's stops (0 on an estimate or a quote). */
+  stopsHours: number;
+  stopsHour: number;
+  stopsCharge: number;
+  /** Before the rounding and the minimum. */
+  subtotal: number;
+  roundTo: number;
+  minimum: number;
+  minimumApplies: boolean;
+};
+
+/**
+ * A long one-way drop's price (24 Nov 2026, v4): the drive by distance
+ * bands (driveCharge), each night on the road, his wait for the train
+ * home (waitChargeOf), the final bill's stops; to the nearest roundTo, at
+ * least the minimum. The train ride itself is never charged.
+ *   Raipur → Ranchi, 616 km, no night, wait 10¾ h: 2,627 + 700 = 3,327 → ₹3,350.
+ *   Raipur → Bengaluru, 1,370 km, 2 nights, wait 8¾ h: 5,077.50 + 600 + 500 → ₹6,200.
+ */
+export function longOneWayPrice(
+  r: OneWayRates,
+  km: number,
+  parts: { nights: number; waitHours: number; stopsHours?: number },
+): LongOneWayPrice {
+  const d = Math.max(0, Math.round(Number(km) || 0));
+  const drive = driveCharge(r, d);
+  const nights = Math.max(0, Math.floor(Number(parts.nights) || 0));
+  const wait = waitChargeOf(r, d, parts.waitHours);
+  const stopsHours = Math.max(0, Math.floor(Number(parts.stopsHours) || 0));
+  const stopsCharge = stopsHours * r.stopsHour;
+  const subtotal = drive + nights * r.night + wait.charge + stopsCharge;
+  const rounded = toNearest(subtotal, r.roundTo);
+  return {
+    price: Math.max(r.minimum, rounded),
+    km: d,
+    drive,
+    nights,
+    night: r.night,
+    nightsCharge: nights * r.night,
+    waitHours: Math.max(0, Number(parts.waitHours) || 0),
+    waitApplies: d > r.waitFromKm,
+    waitCharged: wait.hours,
+    waitHour: r.waitHour,
+    waitCharge: wait.charge,
+    stopsHours,
+    stopsHour: r.stopsHour,
+    stopsCharge,
+    subtotal,
+    roundTo: r.roundTo,
+    minimum: r.minimum,
+    minimumApplies: rounded < r.minimum,
+  };
+}
+
+/** Nights he stops on the road on a one-way plan (v4): its calendar days − 1; none driven day and night. */
+export const nightsOf = (plan: Pick<TripPlan, 'days' | 'nonstop'>) => (plan.nonstop ? 0 : Math.max(0, (plan.days || 1) - 1));
+
+/** Hours from the drop until he boards, on a one-way plan: the route's usual wait (or stationHours), or the picked train's departure. */
+export const waitHoursOfPlan = (plan: Pick<TripPlan, 'dropAt' | 'leaveAt'>) =>
+  plan.dropAt !== undefined && plan.leaveAt !== undefined ? Math.max(0, plan.leaveAt - plan.dropAt) : 0;
+
+/** A saved quote or bill priced by v4 (24 Nov 2026): its night rate says so. */
+export const pricedV4 = (q: { nightRate?: number }): boolean => typeof q.nightRate === 'number';
+
+/* -------- one-way drops priced 24 Nov 2026 (v3, by the km and his way home): read and billed as agreed -------- */
+
+/** v3's prices a km, an hour home and its most a day, the minimum and the rounding — as saved on its quotes and bills. */
+export type V3Rates = { perKm: number; homeHour: number; homeDayMax: number; minimum: number; roundTo: number };
+
+export type V3Price = {
+  price: number;
+  km: number;
   perKm: number;
   driving: number;
-  /** His way home: minutes, whole hours charged (full days × 24 + left over), and its charge. */
   homeMinutes: number;
   homeHours: number;
   homeFullDays: number;
@@ -480,26 +621,16 @@ export type LongOneWayPrice = {
   homeHour: number;
   homeDayMax: number;
   home: number;
-  /** driving + home, before the rounding and the minimum. */
   subtotal: number;
   roundTo: number;
   minimum: number;
-  /** The price is the minimum (the drive and his way home come to less). */
   minimumApplies: boolean;
-  /** price − driving − home: the round-off (± half of roundTo), or the top-up to the minimum. */
+  /** price − driving − home: the round-off, or the top-up to the minimum. */
   adjust: number;
 };
 
-/**
- * A long one-way drop's price (24 Nov 2026, v3): the drive by the km, plus
- * his way home (homeCharge), the total to the nearest roundTo, at least the
- * minimum. `homeMinutes`: waiting for his train plus the ride (the
- * estimate), or drop → home (the bill, with its graceMinutes). `rates`: the
- * settings' (outstation.oneWay), or the agreed ones on a quote or bill.
- *   Raipur → Ranchi, 616 km, 10 h 41 m home: 1,848 + 1,100 = 2,948 → ₹2,950.
- *   Raipur → Bengaluru, 1,370 km, 34 h 45 m home: 4,110 + 1,500 + 1,100 = 6,710 → ₹6,700.
- */
-export function longOneWayPrice(rates: OneWayRates, km: number, homeMinutes: number, graceMinutes = 0): LongOneWayPrice {
+/** v3: km × perKm + his way home (homeCharge), to the nearest roundTo, at least the minimum. */
+export function v3Price(rates: V3Rates, km: number, homeMinutes: number, graceMinutes = 0): V3Price {
   const d = Math.max(0, Math.round(Number(km) || 0));
   const perKm = Math.max(0, Math.round(rates.perKm));
   const homeHour = Math.max(0, Math.round(rates.homeHour));
@@ -531,17 +662,11 @@ export function longOneWayPrice(rates: OneWayRates, km: number, homeMinutes: num
   };
 }
 
-/**
- * The way home's most for any 24 hours, for a saved quote or bill's hourly
- * rate: the settings' homeDayMax in the same proportion, never more than
- * every hour at the rate (firestore.rules isQuote / isBill).
- */
-export function homeDayMaxFor(rules: Pick<TripRules, 'oneWay'>, homeHour: number): number {
-  const set = rules.oneWay;
-  const rate = Math.max(0, Math.round(homeHour));
-  if (!set || !set.homeHour) return 24 * rate;
-  return Math.min(24 * rate, Math.round((set.homeDayMax * rate) / set.homeHour));
-}
+/** v3's most for any 24 hours of his way home, for a saved hourly rate: 15 hours' worth (1,500 at 100), as v3 had it. */
+export const v3HomeDayMax = (homeHour: number) => 15 * Math.max(0, Math.round(homeHour));
+
+/** v3 bills: the round-off it used. */
+export const V3_ROUND_TO = 50;
 
 /** A saved quote or bill priced by the km (24 Nov 2026, v3): its price a km says so. */
 export const pricedByKm = (q: { km?: number; kmRate?: number }): boolean => Number(q.kmRate) > 0 && Number(q.km) > 0;
@@ -852,13 +977,17 @@ export type Estimate = {
  */
 export function estimate(
   rules: TripRules,
-  plan: Pick<TripPlan, 'fullDays'> & Partial<Pick<TripPlan, 'km' | 'kind' | 'homeAt' | 'dropAt' | 'days'>>,
+  plan: Pick<TripPlan, 'fullDays'> & Partial<Pick<TripPlan, 'km' | 'kind' | 'homeAt' | 'dropAt' | 'leaveAt' | 'days' | 'nonstop'>>,
 ): Estimate {
-  // A long one-way drop: the km, then his way home (the drop → home of the plan: the wait and the ride).
+  // A long one-way drop (v4): the drive, the nights on the road, his wait from the drop until he boards (the route's
+  // usual wait, or the picked train's departure).
   if (plan.kind !== 'round' && plan.homeAt !== undefined && plan.dropAt !== undefined && rules.oneWay && isLongOneWay(rules, plan.km)) {
-    const long = longOneWayPrice(rules.oneWay, plan.km ?? 0, (plan.homeAt - plan.dropAt) * 60);
     const days = Math.max(1, Math.floor(plan.days ?? 1) || 1);
-    return { from: long.price, to: long.price, days, dayRate: { from: long.driving, to: long.driving }, long };
+    const long = longOneWayPrice(rules.oneWay, plan.km ?? 0, {
+      nights: nightsOf({ days, nonstop: Boolean(plan.nonstop) }),
+      waitHours: waitHoursOfPlan(plan),
+    });
+    return { from: long.price, to: long.price, days, dayRate: { from: long.drive, to: long.drive }, long };
   }
   const time = plan.kind !== 'round' && plan.homeAt !== undefined ? timePrice(rules, plan.km ?? 0, plan.homeAt) : undefined;
   if (time) return { from: time.price, to: time.price, days: time.days, dayRate: { from: time.dayRate, to: time.dayRate }, time };
@@ -959,45 +1088,43 @@ export function timeQuote(rules: TripRules, input: TimeQuoteInput): TimeQuote | 
 
 export type LongQuoteInput = ProfitBand & {
   km: number;
-  /** Hours on the road, start → drop: driving, its breaks and any night's rest (the plan's dropAt). */
+  /** Nights he stops on the road (the plan's; 0 driven day and night). */
+  nights: number;
+  /** Hours from the drop until he boards: the train in the booking's note, else the route's usual wait. */
+  waitHours: number;
+  /** Hours on the road, start → drop: driving, its breaks and any night's rest (the plan's dropAt) — for his pay. */
   roadHours: number;
-  /** Minutes of his way home: waiting for his train plus the ride. */
+  /** Minutes of his way home (the wait and the ride) — for his pay. */
   homeMinutes: number;
   /** What this driver asked for each 24 hours of his whole time (start → home). */
   driverDayCost: number;
   /** What he gets for each hour left over after those 24-hour blocks (never more than his day). */
   driverHourPay: number;
-  /** The customer's price a km, if the team types one (0 or left out: the settings'). */
-  perKm?: number;
   ticket: number;
   partnerPercent: number;
 };
 
 export type LongQuote = Omit<TimeQuote, 'time' | 'shown'> & {
   long: LongOneWayPrice;
-  /** The price customers were shown for the same km and hours (the settings'). */
-  shown: LongOneWayPrice;
   /** His whole time, start → home, hours: what his pay counts. */
   awayHours: number;
 };
 
 /**
- * The /admin price for a long one-way drop (24 Nov 2026, v3): the
- * customer's price by the settings (longOneWayPrice; the team may type
- * another price a km), the driver's pay for his whole time (wholeTimePay:
+ * The /admin price for a long one-way drop (24 Nov 2026, v4): the
+ * customer's price by the settings (longOneWayPrice: the drive, the nights,
+ * his wait), the driver's pay for his whole time as before (wholeTimePay:
  * the road, start → drop, plus his way home) at his day and hour, and the
  * profit with its band. Undefined without the settings.
  */
 export function longQuote(rules: TripRules, input: LongQuoteInput): LongQuote | undefined {
   const set = rules.oneWay;
   if (!set) return undefined;
-  const typed = whole(input.perKm ?? 0);
-  const long = longOneWayPrice(typed ? { ...set, perKm: typed } : set, input.km, input.homeMinutes);
-  const shown = longOneWayPrice(set, input.km, input.homeMinutes);
+  const long = longOneWayPrice(set, input.km, { nights: input.nights, waitHours: input.waitHours });
   const cost = whole(input.driverDayCost);
   const hourPay = whole(input.driverHourPay);
   const partner = Math.min(30, Math.max(0, input.partnerPercent)) / 100;
-  const awayHours = Math.max(0, Number(input.roadHours) || 0) + long.homeMinutes / 60;
+  const awayHours = Math.max(0, Number(input.roadHours) || 0) + Math.max(0, Number(input.homeMinutes) || 0) / 60;
   const driverPay = wholeTimePay(awayHours, cost, hourPay);
   const partnerPay = Math.round(long.price * partner);
   const profit = long.price - driverPay - partnerPay;
@@ -1006,7 +1133,6 @@ export function longQuote(rules: TripRules, input: LongQuoteInput): LongQuote | 
   const high = profitPercent - 1e-9 > input.maxProfitPercent;
   return {
     long,
-    shown,
     awayHours,
     total: long.price + whole(input.ticket),
     driverPay,
@@ -1016,6 +1142,27 @@ export function longQuote(rules: TripRules, input: LongQuoteInput): LongQuote | 
     low,
     high,
     ok: !low && !high,
+  };
+}
+
+/**
+ * A v4 price as saved on a quote or bill (firestore.rules isV4Price): whole
+ * rupees — the drive rounded, the round-off (or the top-up to the minimum)
+ * in `adjust` — so the parts add up to the price exactly.
+ */
+export function v4Fields(p: LongOneWayPrice) {
+  const dayRate = Math.round(p.drive);
+  return {
+    dayRate,
+    days: 1,
+    km: p.km,
+    nights: p.nights,
+    nightRate: p.night,
+    waitHours: p.waitCharged,
+    waitHourRate: p.waitHour,
+    waitCharge: p.waitCharge,
+    minimum: p.minimum,
+    adjust: p.price - dayRate - p.nightsCharge - p.waitCharge - p.stopsCharge,
   };
 }
 
@@ -1152,6 +1299,8 @@ export type TripTimes = {
   dropAt?: number;
   /** One-way: he is home. Round trip: the trip is over (he is back). */
   homeAt: number;
+  /** One-way (v4): he boarded his train home (the Boarded tap). */
+  boardAt?: number;
 };
 
 export type BillInput = TripTimes & {
@@ -1181,13 +1330,37 @@ export type BillInput = TripTimes & {
    */
   route?: { price: number; awayHours: number; km: number };
   /**
+   * A long one-way drop, v4 (24 Nov 2026): the km, the drive's price (the
+   * agreed dayRate, else the settings'), the nights on the road and their
+   * rate, his wait's hourly rate and the minimum. The bill is then the drive
+   * and the nights as planned, his wait drop → Boarded (no tap: the chosen
+   * train's departure; none: `waitHours`, the estimate's), and the stops the
+   * customer asked for: start → drop past `plannedRoadHours` (the plan's road
+   * time for the real start) + stopsFreeHours — or `stopsHours` when the
+   * office sets them. To the nearest roundTo, at least the minimum.
+   */
+  v4?: {
+    km: number;
+    drive: number;
+    nights: number;
+    nightRate: number;
+    waitHourRate: number;
+    minimum: number;
+    /** The settings' bands, free hours, most and rounding (outstation.oneWay). */
+    rates: OneWayRates;
+    plannedRoadHours?: number;
+    chosenDepartAt?: number;
+    waitHours?: number;
+    stopsHours?: number;
+  };
+  /**
    * A long one-way drop priced by the km (24 Nov 2026, v3): the km, the price
    * a km and the minimum agreed. The bill is then the drive km × kmRate
    * (fixed once he starts), his way home drop → home at returnHourRate (at
-   * most homeDayMax a day: the agreed one, else the settings' in proportion),
-   * to the nearest roundTo, at least the minimum (longOneWayPrice).
+   * most homeDayMax a day: the agreed one, else 15 hours' worth), to the
+   * nearest 50, at least the minimum (v3Price).
    */
-  long?: { km: number; kmRate: number; minimum: number; homeDayMax?: number };
+  v3?: { km: number; kmRate: number; minimum: number; homeDayMax?: number };
   /**
    * A long one-way drop agreed under v2 (24 Nov 2026, the first rule): the
    * km. The bill is then the driving days from start → drop at dayRate, and
@@ -1221,11 +1394,41 @@ export type Bill = {
    */
   route?: { awayHours: number; realAwayHours: number; km: number; paidDays?: number };
   /**
+   * A long one-way drop, v4: then days = 1 at dayRate = the drive (rounded to
+   * the rupee), nights × nightRate, waitHours × waitHourRate (at most waitMax)
+   * = waitCharge, stopsHours × stopsHourRate = stopsCharge, `adjust` the
+   * round-off or the top-up to the minimum; no way-home charge.
+   */
+  v4?: {
+    km: number;
+    nights: number;
+    nightRate: number;
+    /** His wait: the real hours, where they came from, the hours charged and the charge. */
+    waitActualHours: number;
+    waitFrom: 'boarded' | 'train' | 'estimate';
+    waitApplies: boolean;
+    waitHours: number;
+    waitHourRate: number;
+    waitCharge: number;
+    waitFreeHours: number;
+    waitMax: number;
+    stopsHours: number;
+    stopsHourRate: number;
+    stopsCharge: number;
+    /** The real start → drop and the plan's road time for that start, hours (stops are the difference past the free hour). */
+    roadHours: number;
+    plannedRoadHours?: number;
+    minimum: number;
+    adjust: number;
+    minimumApplies: boolean;
+    roundTo: number;
+  };
+  /**
    * A long one-way drop by the km (v3): then days = 1 at dayRate = the drive
    * (km × kmRate), returnHours / returnCharge his way home, `adjust` the
    * round-off or the top-up to the minimum (amount = dayRate + returnCharge + adjust + ticket).
    */
-  long?: {
+  v3?: {
     km: number;
     kmRate: number;
     minimum: number;
@@ -1240,9 +1443,15 @@ export type Bill = {
   v2Long?: { km: number; returnDay: number; returnFullDays: number; returnLeftoverHours: number };
 };
 
-/** A saved quote or bill priced by the driver's time (from 8 Nov 2026): the km, and no route hours or way-home charge. */
-export const pricedByTime = (q: { km?: number; awayHours?: number; returnHours: number; returnCharge: number }): boolean =>
-  Boolean(q.km && q.km > 0 && !q.awayHours && !q.returnHours && !q.returnCharge);
+/** A saved quote or bill priced by the driver's time (from 8 Nov 2026): the km, and no route hours, way-home charge, v3 or v4 fields. */
+export const pricedByTime = (q: {
+  km?: number;
+  awayHours?: number;
+  returnHours: number;
+  returnCharge: number;
+  kmRate?: number;
+  nightRate?: number;
+}): boolean => Boolean(q.km && q.km > 0 && !q.awayHours && !q.returnHours && !q.returnCharge && !(Number(q.kmRate) > 0) && !pricedV4(q));
 
 const minutesBetween = (a: number | undefined, b: number | undefined) =>
   a === undefined || b === undefined || !Number.isFinite(a) || !Number.isFinite(b) ? 0 : Math.max(0, Math.floor((b - a) / 60000));
@@ -1265,13 +1474,74 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
   const driveMinutes = minutesBetween(input.startAt, driveEnd);
   const returnMinutes = oneWay ? minutesBetween(driveEnd, input.homeAt) : 0;
 
+  // A long one-way drop, v4 (24 Nov 2026): the drive and the nights as planned, his wait drop → boarded, the stops asked for.
+  if (oneWay && input.v4 && input.v4.km > 0) {
+    const v = input.v4;
+    const r = { ...v.rates, night: whole(v.nightRate), waitHour: whole(v.waitHourRate), minimum: whole(v.minimum) };
+    const dropAt = input.dropAt;
+    const hours = (a: number, b: number) => Math.max(0, (b - a) / 3_600_000);
+    const [waitActualHours, waitFrom]: [number, 'boarded' | 'train' | 'estimate'] =
+      dropAt !== undefined && input.boardAt !== undefined && input.boardAt >= dropAt
+        ? [hours(dropAt, input.boardAt), 'boarded']
+        : dropAt !== undefined && v.chosenDepartAt !== undefined && v.chosenDepartAt >= dropAt
+          ? [hours(dropAt, v.chosenDepartAt), 'train']
+          : [Math.max(0, v.waitHours ?? 0), 'estimate'];
+    const roadHours = driveMinutes / 60;
+    const stopsHours =
+      v.stopsHours !== undefined
+        ? Math.max(0, Math.floor(v.stopsHours))
+        : v.plannedRoadHours !== undefined && dropAt !== undefined
+          ? stopsChargeOf(r, roadHours, v.plannedRoadHours).hours
+          : 0;
+    const p = longOneWayPrice(r, v.km, { nights: v.nights, waitHours: waitActualHours, stopsHours });
+    const drive = whole(v.drive);
+    const ticket = whole(input.ticket);
+    return {
+      driveMinutes,
+      days: 1,
+      extraHours: 0,
+      extraCharge: 0,
+      returnMinutes,
+      returnHours: 0,
+      returnCharge: 0,
+      dayRate: drive,
+      extraHourRate: 0,
+      returnHourRate: 0,
+      ticket,
+      amount: p.price + ticket,
+      v4: {
+        km: p.km,
+        nights: p.nights,
+        nightRate: r.night,
+        waitActualHours,
+        waitFrom,
+        waitApplies: p.waitApplies,
+        waitHours: p.waitCharged,
+        waitHourRate: r.waitHour,
+        waitCharge: p.waitCharge,
+        waitFreeHours: r.waitFreeHours,
+        waitMax: r.waitMax,
+        stopsHours: p.stopsHours,
+        stopsHourRate: r.stopsHour,
+        stopsCharge: p.stopsCharge,
+        roadHours,
+        ...(v.plannedRoadHours !== undefined && { plannedRoadHours: v.plannedRoadHours }),
+        minimum: r.minimum,
+        // Whole rupees on the bill: the drive is rounded, the round-off takes the paise.
+        adjust: p.price - drive - p.nightsCharge - p.waitCharge - p.stopsCharge,
+        minimumApplies: p.minimumApplies,
+        roundTo: r.roundTo,
+      },
+    };
+  }
+
   // A long one-way drop by the km (24 Nov 2026, v3): the drive is fixed once he starts; his way home is drop → home.
-  if (oneWay && input.long && input.long.km > 0 && whole(input.long.kmRate) > 0) {
-    const homeHour = whole(input.returnHourRate) || rules.oneWay?.homeHour || 0;
-    const homeDayMax = whole(input.long.homeDayMax ?? 0) || homeDayMaxFor(rules, homeHour);
-    const p = longOneWayPrice(
-      { perKm: whole(input.long.kmRate), homeHour, homeDayMax, minimum: whole(input.long.minimum), roundTo: rules.oneWay?.roundTo ?? 50 },
-      input.long.km,
+  if (oneWay && input.v3 && input.v3.km > 0 && whole(input.v3.kmRate) > 0) {
+    const homeHour = whole(input.returnHourRate);
+    const homeDayMax = whole(input.v3.homeDayMax ?? 0) || v3HomeDayMax(homeHour);
+    const p = v3Price(
+      { perKm: whole(input.v3.kmRate), homeHour, homeDayMax, minimum: whole(input.v3.minimum), roundTo: V3_ROUND_TO },
+      input.v3.km,
       returnMinutes,
       input.graceMinutes,
     );
@@ -1289,7 +1559,7 @@ export function finalBill(rules: TripRules, input: BillInput): Bill {
       returnHourRate: homeHour,
       ticket,
       amount: p.price + ticket,
-      long: {
+      v3: {
         km: p.km,
         kmRate: p.perKm,
         minimum: p.minimum,

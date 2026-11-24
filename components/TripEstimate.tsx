@@ -10,6 +10,7 @@ import { seatsLink, type ReturnOption } from '@/lib/rail';
 import { priceText, rupeeRange, rupees, settings, tripRules } from '@/lib/settings';
 import {
   estimateLines,
+  estimateNote,
   hmText,
   kmText,
   notIncluded,
@@ -101,6 +102,7 @@ export function TripEstimate({
             </li>
           ))}
         </ul>
+        {estimateNote(view) && <p className="text-fg-muted mt-2 text-[0.8125rem]">{estimateNote(view)}</p>}
         {rail && rail.status !== 'off' && <TrainsHome rail={rail} view={view} city={city} dateField={dateField} />}
         <div className="border-border mt-3 border-t pt-3">
           <p className="text-fg-subtle text-xs font-semibold tracking-wide uppercase">Not in this price</p>
@@ -152,17 +154,22 @@ export function TripEstimate({
               distance).
             </li>
             <li>
-              Farther: the drive is {priceText.oneWayPerKm} a km (one way, by road). He drives about{' '}
+              Farther: the drive is {priceText.oneWayFirst} for the first {priceText.oneWayFirstKm}, then{' '}
+              {priceText.oneWayPerKm} a km ({priceText.oneWayPerKmFarther} after {priceText.oneWayFartherKm}). He drives about{' '}
               {settings.outstation.drive.kmh} km an hour with a {settings.outstation.drive.breakMinutes}-minute break
               every {settings.outstation.drive.breakEveryHours} hours, and rests the night after about{' '}
               {settings.outstation.drive.maxRoadHoursPerDay} hours on the road — unless you want it driven day and night.
             </li>
             <li>
-              Then his way home — waiting for the train he takes and the ride: {priceText.oneWayHomeHour} for each
-              started hour, never more than {priceText.oneWayHomeDayMax} for each 24 hours. So 5 hours home = 5 ×{' '}
-              {priceText.oneWayHomeHour}; 27 hours = {priceText.oneWayHomeDayMax} + 3 × {priceText.oneWayHomeHour}. The
-              total is rounded to the nearest {rupees(settings.outstation.oneWay.roundTo)}, at least{' '}
-              {priceText.oneWayMinimum}; the final bill uses his real times.
+              Each night he stops on the road: {priceText.oneWayNight}. Past {priceText.oneWayWaitKm}, his wait for the
+              train home: the first {priceText.oneWayWaitFree} free, then {priceText.oneWayWaitHour} an hour, at most{' '}
+              {priceText.oneWayWaitMax}. The train ride itself is never charged. The total is rounded to the nearest{' '}
+              {rupees(settings.outstation.oneWay.roundTo)}, at least {priceText.oneWayMinimum}.
+            </li>
+            <li>
+              When he drops the car we send you the trains home — you book his ticket. The final bill counts his real
+              wait, until he boards, and stops you ask for on the way: past the planned drive and{' '}
+              {settings.outstation.oneWay.stopsFreeHours} h more, {rupees(settings.outstation.oneWay.stopsHour)} an hour.
             </li>
             <li>
               Until you pick the date, the wait and the ride home are the route’s average from the timetables; with the

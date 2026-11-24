@@ -86,6 +86,7 @@ export const settings = {
     directWithinHours: 24, //     no direct train leaving within this long → look for a change
     maxWaitHours: 48, //          trains leaving later than this after he is ready are not offered
     maxOptions: 5, //             how many routes the customer can choose from
+    toStationMinutes: 90, //      at the drop (the robot's train check): he can board this long after he hands over the car
   },
 
   /* ---------------------------------------------------- driver charges -----
@@ -146,19 +147,32 @@ export const settings = {
     dayTopFromKm: 300, //      … and reaches prices.outstation.to here (farther: the same)
     hoursPerDay: 12, //        driving hours in one outstation day (about 600 km)
     /* One-way drops FARTHER than the first nearby tier (prices.outstationNear,
-       160 km) — what the CUSTOMER pays (decided 24 Nov 2026, v3): the drive
-       by the km (perKm × the one-way road km), plus his way home — waiting
-       for his train plus the ride, H — homeDayMax for each full 24 hours and
-       homeHour for each started hour left over, never more than homeDayMax
-       for those; the total to the nearest roundTo, at least `minimum`. The
-       customer books and pays his ticket, and gives his meals.
-       Customer prices only: the driver's pay is set in Script Properties.
-         Raipur → Ranchi, 616 km, home in 10 h 41 m: 1,848 + 1,100 = 2,948 → 2,950.
-         Raipur → Bengaluru, 1,370 km, home in about 35 h: 4,110 + 1,500 + 1,100 = 6,710 → 6,700. */
+       160 km) — what the CUSTOMER pays (decided 24 Nov 2026, v4):
+         the drive: `first` for the first firstKm, then perKm a km up to
+           fartherFromKm, perKmFarther a km after that;
+         + night for each night he stops on the road (none driven day and night);
+         + farther than waitFromKm only: his wait for the train home, after
+           waitFreeHours free, waitHour each started hour, at most waitMax
+           (the estimate: the route's usual wait; the final bill: drop → boarded);
+         + final bill only: stops the customer asked for, past the plan's road
+           time + stopsFreeHours, stopsHour each started hour;
+       the total to the nearest roundTo, at least `minimum`. The train ride
+       itself is never charged; the customer books his ticket and gives his
+       meals. Customer prices only: the driver's pay is set in Script Properties.
+         Raipur → Ranchi, 616 km: 1,500 + 750 + 377 = 2,627 + wait 10¾ h → 7 h × 100 → 3,327 → 3,350. */
     oneWay: {
-      perKm: 3, //          decide: each km of the drive (one way, by road)
-      homeHour: 100, //     decide: each started hour of his way home
-      homeDayMax: 1500, //  decide: never more than this for any 24 hours of his way home (at most 24 × homeHour)
+      firstKm: 200, //      decide: the first this many km …
+      first: 1500, //       decide: … cost this
+      perKm: 2.5, //        decide: each km from firstKm to fartherFromKm
+      fartherFromKm: 500,
+      perKmFarther: 3.25, // decide: each km after fartherFromKm
+      night: 300, //        decide: each night he stops on the road
+      waitFromKm: 500, //   his wait for the train is charged only farther than this
+      waitFreeHours: 4, //  decide: hours of his wait that are free
+      waitHour: 100, //     decide: each started hour of his wait after those
+      waitMax: 1200, //     decide: never more than this for his wait
+      stopsFreeHours: 1, // final bill: the drive may take this much longer than planned for free …
+      stopsHour: 100, //    decide: … then each started hour of stops the customer asked for
       minimum: 1500, //     decide: the least a drop this far costs (before his ticket)
       roundTo: 50, //       the total to the nearest this many rupees
     },

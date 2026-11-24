@@ -103,12 +103,52 @@ export type BookingQuote = {
   kmRate?: number;
   minimum?: number;
   adjust?: number;
+  /**
+   * A long one-way drop, v4 (quotes from 24 Nov 2026, lib/outstation.ts
+   * pricedV4 — nightRate says so): days = 1 at dayRate = the drive, nights ×
+   * nightRate, his wait for the train (waitHours charged × waitHourRate =
+   * waitCharge), `minimum` and `adjust` as above; no way-home charge.
+   */
+  nights?: number;
+  nightRate?: number;
+  waitHours?: number;
+  waitHourRate?: number;
+  waitCharge?: number;
   ticket: number;
   at?: Date;
 };
 
 /** The real times of the trip, from the driver's trip link (firestore.rules: isClock; lib/tripclock.ts). */
-export type BookingClock = { startAt?: Date; dropAt?: Date; homeAt?: Date };
+export type BookingClock = { startAt?: Date; dropAt?: Date; boardAt?: Date; homeAt?: Date };
+
+/** One train home the robot found at the drop (bookings/{id}.returnCheck, robot-only; apps-script/Code.js returnCheckFor_). */
+export type ReturnCheckOption = {
+  train: string;
+  name: string;
+  /** The station he boards at (code). */
+  from: string;
+  dep?: Date;
+  arr?: Date;
+  /** One change of train, if the route has one. */
+  change: { station: string; train: string; dep?: Date } | null;
+  /** Minutes from the drop to the departure; the wait charge and the whole price (before his ticket) with this train. */
+  waitMin: number;
+  waitCharge: number;
+  price: number;
+};
+
+/**
+ * The robot's train check at the drop (24 Nov 2026): when it looked, the drop
+ * time, up to 3 trains home; `bus`: none leaves within 12 hours (take a bus);
+ * `failed`: the lookup could not run (the team calls).
+ */
+export type BookingReturnCheck = { at?: Date; dropAt?: Date; options: ReturnCheckOption[]; bus: boolean; failed: boolean };
+
+/** The train the customer booked for him ("I booked this train"), or the office set (bookings/{id}.returnChoice). */
+export type BookingReturnChoice = { train: string; dep?: Date; at?: Date };
+
+/** The final price with the chosen train (bookings/{id}.returnPrice, robot-only). */
+export type BookingReturnPrice = { price: number; waitCharge: number; train: string; at?: Date };
 
 /** The final bill from the real times (firestore.rules: isBill). Customer-visible: no costs here. */
 export type BookingBill = {
@@ -131,6 +171,15 @@ export type BookingBill = {
   kmRate?: number;
   minimum?: number;
   adjust?: number;
+  /** v4 (from 24 Nov 2026): the nights, his wait for the train, the stops the customer asked for (as on the quote, plus stops). */
+  nights?: number;
+  nightRate?: number;
+  waitHours?: number;
+  waitHourRate?: number;
+  waitCharge?: number;
+  stopsHours?: number;
+  stopsHourRate?: number;
+  stopsCharge?: number;
   ticket: number;
   /** Driven day and night (every 12 h a day). */
   nonstop: boolean;
@@ -226,6 +275,9 @@ export type Booking = {
   quote?: BookingQuote | null;
   clock?: BookingClock | null;
   bill?: BookingBill | null;
+  returnCheck?: BookingReturnCheck | null;
+  returnChoice?: BookingReturnChoice | null;
+  returnPrice?: BookingReturnPrice | null;
   acceptedPrice?: BookingAcceptedPrice | null;
   localBill?: BookingLocalBill | null;
   payment?: BookingPayment | null;
@@ -397,7 +449,7 @@ export function toClock(v: unknown): BookingClock | null {
   if (!v || typeof v !== 'object') return null;
   const c = v as Record<string, unknown>;
   const out: BookingClock = {};
-  for (const k of ['startAt', 'dropAt', 'homeAt'] as const) {
+  for (const k of ['startAt', 'dropAt', 'boardAt', 'homeAt'] as const) {
     const d = toDate(c[k]);
     if (d) out[k] = d;
   }
@@ -418,9 +470,61 @@ export function toBill(v: unknown): BookingBill | null {
     ...(n('km') > 0 && { km: n('km') }),
     // By the km (from 24 Nov 2026, v3): its price a km, the minimum and the round-off or top-up.
     ...(n('kmRate') > 0 && { kmRate: n('kmRate'), minimum: Number.isNaN(n('minimum')) ? 0 : n('minimum'), adjust: Number.isNaN(n('adjust')) ? 0 : n('adjust') }),
+    // v4 (from 24 Nov 2026): the nights, his wait, the stops, the minimum and the round-off.
+    ...(!Number.isNaN(n('nightRate')) &&
+      Object.fromEntries(
+        (['nights', 'nightRate', 'waitHours', 'waitHourRate', 'waitCharge', 'stopsHours', 'stopsHourRate', 'stopsCharge', 'minimum', 'adjust'] as const).map((k) => [
+          k,
+          Number.isNaN(n(k)) ? 0 : n(k),
+        ]),
+      )),
     nonstop: b.nonstop === true,
     at: toDate(b.at),
   };
+}
+
+/** A stored train check (returnCheck) → typed; null when there is none or it is not whole. */
+export function toReturnCheck(v: unknown): BookingReturnCheck | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  const str = (x: unknown) => (typeof x === 'string' ? x : '');
+  const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  const options = (Array.isArray(c.options) ? c.options : []).flatMap((o): ReturnCheckOption[] => {
+    if (!o || typeof o !== 'object') return [];
+    const r = o as Record<string, unknown>;
+    if (!str(r.train)) return [];
+    const ch = r.change && typeof r.change === 'object' ? (r.change as Record<string, unknown>) : null;
+    return [
+      {
+        train: str(r.train),
+        name: str(r.name),
+        from: str(r.from),
+        dep: toDate(r.dep),
+        arr: toDate(r.arr),
+        change: ch ? { station: str(ch.station), train: str(ch.train), dep: toDate(ch.dep) } : null,
+        waitMin: num(r.waitMin),
+        waitCharge: num(r.waitCharge),
+        price: num(r.price),
+      },
+    ];
+  });
+  return { at: toDate(c.at), dropAt: toDate(c.dropAt), options, bus: c.bus === true, failed: c.failed === true };
+}
+
+/** A stored choice of train (returnChoice) → typed; null when there is none. */
+export function toReturnChoice(v: unknown): BookingReturnChoice | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  return typeof c.train === 'string' && c.train ? { train: c.train, dep: toDate(c.dep), at: toDate(c.at) } : null;
+}
+
+/** The stored final price with the chosen train (returnPrice) → typed; null when there is none. */
+export function toReturnPrice(v: unknown): BookingReturnPrice | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  return typeof c.price === 'number' && typeof c.train === 'string'
+    ? { price: c.price, waitCharge: typeof c.waitCharge === 'number' ? c.waitCharge : 0, train: c.train, at: toDate(c.at) }
+    : null;
 }
 
 /** The DB-number, or why there isn't one: the robot numbers new bookings within a minute; older ones never got one. */

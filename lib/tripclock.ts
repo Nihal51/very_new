@@ -8,23 +8,27 @@
  * that guard them in firestore.rules (tripLinks, isBill, isClock).
  */
 
-import type { Booking, BookingBill, BookingClock } from './bookings.ts';
+import type { Booking, BookingBill, BookingClock, BookingReturnCheck, BookingReturnChoice } from './bookings.ts';
 import {
   dayRateFor,
+  driveCharge,
   finalBill,
   isLongOneWay,
   pricedByKm,
   pricedByTime,
   pricedV2Long,
+  pricedV4,
   returnCost,
   returnWords,
   wholeTimePay,
   type Bill,
+  type BillInput,
   type TripKind,
   type TripRules,
 } from './outstation.ts';
 
-export type TripStep = 'start' | 'drop' | 'home';
+/** One-way: start → drop → board (his train home, 24 Nov 2026) → home; a round trip: start → home. */
+export type TripStep = 'start' | 'drop' | 'board' | 'home';
 
 export type Loc = { lat: number; lng: number; acc: number };
 
@@ -44,27 +48,35 @@ export type TripLink = {
   createdAt?: Date;
   startAt?: Date;
   dropAt?: Date;
+  boardAt?: Date;
   homeAt?: Date;
   /** The phone's own clock at the tap (it may have been offline). */
   startPhone?: Date;
   dropPhone?: Date;
+  boardPhone?: Date;
   homePhone?: Date;
   startLoc?: Loc;
   dropLoc?: Loc;
+  boardLoc?: Loc;
   homeLoc?: Loc;
+  /** The robot's train check at the drop and the train chosen, copied here so the driver's page shows them (no login). */
+  returnCheck?: BookingReturnCheck | null;
+  returnChoice?: BookingReturnChoice | null;
 };
 
 /** The steps of a trip, in order. A round trip has no drop: he comes back with the customer. */
-export const stepsFor = (kind: TripKind): TripStep[] => (kind === 'one-way' ? ['start', 'drop', 'home'] : ['start', 'home']);
+export const stepsFor = (kind: TripKind): TripStep[] => (kind === 'one-way' ? ['start', 'drop', 'board', 'home'] : ['start', 'home']);
 
-/** The step the driver taps next, or null when the trip is done. */
-export function nextStep(l: Pick<TripLink, 'kind' | 'startAt' | 'dropAt' | 'homeAt'>): TripStep | null {
+/** The step the driver taps next, or null when the trip is done. Home without Boarded (he came by bus) ends it too. */
+export function nextStep(l: Pick<TripLink, 'kind' | 'startAt' | 'dropAt' | 'homeAt'> & { boardAt?: Date }): TripStep | null {
+  if (l.homeAt) return null;
   return stepsFor(l.kind).find((s) => !l[`${s}At`]) ?? null;
 }
 
 export const STEP_TEXT: Record<TripStep, { en: string; hi: string }> = {
   start: { en: 'Trip started', hi: 'ट्रिप शुरू' },
   drop: { en: 'Car dropped', hi: 'गाड़ी छोड़ दी' },
+  board: { en: 'Boarded the train', hi: 'ट्रेन में बैठ गए' },
   home: { en: 'Home', hi: 'घर पहुँच गए' },
 };
 
@@ -136,6 +148,7 @@ export function clockText(c: BookingClock, kind: TripKind): string {
   return [
     c.startAt ? `Driver left ${whenText(c.startAt)}` : null,
     kind === 'one-way' && c.dropAt ? `car dropped ${whenText(c.dropAt)}` : null,
+    kind === 'one-way' && c.boardAt ? `boarded his train ${whenText(c.boardAt)}` : null,
     c.homeAt ? `${kind === 'one-way' ? 'driver home' : 'back'} ${whenText(c.homeAt)}` : null,
   ]
     .filter(Boolean)
@@ -156,8 +169,16 @@ export type BillRates = {
   time?: { km: number };
   /** A route price (quotes from before 8 Nov 2026) and the hours away it was planned for (finalBill). */
   route?: { price: number; awayHours: number; km: number };
+  /**
+   * A long one-way drop, v4 (24 Nov 2026): the km, the drive, the nights and
+   * their rate, his wait's rate and the minimum (the agreed ones, else the
+   * settings'), with the plan's road time and the estimate's wait for the
+   * real start, the chosen train's departure, and the stops when the office
+   * set them (finalBill).
+   */
+  v4?: NonNullable<BillInput['v4']>;
   /** A long one-way drop by the km (24 Nov 2026, v3): the km, the price a km and the minimum (finalBill). */
-  long?: { km: number; kmRate: number; minimum: number };
+  v3?: { km: number; kmRate: number; minimum: number };
   /** A long one-way drop agreed under v2 (24 Nov 2026): the km (finalBill: driving days, then his way home). */
   v2Long?: { km: number };
 };
@@ -170,7 +191,14 @@ export type BillRates = {
  * their own way: a route price (awayHours), or by the hours. `oneWay`: false
  * for a round trip (the days at the day price).
  */
-export function billRates(quote: Booking['quote'], rules: TripRules, km?: number, oneWay = true): BillRates {
+export function billRates(
+  quote: Booking['quote'],
+  rules: TripRules,
+  km?: number,
+  oneWay = true,
+  /** v4: the plan for the real start (nights, road time, the usual wait) and the train chosen at the drop. */
+  plan?: { nights: number; plannedRoadHours?: number; waitHours?: number; chosenDepartAt?: number },
+): BillRates {
   const base = {
     extraHourRate: quote?.extraHourRate ?? rules.extraHour,
     returnHourRate: quote?.returnHourRate ?? rules.returnHour,
@@ -178,22 +206,44 @@ export function billRates(quote: Booking['quote'], rules: TripRules, km?: number
   };
   if (quote?.awayHours)
     return { ...base, dayRate: quote.dayRate, route: { price: quote.dayRate, awayHours: quote.awayHours, km: quote.km ?? km ?? 0 } };
+  const timing = plan && {
+    ...(plan.plannedRoadHours !== undefined && { plannedRoadHours: plan.plannedRoadHours }),
+    ...(plan.waitHours !== undefined && { waitHours: plan.waitHours }),
+    ...(plan.chosenDepartAt !== undefined && { chosenDepartAt: plan.chosenDepartAt }),
+  };
+  // A long one-way drop, v4 (24 Nov 2026): the agreed drive, nights, wait rate and minimum.
+  if (quote && oneWay && pricedV4(quote) && rules.oneWay)
+    return {
+      ...base,
+      dayRate: quote.dayRate,
+      v4: {
+        km: quote.km ?? km ?? 0,
+        drive: quote.dayRate,
+        nights: quote.nights ?? 0,
+        nightRate: quote.nightRate ?? rules.oneWay.night,
+        waitHourRate: quote.waitHourRate ?? rules.oneWay.waitHour,
+        minimum: quote.minimum ?? rules.oneWay.minimum,
+        rates: rules.oneWay,
+        ...timing,
+      },
+    };
   // A long one-way drop by the km (24 Nov 2026, v3): the agreed price a km, hour home and minimum.
   if (quote && oneWay && pricedByKm(quote))
-    return { ...base, dayRate: quote.dayRate, long: { km: quote.km ?? 0, kmRate: quote.kmRate ?? 0, minimum: quote.minimum ?? 0 } };
+    return { ...base, dayRate: quote.dayRate, v3: { km: quote.km ?? 0, kmRate: quote.kmRate ?? 0, minimum: quote.minimum ?? 0 } };
   if (quote && pricedByTime(quote)) return { ...base, dayRate: quote.dayRate, time: { km: quote.km ?? 0 } };
   // Agreed under v2 (24 Nov 2026): the agreed driving day and way-home hour.
   if (quote && oneWay && pricedV2Long(rules, quote)) return { ...base, dayRate: quote.dayRate, v2Long: { km: quote.km ?? 0 } };
   if (quote) return { ...base, dayRate: quote.dayRate };
-  // No quote: the estimate's rates — a long one-way drop at the settings' price a km, hour home and minimum.
+  // No quote: the estimate's rates — a long one-way drop, v4, at the settings' prices.
   if (oneWay && rules.oneWay && isLongOneWay(rules, km)) {
     const ow = rules.oneWay;
+    const drive = Math.round(driveCharge(ow, km ?? 0));
     return {
       ...base,
-      dayRate: (km ?? 0) * ow.perKm,
+      dayRate: drive,
       extraHourRate: 0,
-      returnHourRate: ow.homeHour,
-      long: { km: km ?? 0, kmRate: ow.perKm, minimum: ow.minimum },
+      returnHourRate: 0,
+      v4: { km: km ?? 0, drive, nights: plan?.nights ?? 0, nightRate: ow.night, waitHourRate: ow.waitHour, minimum: ow.minimum, rates: ow, ...timing },
     };
   }
   const dayRate = dayRateFor(rules, km).from;
@@ -212,7 +262,7 @@ export type BillNow = {
  * Undefined before he starts.
  */
 export function billNow(
-  l: Pick<TripLink, 'kind' | 'nonstop' | 'startAt' | 'dropAt' | 'homeAt'>,
+  l: Pick<TripLink, 'kind' | 'nonstop' | 'startAt' | 'dropAt' | 'homeAt'> & { boardAt?: Date },
   rates: BillRates,
   rules: TripRules,
   graceMinutes: number,
@@ -222,12 +272,14 @@ export function billNow(
   const startAt = l.startAt.getTime();
   const dropAt = l.kind === 'one-way' ? l.dropAt?.getTime() : undefined;
   const homeAt = l.homeAt?.getTime() ?? Math.max(now, dropAt ?? startAt);
+  const boardAt = l.kind === 'one-way' ? l.boardAt?.getTime() : undefined;
   const bill = finalBill(rules, {
     kind: l.kind,
     nonstop: l.nonstop,
     startAt,
     dropAt,
     homeAt,
+    ...(boardAt !== undefined && { boardAt }),
     ...rates,
     graceMinutes,
   });
@@ -251,7 +303,21 @@ export function bookingBill(b: Bill, nonstop: boolean): Omit<BookingBill, 'at'> 
     ...(b.time && { km: b.time.km }),
     ...(b.v2Long && { km: b.v2Long.km }),
     // By the km (v3): the km, the price a km, the minimum and the round-off or top-up.
-    ...(b.long && { km: b.long.km, kmRate: b.long.kmRate, minimum: b.long.minimum, adjust: b.long.adjust }),
+    ...(b.v3 && { km: b.v3.km, kmRate: b.v3.kmRate, minimum: b.v3.minimum, adjust: b.v3.adjust }),
+    // v4: the km, the nights, his wait, the stops, the minimum and the round-off or top-up.
+    ...(b.v4 && {
+      km: b.v4.km,
+      nights: b.v4.nights,
+      nightRate: b.v4.nightRate,
+      waitHours: b.v4.waitHours,
+      waitHourRate: b.v4.waitHourRate,
+      waitCharge: b.v4.waitCharge,
+      stopsHours: b.v4.stopsHours,
+      stopsHourRate: b.v4.stopsHourRate,
+      stopsCharge: b.v4.stopsCharge,
+      minimum: b.v4.minimum,
+      adjust: b.v4.adjust,
+    }),
     ticket: b.ticket,
     nonstop,
   };
@@ -275,13 +341,39 @@ export function billLines(
     | 'returnCharge'
     | 'ticket'
   > &
-    Partial<Pick<Bill, 'route' | 'time' | 'long' | 'v2Long'>>,
+    Partial<Pick<Bill, 'route' | 'time' | 'v4' | 'v3' | 'v2Long'>>,
   rules: Pick<TripRules, 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): { label: string; amount: string }[] {
   const lines: { label: string; amount: string }[] = [];
+  // A long one-way drop, v4 (24 Nov 2026): the drive, the nights, his wait (drop → boarded), the stops, the round-off.
+  if (b.v4) {
+    const v = b.v4;
+    lines.push({ label: `Drive ${inr.format(v.km)} km`, amount: rupees(b.dayRate) });
+    if (v.nights) lines.push({ label: `${plural(v.nights, 'night')} on the road × ${rupees(v.nightRate)}`, amount: rupees(v.nights * v.nightRate) });
+    if (v.waitApplies) {
+      const from = v.waitFrom === 'boarded' ? 'drop → boarded' : v.waitFrom === 'train' ? 'drop → his train, no Boarded tap' : 'the usual wait, no Boarded tap';
+      lines.push({
+        label:
+          `Train wait (${from}), ${durationText(v.waitActualHours * 60)}: ` +
+          (v.waitHours ? `${v.waitHours} h × ${rupees(v.waitHourRate)} (the first ${v.waitFreeHours} h free, at most ${rupees(v.waitMax)})` : `free (the first ${v.waitFreeHours} h)`),
+        amount: rupees(v.waitCharge),
+      });
+    }
+    lines.push({
+      label:
+        `Stops the customer asked for: ${v.stopsHours} h × ${rupees(v.stopsHourRate)}` +
+        (v.plannedRoadHours !== undefined ? ` (on the road ${durationText(v.roadHours * 60)}, planned ${durationText(v.plannedRoadHours * 60)})` : ''),
+      amount: rupees(v.stopsCharge),
+    });
+    if (v.minimumApplies) lines.push({ label: `Up to the ${rupees(v.minimum)} minimum`, amount: `+${rupees(v.adjust)}` });
+    else if (v.adjust !== 0)
+      lines.push({ label: `Rounded to the nearest ${rupees(v.roundTo)}`, amount: `${v.adjust > 0 ? '+' : '−'}${rupees(Math.abs(v.adjust))}` });
+    if (b.ticket > 0) lines.push({ label: 'Ticket home (we bought it)', amount: rupees(b.ticket) });
+    return lines;
+  }
   // A long one-way drop by the km (24 Nov 2026, v3): the drive, his way home, the round-off or the minimum.
-  if (b.long) {
-    const l = b.long;
+  if (b.v3) {
+    const l = b.v3;
     lines.push({ label: `Driving ${inr.format(l.km)} km × ${rupees(l.kmRate)}`, amount: rupees(b.dayRate) });
     const parts = [
       l.homeFullDays ? `${plural(l.homeFullDays, 'day')} × ${rupees(l.homeDayMax)}` : null,
@@ -378,14 +470,51 @@ export function billLines(
 /** "₹1,750 × 2 × 24 h of the driver’s time + ₹390 for 3 h past them + ₹650 ticket" — for the customer's booking. */
 export function billBreakdown(
   b: Pick<Bill, 'days' | 'dayRate' | 'extraHours' | 'extraCharge' | 'returnHours' | 'returnCharge' | 'ticket'> &
-    Partial<Pick<Bill, 'route' | 'time' | 'long' | 'v2Long'>> & { awayHours?: number; km?: number; kmRate?: number; minimum?: number; adjust?: number },
+    Partial<Pick<Bill, 'route' | 'time' | 'v4' | 'v3' | 'v2Long'>> & {
+      awayHours?: number;
+      km?: number;
+      kmRate?: number;
+      minimum?: number;
+      adjust?: number;
+      nights?: number;
+      nightRate?: number;
+      waitHours?: number;
+      waitCharge?: number;
+      stopsHours?: number;
+      stopsCharge?: number;
+    },
 ): string {
+  // v4 (a bill from finalBill, or one saved on a booking from 24 Nov 2026).
+  if (b.v4 || pricedV4(b)) {
+    const km = b.v4?.km ?? b.km ?? 0;
+    const nights = b.v4?.nights ?? b.nights ?? 0;
+    const nightRate = b.v4?.nightRate ?? b.nightRate ?? 0;
+    const waitCharge = b.v4?.waitCharge ?? b.waitCharge ?? 0;
+    const waitHours = b.v4?.waitHours ?? b.waitHours ?? 0;
+    const stopsCharge = b.v4?.stopsCharge ?? b.stopsCharge ?? 0;
+    const stopsHours = b.v4?.stopsHours ?? b.stopsHours ?? 0;
+    const adjust = b.v4?.adjust ?? b.adjust ?? 0;
+    const minimum = b.v4?.minimum ?? b.minimum ?? 0;
+    const atMinimum = b.v4 ? b.v4.minimumApplies : adjust > 0 && minimum > 0 && b.dayRate + nights * nightRate + waitCharge + stopsCharge + adjust === minimum;
+    return (
+      [
+        `${rupees(b.dayRate)} drive (${inr.format(km)} km)`,
+        nights ? `${rupees(nights * nightRate)} for ${plural(nights, 'night')} on the road` : null,
+        waitCharge ? `${rupees(waitCharge)} train wait (${waitHours} h)` : null,
+        stopsCharge ? `${rupees(stopsCharge)} stops (${stopsHours} h)` : null,
+        atMinimum ? `${rupees(adjust)} up to the ${rupees(minimum)} minimum` : adjust > 0 ? `${rupees(adjust)} rounding` : null,
+        b.ticket > 0 ? `${rupees(b.ticket)} ticket` : null,
+      ]
+        .filter(Boolean)
+        .join(' + ') + (adjust < 0 ? ` − ${rupees(-adjust)} rounding` : '')
+    );
+  }
   // By the km (a bill from finalBill, or one saved on a booking from 24 Nov 2026, v3).
-  if (b.long || pricedByKm(b)) {
-    const km = b.long?.km ?? b.km ?? 0;
-    const adjust = b.long?.adjust ?? b.adjust ?? 0;
-    const minimum = b.long?.minimum ?? b.minimum ?? 0;
-    const atMinimum = b.long ? b.long.minimumApplies : adjust > 0 && minimum > 0 && b.dayRate + b.returnCharge + adjust === minimum;
+  if (b.v3 || pricedByKm(b)) {
+    const km = b.v3?.km ?? b.km ?? 0;
+    const adjust = b.v3?.adjust ?? b.adjust ?? 0;
+    const minimum = b.v3?.minimum ?? b.minimum ?? 0;
+    const atMinimum = b.v3 ? b.v3.minimumApplies : adjust > 0 && minimum > 0 && b.dayRate + b.returnCharge + adjust === minimum;
     return (
       [
         `${rupees(b.dayRate)} for ${inr.format(km)} km`,
@@ -435,9 +564,11 @@ export function billBreakdown(
 }
 
 /** "2 days + 5 h" — the driving as charged; the driver's time: "56 h away: 2 × 24 h + 8 h"; a route price: "route price, 62 h away". */
-export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bill, 'route' | 'time' | 'long'>>) =>
-  b.long
-    ? `${inr.format(b.long.km)} km, the drive’s price`
+export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bill, 'route' | 'time' | 'v4' | 'v3'>>) =>
+  b.v4
+    ? `${inr.format(b.v4.km)} km${b.v4.nights ? `, ${plural(b.v4.nights, 'night')} on the road` : ''}`
+    : b.v3
+    ? `${inr.format(b.v3.km)} km, the drive’s price`
     : b.time
     ? `${b.time.hours} h away: ${b.days} × 24 h${b.extraHours > 0 ? ` + ${b.extraHours} h` : ''}`
     : b.route
@@ -456,14 +587,14 @@ export const daysText = (b: Pick<Bill, 'days' | 'extraHours'> & Partial<Pick<Bil
  */
 export function driverPay(
   b: Pick<Bill, 'days' | 'extraHours' | 'returnHours'> &
-    Partial<Pick<Bill, 'route' | 'time' | 'long' | 'v2Long' | 'driveMinutes' | 'returnMinutes'>>,
+    Partial<Pick<Bill, 'route' | 'time' | 'v4' | 'v3' | 'v2Long' | 'driveMinutes' | 'returnMinutes'>>,
   dayCost: number,
   hourPay: number,
   rules: Pick<TripRules, 'hoursPerDay' | 'returnHour' | 'returnMaxPerDay' | 'returnFullDayAfter'>,
 ): number {
   const returnHourPay = hourPay;
-  // A long one-way drop by the km (v3): his whole time, start → home — each 24 h his day, the hours left over his hour (at most a day).
-  if (b.long) return wholeTimePay(((b.driveMinutes ?? 0) + (b.returnMinutes ?? 0)) / 60, dayCost, hourPay);
+  // A long one-way drop by the km (v3) or v4: his whole time, start → home — each 24 h his day, the hours left over his hour (at most a day).
+  if (b.v4 || b.v3) return wholeTimePay(((b.driveMinutes ?? 0) + (b.returnMinutes ?? 0)) / 60, dayCost, hourPay);
   // v2: his day for each driving day and each full 24 h home, his hourly pay for the rest (at most a day).
   if (b.v2Long) return (b.days + b.v2Long.returnFullDays) * dayCost + Math.min(dayCost, b.v2Long.returnLeftoverHours * hourPay);
   if (b.time) return b.days * dayCost + Math.min(b.extraHours * hourPay, dayCost);

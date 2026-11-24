@@ -281,6 +281,8 @@ function load() {
             prices: { oneHour: 300, threeHours: 600, twelveHours: 1400, fullDay: { from: 1000, to: 1200 }, nightFrom: 500, localExtraHour: 150 },
             google: { profile: 'https://maps.app.goo.gl/x', writeReview: 'https://search.google.com/local/writereview?placeid=P1' },
             payments: { cashLimit: 2000 },
+            // The train check at the drop: a destination's stations (the site publishes every one).
+            destinations: [{ id: 'ranchi', name: 'Ranchi', rail: { stations: ['RNC', 'HTE'], hubs: [] } }],
           });
         }
         if (url.startsWith('https://cpaas.messagecentral.com/')) {
@@ -989,8 +991,8 @@ describe('formatting', () => {
     const elsewhere = { ...booking, trip: { ...trip, to: 'Jaipur', destId: '', km: 0, days: 1, returnHours: 0, estFrom: 0, estTo: 0 } };
     assert.equal(ctx.tripLine(elsewhere), 'Raipur → Jaipur (not in our list) · one-way drop · 1 day · quote on the call');
     // A place from the list of all India: no id, but its km (from the map) and an estimate.
-    const fromMap = { ...elsewhere, trip: { ...elsewhere.trip, to: 'Gaya, Bihar', km: 681, days: 2, returnHours: 15, estFrom: 3550, estTo: 3550 } };
-    assert.equal(ctx.tripLine(fromMap), 'Raipur → Gaya, Bihar (km from the map) · one-way drop · ~681 km · 2 days + 15 h getting home · est. ₹3,550');
+    const fromMap = { ...elsewhere, trip: { ...elsewhere.trip, to: 'Gaya, Bihar', km: 681, days: 2, returnHours: 15, estFrom: 3150, estTo: 3150 } };
+    assert.equal(ctx.tripLine(fromMap), 'Raipur → Gaya, Bihar (km from the map) · one-way drop · ~681 km · 2 days + 15 h getting home · est. ₹3,150');
     assert.equal(ctx.tripLine({ ...booking, trip: undefined }), '');
   });
   test('the pinned pickup spot: a Google Maps link in the alert, the email and the Sheet', () => {
@@ -2023,6 +2025,88 @@ describe('automation', () => {
       assert.equal(b.status, 'assigned');
       assert.equal(b.localBill, undefined);
       assert.equal(env.telegram.length, n);
+    });
+
+    describe('the train check at the drop (24 Nov 2026)', () => {
+      const daily = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+      const rr = (from, trains) => ({
+        success: true,
+        data: { from: { code: from, name: `${from} Jn` }, to: { code: 'R', name: 'Raipur Jn' }, count: trains.length, trains },
+      });
+      const tr = (number, dep, arr) => ({
+        train: { number, name: `Train ${number}`, type: 'Express', runDays: daily },
+        from: { departure: dep, day: 1 }, to: { arrival: arr, day: 2 }, duration: null,
+      });
+      const ranchi = (extra = {}) =>
+        booking('w1', {
+          status: 'assigned', assignedDriver: RAJU, package: 'one-way-drop', customerUid: 'u1',
+          trip: { to: 'Ranchi', destId: 'ranchi', kind: 'one-way', km: 616, days: 1, returnHours: 21, estFrom: 3350, estTo: 3350 }, ...extra,
+        });
+
+      test('Job done → the trains home with their prices, Telegram to the office, a push to the customer; once', () => {
+        env.props.set('RAILRADAR_API_KEY', 'rr_live_SECRET123');
+        env.rail.answer = (url) =>
+          url.includes('/between/RNC/R') ? { code: 200, body: rr('RNC', [tr('18452', '21:40', '07:10'), tr('12874', '06:00', '05:30')]) } : { code: 200, body: rr('HTE', []) };
+        device('u1', 'p1', 'ExponentPushToken[customer0001]', 'hi');
+        ranchi();
+        const dropped = ago(5 * MIN);
+        tapped('w1', { leftAt: ago(13 * 3600_000), arrivedAt: ago(12 * 3600_000), doneAt: dropped });
+        env.ctx.watchChanges_();
+        const b = get('bookings/w1');
+        const check = b.returnCheck;
+        assert.ok(check && !check.failed, 'checked');
+        assert.equal(check.dropAt.getTime(), dropped.getTime());
+        assert.ok(check.options.length >= 1 && check.options.length <= 3);
+        const r = env.ctx.oneWayOf(null);
+        for (const o of check.options) {
+          assert.ok(['18452', '12874'].includes(o.train));
+          assert.ok(o.dep.getTime() >= dropped.getTime() + 90 * MIN, 'he can board 90 minutes after the drop');
+          assert.equal(o.price, env.ctx.returnPriceOf(b, r, dropped.getTime(), o.dep.getTime()).price);
+          assert.equal(o.waitMin, Math.round((o.dep.getTime() - dropped.getTime()) / MIN));
+          assert.equal(o.change, null);
+        }
+        assert.ok(env.rail.calls.every((c) => !c.url.includes('date=')), 'whole timetables, saved and shared');
+        const t = env.telegram.find((m) => /car dropped .* at Ranchi/.test(m.text));
+        assert.ok(t && /Trains home: 1\) (18452|12874) /.test(t.text) && /the customer books his ticket/.test(t.text));
+        const push = env.pushes.find((m) => m.data && m.data.bookingId === 'w1');
+        assert.equal(push.body, 'ड्राइवर ने गाड़ी छोड़ दी है। उनके घर का टिकट बुक करें — एक ट्रेन चुनें।');
+        // Once: the next minute does not look again.
+        const calls = env.rail.calls.length;
+        env.ctx.watchChanges_();
+        assert.equal(env.rail.calls.length, calls);
+
+        // "I booked this train": the final price with it, a push, a line for the office.
+        const pick = check.options[0];
+        const doc = env.store.docs.get('bookings/w1');
+        doc.returnChoice = env.ctx.toValue({ train: pick.train, dep: pick.dep, at: new Date() });
+        env.ctx.watchChanges_();
+        const price = get('bookings/w1').returnPrice;
+        assert.deepEqual([price.price, price.waitCharge, price.train], [pick.price, pick.waitCharge, pick.train]);
+        assert.ok(env.pushes.some((m) => m.body === `ट्रेन ${pick.train} के साथ अंतिम कीमत ₹${env.ctx.inr(pick.price)}`));
+        assert.ok(env.telegram.some((m) => m.text.includes(`booked train ${pick.train}`)));
+        const n = env.pushes.length;
+        env.ctx.watchChanges_();
+        assert.equal(env.pushes.length, n, 'priced once');
+
+        // Boarded: into the clock, and Telegram hears it.
+        const boarded = ago(MIN);
+        tapped('w1', { leftAt: ago(13 * 3600_000), arrivedAt: ago(12 * 3600_000), doneAt: dropped, boardAt: boarded });
+        env.ctx.watchChanges_();
+        assert.equal(get('bookings/w1').clock.boardAt.getTime(), boarded.getTime());
+        assert.ok(env.telegram.some((m) => /Raju Sahu boarded his train home/.test(m.text)));
+      });
+
+      test('without the RailRadar key the check is written as failed: the office calls; a short drop gets no check', () => {
+        ranchi();
+        tapped('w1', { leftAt: ago(13 * 3600_000), arrivedAt: ago(12 * 3600_000), doneAt: ago(5 * MIN) });
+        env.ctx.watchChanges_();
+        assert.equal(get('bookings/w1').returnCheck.failed, true);
+        assert.ok(env.telegram.some((m) => /could not be checked — call the customer/.test(m.text)));
+        booking('w2', { status: 'assigned', assignedDriver: RAJU, package: 'one-way-drop', trip: { to: 'Bilaspur', destId: 'bilaspur', kind: 'one-way', km: 113, days: 1, returnHours: 4, estFrom: 1200, estTo: 1200 } });
+        tapped('w2', { leftAt: ago(4 * 3600_000), arrivedAt: ago(3 * 3600_000), doneAt: ago(MIN) });
+        env.ctx.watchChanges_();
+        assert.equal(get('bookings/w2').returnCheck, undefined, 'up to 160 km: no train check');
+      });
     });
   });
 

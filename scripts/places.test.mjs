@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { destinations, estimate, findDestination, pickupCities, planTrip, roadKm } from '../lib/outstation.ts';
+import { destinations, driveCharge, estimate, findDestination, pickupCities, planTrip, roadKm } from '../lib/outstation.ts';
 import {
   NO_ROAD_STATES,
   RENAMED_STATIONS,
@@ -143,7 +143,7 @@ test('a booking to any place in India, from every pickup city, has the shape the
         assert.ok(isTrip(t, pkg), `${city} → ${t.to}: ${JSON.stringify(t)}`);
         if (kind === 'one-way' && km > settings.prices.outstationNear[0].upToKm) {
           assert.ok(est.long, `${t.to}: by the km`);
-          assert.equal(est.long.driving, km * settings.outstation.oneWay.perKm);
+          assert.equal(est.long.drive, driveCharge(settings.outstation.oneWay, km));
         }
         n++;
       }
@@ -154,7 +154,8 @@ test('a booking to any place in India, from every pickup city, has the shape the
   const gaya = places.find((p) => p.name === 'Gaya' && p.state === 'Bihar');
   const km = placeKm(findDestination('raipur'), gaya, ROAD);
   const est = estimate(rules, planTrip(rules, km, 'one-way', 0, {}, 7, false));
-  assert.deepEqual([placeLabel(gaya), km, est.long.driving], ['Gaya, Bihar', 681, 2043]);
+  // 1,500 + 300 × 2.50 + 181 × 3.25 = 2,838.25 for the drive.
+  assert.deepEqual([placeLabel(gaya), km, est.long.drive], ['Gaya, Bihar', 681, 2838.25]);
   assert.equal(placeStation(gaya), 'GAYA');
 });
 

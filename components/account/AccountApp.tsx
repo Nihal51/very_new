@@ -12,7 +12,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, Input } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
-import { loadProfile, saveProfile, signOutUser, watchUser, type Profile } from '@/lib/auth';
+import { chooseReturnTrain, loadProfile, saveProfile, signOutUser, watchUser, type Profile } from '@/lib/auth';
 import {
   BOOKING_STATUS,
   formatDateTime,
@@ -22,8 +22,12 @@ import {
   toBill,
   toClock,
   toDate,
+  toReturnCheck,
+  toReturnChoice,
+  toReturnPrice,
   type Booking,
 } from '@/lib/bookings';
+import { seatsLink } from '@/lib/rail';
 import { getFirebaseApp, isFirebaseConfigured } from '@/lib/firebase';
 import { rupees } from '@/lib/settings';
 import { quoteBreakdown, tripSummary } from '@/lib/trip';
@@ -210,6 +214,9 @@ function Dashboard({ user, profile, onProfile }: { user: User; profile: Profile;
                   createdAt: toDate(data.createdAt),
                   clock: toClock(data.clock),
                   bill: toBill(data.bill),
+                  returnCheck: toReturnCheck(data.returnCheck),
+                  returnChoice: toReturnChoice(data.returnChoice),
+                  returnPrice: toReturnPrice(data.returnPrice),
                 };
               })
               .sort((a, b) => (b.createdAt?.getTime() ?? 9e15) - (a.createdAt?.getTime() ?? 9e15)),
@@ -286,6 +293,91 @@ function Dashboard({ user, profile, onProfile }: { user: User; profile: Profile;
   );
 }
 
+/**
+ * After the drop: the trains home the robot found for the driver, with the
+ * whole price with each — the customer books his ticket ("Check seats" goes
+ * to the railway's seat page; nothing here checks seats), then taps "I booked
+ * this train". After that: "Final price ₹2,650 · train 18452".
+ */
+function ReturnTrainsCard({ b }: { b: Booking }) {
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  const check = b.returnCheck!;
+  const choice = b.returnChoice;
+  const open = b.status === 'confirmed' || b.status === 'assigned';
+  if (choice)
+    return (
+      <p className="border-border mt-4 border-t pt-4 text-[0.9375rem]">
+        {b.returnPrice && b.returnPrice.train === choice.train ? (
+          <>
+            Final price <strong className="tabular">{rupees(b.returnPrice.price)}</strong> · train {choice.train}
+          </>
+        ) : (
+          <>Train {choice.train} — the final price comes in a few minutes.</>
+        )}
+      </p>
+    );
+  return (
+    <div className="border-border mt-4 border-t pt-4 text-[0.9375rem]">
+      <p className="font-semibold">Your driver has dropped the car. Book his ticket home — pick a train.</p>
+      {check.failed ? (
+        <p className="text-fg-muted mt-1">We could not check the trains just now — our team will call you.</p>
+      ) : check.options.length === 0 ? (
+        <p className="text-fg-muted mt-1">No train home soon — he comes home by bus.</p>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-2">
+          {check.options.map((o) => (
+            <li key={`${o.train}-${o.dep?.getTime() ?? ''}`} className="border-border flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border p-2.5">
+              <span className="min-w-0 flex-1">
+                <span className="font-semibold">
+                  {o.train} {o.name}
+                </span>
+                <span className="text-fg-muted block text-sm">
+                  Leaves {o.dep ? formatDateTime(o.dep) : '?'} · arrives {b.city} {o.arr ? formatDateTime(o.arr) : '?'}
+                  {o.change ? ` · change at ${o.change.station} to ${o.change.train}` : ''}
+                </span>
+                <span className="tabular block font-semibold">{rupees(o.price)} total</span>
+              </span>
+              {seatsLink(o.train) && (
+                <a href={seatsLink(o.train)} target="_blank" rel="noopener noreferrer" className="text-accent-text text-sm font-semibold underline">
+                  Check seats ↗
+                </a>
+              )}
+              {open && o.dep && (
+                <Button
+                  size="sm"
+                  loading={busy === o.train}
+                  onClick={async () => {
+                    setBusy(o.train);
+                    setErr('');
+                    try {
+                      await chooseReturnTrain(b.id, o.train, o.dep!);
+                    } catch {
+                      setErr('Could not save. Check your internet and try again.');
+                    } finally {
+                      setBusy('');
+                    }
+                  }}
+                >
+                  I booked this train
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {check.bus && check.options.length > 0 && (
+        <p className="text-fg-muted mt-2 text-sm">The first train leaves late — a bus is fine too; the final bill counts his real wait.</p>
+      )}
+      {err && (
+        <Alert tone="error" className="mt-2">
+          {err}
+        </Alert>
+      )}
+    </div>
+  );
+}
+
 function BookingRow({ b }: { b: Booking }) {
   const status = BOOKING_STATUS[b.status] ?? BOOKING_STATUS.new;
   return (
@@ -341,6 +433,7 @@ function BookingRow({ b }: { b: Booking }) {
           </div>
         )}
       </dl>
+      {b.returnCheck && <ReturnTrainsCard b={b} />}
       {b.assignedDriver && b.status === 'assigned' && (
         <div className="border-border mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
           <p className="text-[0.9375rem]">

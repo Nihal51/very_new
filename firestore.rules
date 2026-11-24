@@ -215,7 +215,8 @@ service cloud.firestore {
     // admin-only timeline, never here.
     function isQuote(q) {
       return q is map
-        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'extraCharge', 'awayHours', 'km', 'kmRate', 'minimum', 'adjust', 'ticket', 'at'])
+        && q.keys().hasOnly(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'extraCharge', 'awayHours', 'km', 'kmRate', 'minimum', 'adjust',
+                             'nights', 'nightRate', 'waitHours', 'waitHourRate', 'waitCharge', 'ticket', 'at'])
         && q.keys().hasAll(['amount', 'dayRate', 'days', 'returnHours', 'returnHourRate', 'returnCharge', 'extraHours', 'extraHourRate', 'ticket', 'at'])
         && q.amount is int && q.amount > 0 && q.amount <= 1000000
         && q.dayRate is int && q.dayRate > 0 && q.dayRate <= 100000
@@ -240,21 +241,59 @@ service cloud.firestore {
         // A route price (quotes from 1 Nov 2026): one day at the route price, nothing else but the ticket.
         && isRoute(q, 0)
         && isKmPrice(q)
-        && q.amount == q.dayRate * q.days + q.returnCharge + q.get('extraCharge', q.extraHourRate * q.extraHours) + q.get('adjust', 0) + q.ticket
+        && isV4Price(q)
+        && isAdjust(q)
+        && q.amount == q.dayRate * q.days + q.returnCharge + q.get('extraCharge', q.extraHourRate * q.extraHours)
+             + v4Parts(q) + q.get('adjust', 0) + q.ticket
         && q.at == request.time;
     }
 
-    // A long one-way drop priced by the km (quotes and bills from 24 Nov 2026):
-    // `kmRate` the price a km — then one "day" at dayRate = km × kmRate (the
-    // drive), no extra hours, his way home in returnHours / returnCharge; and
-    // `adjust`, added to the amount: the round-off to the nearest ₹50 (at most
-    // ₹100 either way) or, when the price is `minimum`, the top-up to it.
-    // Without kmRate, neither minimum nor adjust: every older shape as it was.
+    // A long one-way drop priced by the km (v3, quotes and bills of 24 Nov
+    // 2026): `kmRate` the price a km — then one "day" at dayRate = km × kmRate
+    // (the drive), no extra hours, his way home in returnHours / returnCharge,
+    // and a minimum and adjust (isAdjust).
     function isKmPrice(m) {
-      return (!('kmRate' in m) && !('minimum' in m) && !('adjust' in m))
-        || ('kmRate' in m && m.kmRate is int && m.kmRate >= 1 && m.kmRate <= 100
+      return !('kmRate' in m)
+        || (m.kmRate is int && m.kmRate >= 1 && m.kmRate <= 100 && !('nightRate' in m)
           && 'km' in m && m.days == 1 && m.dayRate == m.km * m.kmRate
           && !('awayHours' in m) && m.extraHours == 0 && m.get('extraCharge', 0) == 0
+          && 'minimum' in m && 'adjust' in m);
+    }
+
+    // A long one-way drop, v4 (from 24 Nov 2026; `nightRate` says so): one
+    // "day" at dayRate = the drive, nights × nightRate, his wait for the train
+    // (waitCharge, never more than waitHours × waitHourRate), on a bill the
+    // stops the customer asked for (stopsCharge, never more than stopsHours ×
+    // stopsHourRate); no way-home or extra-hour charge; a minimum and adjust
+    // (isAdjust). Without nightRate none of these fields: older shapes as they were.
+    function isV4Price(m) {
+      return (!('nightRate' in m) && !('nights' in m) && !('waitHours' in m) && !('waitHourRate' in m) && !('waitCharge' in m)
+               && !('stopsHours' in m) && !('stopsHourRate' in m) && !('stopsCharge' in m))
+        || ('nightRate' in m && m.nightRate is int && m.nightRate >= 0 && m.nightRate <= 5000
+          && m.nights is int && m.nights >= 0 && m.nights <= 30
+          && 'km' in m && m.days == 1 && !('awayHours' in m)
+          && m.extraHours == 0 && m.get('extraCharge', 0) == 0 && m.returnHours == 0 && m.returnCharge == 0
+          && m.waitHours is int && m.waitHours >= 0 && m.waitHours <= 48
+          && m.waitHourRate is int && m.waitHourRate >= 0 && m.waitHourRate <= 1000
+          && m.waitCharge is int && m.waitCharge >= 0 && m.waitCharge <= m.waitHourRate * m.waitHours
+          && m.get('stopsHours', 0) is int && m.get('stopsHours', 0) >= 0 && m.get('stopsHours', 0) <= 200
+          && m.get('stopsHourRate', 0) is int && m.get('stopsHourRate', 0) >= 0 && m.get('stopsHourRate', 0) <= 1000
+          && m.get('stopsCharge', 0) is int && m.get('stopsCharge', 0) >= 0
+          && m.get('stopsCharge', 0) <= m.get('stopsHourRate', 0) * m.get('stopsHours', 0)
+          && 'minimum' in m && 'adjust' in m);
+    }
+
+    // What v4 adds to the amount: the nights, his wait, the stops (0 on every older shape).
+    function v4Parts(m) {
+      return m.get('nightRate', 0) * m.get('nights', 0) + m.get('waitCharge', 0) + m.get('stopsCharge', 0);
+    }
+
+    // `minimum` and `adjust` (v3 and v4 only), added to the amount: the
+    // round-off to the nearest ₹50 (at most ₹100 either way) or, when the
+    // price is `minimum`, the top-up to it.
+    function isAdjust(m) {
+      return (!('minimum' in m) && !('adjust' in m))
+        || (('kmRate' in m || 'nightRate' in m)
           && 'minimum' in m && m.minimum is int && m.minimum >= 0 && m.minimum <= 100000
           && 'adjust' in m && m.adjust is int
           && ((m.adjust >= -100 && m.adjust <= 100) || (m.adjust > 0 && m.amount - m.ticket == m.minimum)));
@@ -293,9 +332,12 @@ service cloud.firestore {
     // when he started, dropped the car and got home.
     function isClock(c) {
       return c is map
-        && c.keys().hasOnly(['startAt', 'dropAt', 'homeAt'])
-        && isOptTime(c, 'startAt') && isOptTime(c, 'dropAt') && isOptTime(c, 'homeAt')
-        && inOrder(c, 'startAt', 'dropAt') && inOrder(c, 'dropAt', 'homeAt') && inOrder(c, 'startAt', 'homeAt');
+        && c.keys().hasOnly(['startAt', 'dropAt', 'boardAt', 'homeAt'])
+        && isOptTime(c, 'startAt') && isOptTime(c, 'dropAt') && isOptTime(c, 'boardAt') && isOptTime(c, 'homeAt')
+        && inOrder(c, 'startAt', 'dropAt') && inOrder(c, 'dropAt', 'homeAt') && inOrder(c, 'startAt', 'homeAt')
+        // Boarded his train home (one-way, 24 Nov 2026): after the drop, before home.
+        && (!('boardAt' in c) || 'dropAt' in c)
+        && inOrder(c, 'dropAt', 'boardAt') && inOrder(c, 'boardAt', 'homeAt');
     }
 
     // The final bill from the real times (lib/outstation.ts finalBill), saved
@@ -303,7 +345,8 @@ service cloud.firestore {
     // driver's pay and the profit go in the admin-only timeline.
     function isBill(b) {
       return b is map
-        && b.keys().hasOnly(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'awayHours', 'km', 'kmRate', 'minimum', 'adjust', 'ticket', 'nonstop', 'at'])
+        && b.keys().hasOnly(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'awayHours', 'km', 'kmRate', 'minimum', 'adjust',
+                             'nights', 'nightRate', 'waitHours', 'waitHourRate', 'waitCharge', 'stopsHours', 'stopsHourRate', 'stopsCharge', 'ticket', 'nonstop', 'at'])
         && b.keys().hasAll(['amount', 'dayRate', 'days', 'extraHours', 'extraHourRate', 'extraCharge', 'returnHours', 'returnHourRate', 'returnCharge', 'ticket', 'nonstop', 'at'])
         && b.amount is int && b.amount > 0 && b.amount <= 1000000
         && b.dayRate is int && b.dayRate > 0 && b.dayRate <= 100000
@@ -324,7 +367,9 @@ service cloud.firestore {
         // A route price: one day at the price, the hours late at the hourly rate (checked above).
         && isRoute(b, 200)
         && isKmPrice(b)
-        && b.amount == b.dayRate * b.days + b.extraCharge + b.returnCharge + b.get('adjust', 0) + b.ticket
+        && isV4Price(b)
+        && isAdjust(b)
+        && b.amount == b.dayRate * b.days + b.extraCharge + b.returnCharge + v4Parts(b) + b.get('adjust', 0) + b.ticket
         && b.at == request.time;
     }
 
@@ -343,6 +388,26 @@ service cloud.firestore {
     function notStarted(bookingId) {
       return !exists(/databases/$(database)/documents/tripTaps/$(bookingId))
         || !('leftAt' in get(/databases/$(database)/documents/tripTaps/$(bookingId)).data);
+    }
+
+    // The train home the customer booked for the driver ("I booked this train",
+    // 24 Nov 2026), or the office set: the train number, when it leaves, the
+    // server's time.
+    function isReturnChoice(c) {
+      return c is map
+        && c.keys().hasOnly(['train', 'dep', 'at'])
+        && c.keys().hasAll(['train', 'dep', 'at'])
+        && c.train is string && c.train.matches('^[0-9]{4,5}$')
+        && c.dep is timestamp
+        && c.at == request.time;
+    }
+
+    // One of the (at most 3) trains the robot offered at the drop (returnCheck.options).
+    function isOfferedTrain(train, check) {
+      let o = check.get('options', []);
+      return (o.size() > 0 && o[0].train == train)
+        || (o.size() > 1 && o[1].train == train)
+        || (o.size() > 2 && o[2].train == train);
     }
 
     match /bookings/{bookingId} {
@@ -398,7 +463,7 @@ service cloud.firestore {
       // Internal notes do NOT live here — the customer can read this document —
       // they go in the admin-only timeline below.
       allow update: if isAdmin()
-        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'quote', 'clock', 'bill', 'driverConfirmed', 'updatedAt', 'updatedBy'])
+        && changedOnly(['status', 'assignedDriver', 'cancelReason', 'quote', 'clock', 'bill', 'driverConfirmed', 'returnChoice', 'updatedAt', 'updatedBy'])
         && request.resource.data.status in bookingStatuses()
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['driverConfirmed'])
             || request.resource.data.get('driverConfirmed', null) == null
@@ -412,6 +477,10 @@ service cloud.firestore {
         && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['bill'])
             || request.resource.data.get('bill', null) == null
             || isBill(request.resource.data.bill))
+        // The office sets the train the customer booked (any train) or clears it.
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['returnChoice'])
+            || request.resource.data.get('returnChoice', null) == null
+            || isReturnChoice(request.resource.data.returnChoice))
         && (request.resource.data.get('assignedDriver', null) == null
             || isDriverRef(request.resource.data.assignedDriver))
         && isOptionalText(request.resource.data.get('cancelReason', ''), 200)
@@ -440,6 +509,20 @@ service cloud.firestore {
         && !('acceptedPrice' in resource.data)
         && changedOnly(['acceptedPrice'])
         && isAcceptedPrice(request.resource.data.acceptedPrice, resource.data);
+
+      // "I booked this train" (24 Nov 2026): the customer, once the robot has
+      // offered the trains home at the drop (returnCheck, the robot's alone),
+      // picks one of them — once (again only after the office clears it), and
+      // not after the booking is completed or cancelled. The robot then writes
+      // returnPrice (the robot's alone).
+      allow update: if isSignedIn()
+        && resource.data.get('customerUid', '') == request.auth.uid
+        && resource.data.status in ['confirmed', 'assigned']
+        && resource.data.get('returnCheck', null) != null
+        && resource.data.get('returnChoice', null) == null
+        && changedOnly(['returnChoice'])
+        && isReturnChoice(request.resource.data.returnChoice)
+        && isOfferedTrain(request.resource.data.returnChoice.train, resource.data.returnCheck);
 
       // "Can't make it": the driver who took the job gives it back before he
       // has tapped Start, in the same transaction as his offer becoming
@@ -484,9 +567,11 @@ service cloud.firestore {
     //  the key (24–40 random letters and digits), so only someone who was sent
     //  the link can open or tap it, and nobody can list them. Each tap sets the
     //  next time to the server's clock, once and in order: start → drop (the
-    //  car handed over; one-way only) → home. The alerts robot copies the times
-    //  to the booking (clock) and tells Telegram; /admin works out the final
-    //  bill and can correct a time.
+    //  car handed over; one-way only) → board (boarded his train home; one-way,
+    //  may be skipped when he takes a bus) → home. The alerts robot copies the
+    //  times to the booking (clock), checks the trains home at the drop
+    //  (returnCheck, copied here too) and tells Telegram; /admin works out the
+    //  final bill and can correct a time.
 
     function isLoc(l) {
       return l is map
@@ -497,7 +582,7 @@ service cloud.firestore {
         && l.acc is number && l.acc >= 0 && l.acc <= 100000;
     }
 
-    // One tap for `step` ('start', 'drop' or 'home'): the server's time; the
+    // One tap for `step` ('start', 'drop', 'board' or 'home'): the server's time; the
     // phone's own clock (it may have been offline: at most a day earlier,
     // never more than 10 minutes ahead); where he was, if he allowed it.
     function isTap(step) {
@@ -517,6 +602,8 @@ service cloud.firestore {
       return o.closed == false
         && ((!('startAt' in o) && isTap('start'))
           || (o.kind == 'one-way' && ('startAt' in o) && !('dropAt' in o) && isTap('drop'))
+          // Boarded his train home (24 Nov 2026): one-way, after the drop, once, before home.
+          || (o.kind == 'one-way' && ('dropAt' in o) && !('boardAt' in o) && !('homeAt' in o) && isTap('board'))
           || (('startAt' in o) && (o.kind == 'round' || ('dropAt' in o)) && !('homeAt' in o) && isTap('home')));
     }
 
@@ -548,12 +635,16 @@ service cloud.firestore {
       // null), switching day-and-night driving, or closing the link once the
       // bill is saved; or the driver's tap.
       allow update: if (isAdmin()
-          && changedOnly(['startAt', 'dropAt', 'homeAt', 'nonstop', 'closed', 'updatedAt', 'by'])
+          && changedOnly(['startAt', 'dropAt', 'boardAt', 'homeAt', 'nonstop', 'closed', 'updatedAt', 'by'])
           && isOptTime(request.resource.data, 'startAt')
           && isOptTime(request.resource.data, 'dropAt')
+          && isOptTime(request.resource.data, 'boardAt')
           && isOptTime(request.resource.data, 'homeAt')
           && (request.resource.data.kind == 'one-way' || !('dropAt' in request.resource.data))
+          && (!('boardAt' in request.resource.data) || ('dropAt' in request.resource.data))
           && inOrder(request.resource.data, 'startAt', 'dropAt')
+          && inOrder(request.resource.data, 'dropAt', 'boardAt')
+          && inOrder(request.resource.data, 'boardAt', 'homeAt')
           && inOrder(request.resource.data, 'dropAt', 'homeAt')
           && inOrder(request.resource.data, 'startAt', 'homeAt')
           && request.resource.data.nonstop is bool
@@ -603,6 +694,8 @@ service cloud.firestore {
         && resource.data.driverPhone == request.auth.token.driverPhone
         && (tapIs('arrivedAt', 'leftAt')
           || tapIs('doneAt', 'arrivedAt')
+          // Boarded his train home (24 Nov 2026): one-way, after Job done (the drop), once, before home.
+          || (tapIs('boardAt', 'doneAt') && !('homeAt' in resource.data) && job().package == 'one-way-drop')
           || (tapIs('homeAt', 'doneAt') && job().package == 'one-way-drop'));
 
       // "Paid by UPI" / "Paid in cash": the driver whose taps these are, after

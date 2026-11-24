@@ -130,6 +130,21 @@ export async function saveQuote(user: User, bookingId: string, quote: Omit<Booki
   await batch.commit();
 }
 
+/**
+ * The office sets the train home the customer booked for the driver (or
+ * clears it, null): bookings/{id}.returnChoice, as the customer's app writes it
+ * (firestore.rules isReturnChoice). The robot then writes the final price
+ * with that train (returnPrice) and tells the customer.
+ */
+export async function setReturnChoice(user: User, bookingId: string, choice: { train: string; dep: Date } | null) {
+  const { db, doc, updateDoc, serverTimestamp, Timestamp } = await fs();
+  await updateDoc(doc(db, 'bookings', bookingId), {
+    returnChoice: choice ? { train: choice.train, dep: Timestamp.fromDate(choice.dep), at: serverTimestamp() } : null,
+    updatedAt: serverTimestamp(),
+    updatedBy: user.uid,
+  });
+}
+
 export async function changeDriverStatus(user: User, driverId: string, status: DriverStatus, adminNote?: string) {
   const { db, doc, updateDoc, serverTimestamp } = await fs();
   await updateDoc(doc(db, 'drivers', driverId), {

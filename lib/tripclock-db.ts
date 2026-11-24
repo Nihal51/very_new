@@ -6,7 +6,7 @@
 
 import type { User } from 'firebase/auth';
 
-import { toDate, type Booking, type BookingBill, type BookingClock } from './bookings';
+import { toDate, toReturnCheck, toReturnChoice, type Booking, type BookingBill, type BookingClock } from './bookings';
 import { getFirebaseApp, pingAlerts } from './firebase';
 import type { Loc, TripLink, TripStep } from './tripclock';
 
@@ -15,7 +15,7 @@ async function fs() {
   return { db: mod.getFirestore(app), ...mod };
 }
 
-const STEPS: TripStep[] = ['start', 'drop', 'home'];
+const STEPS: TripStep[] = ['start', 'drop', 'board', 'home'];
 
 function toLoc(v: unknown): Loc | undefined {
   if (!v || typeof v !== 'object') return undefined;
@@ -34,6 +34,9 @@ export function toTripLink(key: string, d: Record<string, unknown>): TripLink {
     driverName: String(d.driverName ?? ''),
     closed: d.closed === true,
     createdAt: toDate(d.createdAt),
+    // The robot's train check at the drop and the train chosen (copied from the booking).
+    returnCheck: toReturnCheck(d.returnCheck),
+    returnChoice: toReturnChoice(d.returnChoice),
   };
   for (const s of STEPS) {
     const at = toDate(d[`${s}At`]);
@@ -142,7 +145,7 @@ export async function saveFinalBill(
   bookingId: string,
   linkKey: string,
   bill: Omit<BookingBill, 'at'>,
-  clock: Required<Pick<BookingClock, 'startAt' | 'homeAt'>> & Pick<BookingClock, 'dropAt'>,
+  clock: Required<Pick<BookingClock, 'startAt' | 'homeAt'>> & Pick<BookingClock, 'dropAt' | 'boardAt'>,
   privateNote: string,
 ) {
   const { db, doc, collection, writeBatch, serverTimestamp, Timestamp } = await fs();
@@ -153,6 +156,7 @@ export async function saveFinalBill(
     clock: {
       startAt: Timestamp.fromDate(clock.startAt),
       ...(clock.dropAt && { dropAt: Timestamp.fromDate(clock.dropAt) }),
+      ...(clock.boardAt && { boardAt: Timestamp.fromDate(clock.boardAt) }),
       homeAt: Timestamp.fromDate(clock.homeAt),
     },
     updatedAt: serverTimestamp(),
