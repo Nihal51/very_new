@@ -114,7 +114,7 @@ export const settings = {
        package: each started hour over it, after 15 minutes' grace, from the
        driver's Arrived → Job done taps in the Driver app. The bill is
        worked out by itself and shown to the customer. */
-    localExtraHour: 150, //                   decide: price of each hour over the package
+    localExtraHour: 120, //                   each hour over the package (decided 24 Nov 2026)
   },
 
   /* ---------------------------------------------------------- payments ----
