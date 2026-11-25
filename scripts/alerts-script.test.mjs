@@ -2904,7 +2904,8 @@ describe('automation', () => {
       booking('old2', { status: 'completed', assignedDriver: RAJU });
       booking('old3', { status: 'cancelled', assignedDriver: RAJU });
       device('u1', 'p1', 'ExponentPushToken[customer0001]', 'en');
-      booking('b1', { status: 'assigned', assignedDriver: RAJU, updatedBy: `driver-${RAJU.phone}`, updatedAt: new Date(), customerUid: 'u1', pushedKey: 'confirmed' });
+      // He took it a few seconds before the office's Confirmed ✓ (two changes in one millisecond never happen for real).
+      booking('b1', { status: 'assigned', assignedDriver: RAJU, updatedBy: `driver-${RAJU.phone}`, updatedAt: new Date(Date.now() - 5000), customerUid: 'u1', pushedKey: 'confirmed' });
       takenOffer('b1');
       env.ctx.watchChanges_();
       env.ctx.notifyCustomers_();
