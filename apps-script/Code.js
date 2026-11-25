@@ -22,7 +22,9 @@
  *
  * It reads and writes Firestore through the REST API as the Google account that
  * owns this script, so it must be the account that owns the Firebase project.
- * Every query here is on a single field, so Firestore needs no extra indexes.
+ * Every query here is on a single field — and the one count (a driver's trips:
+ * two equality filters, which Firestore answers by merging single-field
+ * indexes) — so Firestore needs no extra indexes.
  *
  * SETUP: docs/bookings-system.md, "One-time setup". In short: paste this file and
  * appsscript.json into Extensions → Apps Script, add the script properties, send
@@ -36,6 +38,11 @@
  *   SITE_URL             default https://thedrivebuddy.in
  *   TELEGRAM_CHAT_ID     filled in by setup()
  *   EXPO_ACCESS_TOKEN    optional: only if "enhanced push security" is on in Expo
+ *   HIDE_DRIVER_PHONE    "on" once every driver has the Driver app that finds its jobs
+ *                        by id: the driver's number comes off every booking and live
+ *                        map (customers read them). Default off. docs/bookings-system.md
+ *   OFFICE_PHONE         optional: DriveBuddy's number for customers when the site
+ *                        cannot be read (default: the site's contact.phone)
  *   WHATSAPP_TOKEN       optional: WhatsApp Cloud API access token — automatic
  *   WHATSAPP_PHONE_ID    "driver assigned" messages stay off until both are set
  *                        (docs/whatsapp.md)
@@ -301,8 +308,12 @@ function pickupMapNote(b) {
   return typeof acc === 'number' ? '±' + Math.round(acc) + ' m' : 'pinned on the map';
 }
 
-/** A booking document → { heading: cell value }. Dates stay Dates so the Sheet can sort and filter by them. */
-function bookingRecord(id, b) {
+/**
+ * A booking document → { heading: cell value }. Dates stay Dates so the Sheet
+ * can sort and filter by them. phones: { driverId: number } for drivers whose
+ * number is no longer on the booking (HIDE_DRIVER_PHONE; the Sheet is the office's).
+ */
+function bookingRecord(id, b, phones) {
   var driver = b.assignedDriver || null;
   var notes = b.notes || '';
   var trip = tripLine(b);
@@ -320,7 +331,7 @@ function bookingRecord(id, b) {
     'Pickup map': pickupMapLink(b),
     'Trip time': formatWhen(b.preferredTime),
     Driver: driver ? sheetText(driver.name) : '',
-    'Driver phone': driver ? sheetPhone(driver.phone) : '',
+    'Driver phone': driver ? sheetPhone(driver.phone || (phones && phones[driver.id]) || '') : '',
     'Customer notes': sheetText(notes),
     'Customer type': (b.isReturning ? 'Returning' : 'New') + (b.customerUid ? ' · logged in' : ''),
     'Last update': b.updatedAt || b.createdAt || '',
@@ -517,19 +528,20 @@ function tripTelegram(c) {
  */
 function updateKey(b) {
   var d = b.assignedDriver;
-  return String(b.status || '') + (b.status === 'assigned' && d ? ':' + (d.id || d.phone || d.name) : '');
+  // The customer hears about a driver only once DriveBuddy has confirmed him (25 Nov 2026).
+  return String(b.status || '') + (b.status === 'assigned' && d ? ':' + (confirmedFor(b, d.id) ? d.id : 'wait') : '');
 }
 
 var PUSH_TEXT = {
   en: {
-    confirmed: function (c) { return { title: 'Booking confirmed', body: c.ref + ': we are choosing your driver. You will get their name and number here.' }; },
-    assigned: function (c) { return { title: 'Driver assigned', body: c.driver + ' will drive for ' + c.ref + '. Tap to see the details and call.' }; },
+    confirmed: function (c) { return { title: 'Booking confirmed', body: c.ref + ': we are choosing your driver. You will see who it is here once DriveBuddy confirms him.' }; },
+    assigned: function (c) { return { title: 'Driver assigned', body: c.driver + ' will drive for ' + c.ref + ', confirmed by DriveBuddy. Tap to see your driver — for anything, call DriveBuddy.' }; },
     completed: function (c) { return { title: 'Trip completed', body: 'Thank you for choosing DriveBuddy. We hope to drive for you again soon.' }; },
     cancelled: function (c) { return { title: 'Booking cancelled', body: c.ref + ' was cancelled. Need a driver? Book again any time.' }; },
   },
   hi: {
-    confirmed: function (c) { return { title: 'बुकिंग कन्फ़र्म', body: c.ref + ': हम आपका ड्राइवर चुन रहे हैं। उनका नाम और नंबर यहीं मिलेगा।' }; },
-    assigned: function (c) { return { title: 'ड्राइवर तय हो गया', body: c.ref + ' के लिए ' + c.driver + ' आएँगे। जानकारी और कॉल के लिए टैप करें।' }; },
+    confirmed: function (c) { return { title: 'बुकिंग कन्फ़र्म', body: c.ref + ': हम आपका ड्राइवर चुन रहे हैं। DriveBuddy के कन्फ़र्म करते ही वे यहीं दिखेंगे।' }; },
+    assigned: function (c) { return { title: 'ड्राइवर तय हो गया', body: c.ref + ' के लिए ' + c.driver + ' आएँगे, DriveBuddy ने कन्फ़र्म किया। ड्राइवर देखने के लिए टैप करें — कुछ भी हो तो DriveBuddy को कॉल करें।' }; },
     completed: function (c) { return { title: 'ट्रिप पूरी हुई', body: 'DriveBuddy चुनने के लिए धन्यवाद। फिर सेवा का मौका दीजिए।' }; },
     cancelled: function (c) { return { title: 'बुकिंग रद्द', body: c.ref + ' रद्द कर दी गई। ड्राइवर चाहिए तो कभी भी फिर बुक करें।' }; },
   },
@@ -544,7 +556,8 @@ function customerPush(c) {
   var b = c.booking;
   var texts = PUSH_TEXT[c.language] || PUSH_TEXT.en;
   var make = texts[b.status];
-  if (!make || (b.status === 'assigned' && !b.assignedDriver)) return null;
+  // A driver is told to the customer only once DriveBuddy has confirmed him (driverConfirmed).
+  if (!make || (b.status === 'assigned' && !(b.assignedDriver && confirmedFor(b, b.assignedDriver.id)))) return null;
   var msg = make({ ref: b.ref || 'Your booking', driver: b.assignedDriver ? b.assignedDriver.name : '' });
   return {
     to: c.token,
@@ -569,7 +582,9 @@ function oneLine(s) {
 /**
  * WhatsApp Cloud API request for the approved "driver assigned" template
  * (docs/whatsapp.md has its text). Values, in order: customer's first name,
- * booking number, driver's name, driver's mobile, trip time.
+ * booking number, driver's name, the number to call — DriveBuddy's own
+ * (c.contactPhone; 25 Nov 2026: customers never get the driver's number, the
+ * template's words are Meta's) — and the trip time.
  */
 function whatsappAssigned(c) {
   var b = c.booking;
@@ -588,7 +603,7 @@ function whatsappAssigned(c) {
           text(firstName(b.name)),
           text(c.ref),
           text(b.assignedDriver.name),
-          text(prettyPhone(b.assignedDriver.phone)),
+          text(prettyPhone(c.contactPhone)),
           text(formatWhen(b.preferredTime)),
         ],
       }],
@@ -803,9 +818,13 @@ function sendEmail_(msg) {
 /**
  * Phone notifications through Expo's push service (the app registers an Expo
  * push token per phone). Returns one ticket per message, same order:
- * { status: 'ok' } or { status: 'error', details: { error: 'DeviceNotRegistered' } }.
+ * { status: 'ok', id } or { status: 'error', details: { error: 'DeviceNotRegistered' } }.
+ * metas (same order): who each message is for — driverMeta() for a driver's
+ * phone, { c: 1 } for a customer's. Every ticket Expo took is kept for its
+ * receipt (pushReceipts_: a missing Android key fails there, not here); a
+ * ticket error is handled at once (alertOutcomes_).
  */
-function sendPush_(messages) {
+function sendPush_(messages, metas) {
   if (!messages.length) return [];
   var headers = { Accept: 'application/json' };
   var expoToken = prop_('EXPO_ACCESS_TOKEN');
@@ -817,11 +836,19 @@ function sendPush_(messages) {
     payload: JSON.stringify(messages),
     muteHttpExceptions: true,
   });
+  var tickets;
   if (res.getResponseCode() !== 200) {
     console.warn('Expo push ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 200));
-    return messages.map(function () { return { status: 'error', details: { error: 'RequestFailed' } }; });
+    tickets = messages.map(function () { return { status: 'error', details: { error: 'RequestFailed' } }; });
+  } else {
+    tickets = JSON.parse(res.getContentText()).data || [];
   }
-  return JSON.parse(res.getContentText()).data || [];
+  try {
+    keepTickets_(tickets, metas || []);
+  } catch (err) {
+    console.warn('push tickets: ' + (err && err.stack || err)); // never let the bookkeeping stop a notification's caller
+  }
+  return tickets;
 }
 
 /** True once the WhatsApp Cloud API is set up (docs/whatsapp.md). Until then the free one-tap button in /admin is the way. */
@@ -1053,7 +1080,11 @@ function tickWork_() {
   steps.push(onlyIf_(function () { return dispatchDue_(m); }, dispatchOffers_));
   if (m % 10 === 1) steps.push(processDrivers_, syncDriversSheet_, syncTripClocks_);
   if (m % 10 === 3 || m % 10 === 9) steps.push(remindUnhandled_, tripReminders_, pollPayments_, processRatingsStep_, cashLimits_);
-  steps.push(confirmBackfill_, onlyIf_(function () { return telegramDue_(m); }, telegramCallbacks_), ensureRailTrigger_, ensureTimeTriggers_);
+  steps.push(confirmBackfill_, driverCardBackfill_, onlyIf_(function () { return telegramDue_(m); }, telegramCallbacks_), ensureRailTrigger_, ensureTimeTriggers_);
+  // Push receipts only while tickets wait for one; the flags /admin follows (a fetch only when one changed);
+  // the driver-number clean-up only while HIDE_DRIVER_PHONE is on and it is not done.
+  steps.push(onlyIf_(receiptsDue_, pushReceipts_), robotFlags_);
+  if (m % 10 === 7) steps.push(onlyIf_(phoneBackfillDue_, phoneBackfill_));
   runSteps_(steps, 5000);
 }
 
@@ -1090,6 +1121,8 @@ function runSteps_(steps, waitMs) {
   var before = fetchCount_;
   quotaHit_ = false; // (a fresh execution in Apps Script; here after the pause)
   bookingsNumbered_ = 0;
+  driverPhoneCache_ = {};
+  cardedThisRun_ = {};
   stream_ = null;
   inRun_ = true;
   try {
@@ -1129,6 +1162,8 @@ function doPost(e) {
   } catch (err) {
     body = null; // the website's doorbell sends no JSON
   }
+  // "Change driver" in the apps and My account, "Send test alert" in /admin and the Driver app: their own doorbell.
+  if (body && (body.action === 'driver-change' || body.action === 'alert-test')) return actionPing_(body.action);
   if (body && (body.action === 'driver-otp' || body.action === 'driver-verify')) {
     var before = fetchCount_;
     try {
@@ -1808,7 +1843,7 @@ function offerPush(offer, token, raised) {
 
 /**
  * The website's public settings (SITE_URL/app-config.json, made from
- * site-settings.ts): { prices, google, payments, outstation.drive }, kept for an hour. null when
+ * site-settings.ts): { prices, google, payments, outstation, trains, destinations, contact.phone }, kept for an hour. null when
  * the site cannot be reached.
  */
 function siteConfig_() {
@@ -1829,6 +1864,8 @@ function siteConfig_() {
   var keep = {
     prices: all.prices, google: all.google || {}, payments: all.payments || {},
     outstation: { drive: o.drive || null, oneWay: o.oneWay || null }, trains: all.trains || {}, destinations: dest,
+    // DriveBuddy's own number: what customers call (never the driver's — WhatsApp's "driver assigned").
+    contact: { phone: (all.contact && all.contact.phone) || '' },
   };
   cache.put('siteConfig', JSON.stringify(keep), 3600);
   return keep;
@@ -1992,7 +2029,9 @@ function dispatchOffers_() {
       // An automatic offer only rings Telegram once its pay has reached the top.
       var notTopYet = rateCard ? !atTop : o.cutPercent > cuts[cuts.length - 1];
       if (step.alarm && o.by === 'robot' && notTopYet) step = { stage: 2, send: step.send, alarm: false, keepTime: true };
-      if (step.send.length) sendPush_(step.send.map(function (d) { return offerPush(o, d.token, raised); }));
+      if (step.send.length) {
+        sendPush_(step.send.map(function (d) { return offerPush(o, d.token, raised); }), step.send.map(function (d) { return driverMeta(d.id, d.token); }));
+      }
       if (step.alarm) {
         try {
           sendTelegram_({ text: '⏰ No driver has taken ' + (o.ref || 'a job') + ' (' + (PACKAGE_NAMES[o.package] || o.package) + ', ' + o.city + ') yet, at ₹' + inr(o.driverPay) + ' for the driver (' + o.cutPercent + '% cut). Call a driver, or change the offer in /admin.' });
@@ -2547,6 +2586,10 @@ function watchChanges_() {
   // for only while a train check waits for its choice (returnWatch), so an idle robot asks nothing more.
   if ((all || m % 4 === 2) && returnWatching_()) jobs.push({ spec: sinceSpec_('bookings', 'returnChoiceMs', 'returnChoice.at'), run: returnChoices_ });
   if (all || m % 4 === 0) jobs.push({ spec: { collection: 'offers', where: fieldFilter_('status', 'EQUAL', 'released'), field: 'status', limit: 20 }, run: releasedOffers_ });
+  // "Change driver" and test alerts (25 Nov 2026): at once on their own doorbell (doPost action), else every 10
+  // minutes and every hour — not on every doorbell, which stays at its 6 calls.
+  if (!all && m % 10 === 4) jobs.push({ spec: sinceSpec_('bookings', 'driverChangeMs', 'driverChangeRequest.at'), run: driverChanges_ });
+  if (!all && m % 60 === 56) jobs.push({ spec: sinceSpec_('alertTests', 'alertTestsMs', 'at'), run: alertTests_ });
   var results = fsQueryAll_(jobs.map(function (j) { return j.spec; }));
   if (!results[0].error) keepStream_(results[0].rows);
   jobs.forEach(function (j, i) {
@@ -2614,7 +2657,8 @@ function noteActiveJobs_(rows, jobs) {
   (rows || []).forEach(function (row) {
     var b = row.data || {};
     var d = b.assignedDriver;
-    var phone = d && d.phone ? phoneTail_(d.phone) : '';
+    // Who has the job: his phone's last 4 digits, or (no number on the booking, HIDE_DRIVER_PHONE) his id's last 8.
+    var phone = !d ? '' : d.phone ? phoneTail_(d.phone) : d.id ? 'i' + String(d.id).slice(-8) : '';
     var had = jobs[row.id];
     var same = had && had.p === phone;
     if (b.status === 'assigned' && phone) {
@@ -2726,8 +2770,10 @@ function tapsWatch_() {
 function changedBookings_(rows) {
   var jobs = activeJobs_();
   if (jobs && noteActiveJobs_(rows, jobs)) saveActiveJobs_(jobs);
+  if (hideDriverPhone_()) stripDriverPhones_(rows);
   instantConfirm_(rows);
   confirmAssignments_(rows, false);
+  driverCards_(rows);
   paymentsAwaitingBill_(rows);
   completedBookings_(rows);
 }
@@ -2830,7 +2876,7 @@ function releasedOffers_(rows) {
           update: {
             name: docName_('offerAlerts/' + row.id),
             fields: toFields({
-              stage: 0, stageAt: now, alerted: [], skipIds: who.id ? [who.id] : [], widenedAt: null, stillPushedAt: null,
+              stage: 0, stageAt: now, alerted: [], skipIds: skipIdsWith_(b, fsGet_('offerAlerts/' + row.id), who.id), widenedAt: null, stillPushedAt: null,
               basePay: fields.payBy === 'rates' ? fields.driverPay : null,
             }),
           },
@@ -2895,9 +2941,10 @@ function confirmButtons(id) {
  * instead (Telegram makes that tap-to-call by itself), for a chat that
  * refuses the link.
  */
-function confirmTelegram(b, id, plainPhone) {
+function confirmTelegram(b, id, plainPhone, phone) {
   var d = b.assignedDriver || {};
-  var digits = String(d.phone == null ? '' : d.phone).replace(/\D/g, '').slice(-10);
+  var number = phone != null ? phone : d.phone; // from drivers/{id} once bookings no longer carry it
+  var digits = String(number == null ? '' : number).replace(/\D/g, '').slice(-10);
   var phone = plainPhone ? escapeHtml(prettyPhone(digits)) : '<a href="tel:+91' + digits + '">' + escapeHtml(sheetPhone(digits)) + '</a>';
   return {
     text: '<b>' + escapeHtml(b.ref || id) + '</b>: ' + escapeHtml(d.name || 'A driver') + ' took it — call him to confirm · ' + phone + ' · ' +
@@ -2946,13 +2993,23 @@ function confirmedFor(b, driverId) {
   return Boolean(c && driverId && c.driverId === driverId);
 }
 
-/** The booking's driverConfirmed (robot-written; the Driver app sees the customer's details only once it is there). */
+/**
+ * The booking's driverConfirmed (robot-written; the Driver app sees the
+ * customer's details only once it is there) and, with it, the driver's card
+ * the customer sees (driverCard) — and updatedAt, so the customer's
+ * notification ("Driver assigned") follows in the next look.
+ */
 function writeDriverConfirmed_(id, by, driverId) {
+  var now = new Date();
+  var card = driverCardFor_(driverId);
+  var fields = { driverConfirmed: { at: now, by: by, driverId: driverId }, updatedAt: now };
+  if (card) fields.driverCard = card;
   fsCommit_([{
-    update: { name: docName_('bookings/' + id), fields: toFields({ driverConfirmed: { at: new Date(), by: by, driverId: driverId } }) },
-    updateMask: { fieldPaths: ['driverConfirmed'] },
+    update: { name: docName_('bookings/' + id), fields: toFields(fields) },
+    updateMask: { fieldPaths: Object.keys(fields) },
     currentDocument: { exists: true },
   }]);
+  cardedThisRun_[id] = true;
 }
 
 /** Was this booking's job taken by this driver in the Driver app (his offer)? */
@@ -2991,11 +3048,12 @@ function confirmAssignments_(rows, backfill) {
     if (had && (take ? had.key === key : had.driverId === d.id)) return;
     var asked = String(bookOf_(row.id).confirmAskedFor || '');
     if (take ? asked === key : asked.indexOf(d.id + '@') === 0) return;
-    var sent = sendTelegram_(confirmTelegram(b, row.id, false));
-    if (sent === 'failed') sent = sendTelegram_(confirmTelegram(b, row.id, true));
+    var phone = driverPhoneOf_(d);
+    var sent = sendTelegram_(confirmTelegram(b, row.id, false, phone));
+    if (sent === 'failed') sent = sendTelegram_(confirmTelegram(b, row.id, true, phone));
     if (sent === 'off') return;
     var at = take ? b.updatedAt.getTime() : Date.now();
-    pending[row.id] = { key: key, driverId: d.id, name: d.name || '', phone: String(d.phone || ''), ref: b.ref || '', at: at, reminded: false };
+    pending[row.id] = { key: key, driverId: d.id, name: d.name || '', phone: String(phone || ''), ref: b.ref || '', at: at, reminded: false };
     saveBook_(row.id, { confirmAskedFor: key });
   });
   if (pending) saveConfirmsPending_(pending);
@@ -3065,9 +3123,9 @@ function giveToAnother_(id, b, e) {
   var fields = reopenedOffer(o, autoCuts(prop_('AUTO_OFFER_CUTS'))[0], now, b, rates, rates && b.trip ? siteNearKm_() : 0, rates && b.trip ? siteDrive_() : null);
   fsCommit_([
     {
-      // driverConfirmed is in the mask but not the fields: removed, it was about him.
+      // driverConfirmed and driverCard are in the mask but not the fields: removed, they were about him.
       update: { name: docName_('bookings/' + id), fields: toFields({ status: 'confirmed', assignedDriver: null, updatedAt: now, updatedBy: 'robot' }) },
-      updateMask: { fieldPaths: ['status', 'assignedDriver', 'updatedAt', 'updatedBy', 'driverConfirmed'] },
+      updateMask: { fieldPaths: ['status', 'assignedDriver', 'updatedAt', 'updatedBy', 'driverConfirmed', 'driverCard'] },
       currentDocument: { exists: true },
     },
     robotEvent_(id, 'assigned', 'confirmed', 'Office gave it to another driver', now),
@@ -3085,7 +3143,7 @@ function giveToAnother_(id, b, e) {
   ]);
   dispatchOn_();
   var av = fsGet_('availability/' + e.driverId);
-  if (av && av.pushToken) sendPush_([givenAwayPush(av.pushToken, id)]);
+  if (av && av.pushToken) sendPush_([givenAwayPush(av.pushToken, id)], [driverMeta(e.driverId, av.pushToken)]);
   return '';
 }
 
@@ -3135,7 +3193,7 @@ function syncTaps_(id, taps) {
   if (!b || b.status === 'cancelled') return;
   // Taps from a driver who no longer has the job (the office gave it to
   // someone else after he tapped Start) are not this trip's.
-  if (!b.assignedDriver || String(b.assignedDriver.phone || '') !== String(taps.driverPhone || '')) return;
+  if (!b.assignedDriver || !sameDriver_(b.assignedDriver, taps.driverPhone)) return;
   if (TRIP_TAP_KINDS[b.package]) {
     var clock = tapsClockOf(b.package, taps);
     if (!clock.startAt) return;
@@ -3335,7 +3393,7 @@ function paymentsAwaitingBill_(rows) {
     if ((b.status !== 'assigned' && b.status !== 'completed') || !b.assignedDriver) return;
     if (!billAmountOf(b) || (b.payment && b.payment.status === 'paid')) return;
     var taps = fsGet_('tripTaps/' + row.id);
-    if (!taps || String(taps.driverPhone || '') !== String(b.assignedDriver.phone || '')) return;
+    if (!taps || !sameDriver_(b.assignedDriver, taps.driverPhone)) return;
     if (taps.paidBy) {
       var p = takePayment_(row.id, b, taps, false);
       if (p) b.payment = p; // completedBookings_ (next) sees it paid: no link, and the rating request
@@ -3353,7 +3411,7 @@ function paymentsAwaitingBill_(rows) {
  */
 function takePayment_(id, b, taps, fromTap) {
   if (!b || b.status === 'cancelled' || !b.assignedDriver) return null;
-  if (String(b.assignedDriver.phone || '') !== String(taps.driverPhone || '')) return null; // a driver who no longer has the job
+  if (!sameDriver_(b.assignedDriver, taps.driverPhone)) return null; // a driver who no longer has the job
   var ref = b.ref || id;
   var name = b.assignedDriver.name || 'The driver';
   if (b.payment && b.payment.status === 'paid') {
@@ -3374,7 +3432,7 @@ function takePayment_(id, b, taps, fromTap) {
   var cashBy = null;
   if (p.method === 'cash') {
     var offer = fsGet_('offers/' + id);
-    if (offer && offer.status === 'taken' && offer.takenBy && offer.takenBy.id && String(offer.takenBy.phone || '') === String(taps.driverPhone || '')) {
+    if (offer && offer.status === 'taken' && offer.takenBy && offer.takenBy.id && sameDriver_(offer.takenBy, taps.driverPhone)) {
       writes.push({
         update: { name: docName_('offers/' + id), fields: toFields({ cashCollected: p.amount, updatedAt: now }) },
         updateMask: { fieldPaths: ['cashCollected', 'updatedAt'] },
@@ -3468,7 +3526,7 @@ function cashLimits_() {
     if (!r.over || quality[id].settlePushDay === day || hour < SETTLE_PUSH_FROM_HOUR || hour >= SETTLE_PUSH_TO_HOUR) return;
     var av = fsGet_('availability/' + id);
     if (!av || !av.pushToken) return;
-    sendPush_([settlePush(av.pushToken, r.owed)]);
+    sendPush_([settlePush(av.pushToken, r.owed)], [driverMeta(id, av.pushToken)]);
     saveDriverQuality_(id, { settlePushDay: day });
   });
 }
@@ -3557,7 +3615,7 @@ function tripReminders_() {
       });
     }
     var av = b.assignedDriver.id ? fsGet_('availability/' + b.assignedDriver.id) : null;
-    if (av && av.pushToken) sendPush_([driverReminderPush(b, row.id, av.pushToken)]);
+    if (av && av.pushToken) sendPush_([driverReminderPush(b, row.id, av.pushToken)], [driverMeta(b.assignedDriver.id, av.pushToken)]);
     saveBook_(row.id, { remindedAt: new Date(), preferredTime: b.preferredTime });
   });
   props.setProperty('remindedIds', JSON.stringify(done.slice(-100)));
@@ -3714,6 +3772,12 @@ function sendDailyReport_() {
   });
   sendTelegram_({ text: dailyReportText(dailySummary(q, now)) });
   reconcileActiveJobs_(q.assigned);
+  // The driver cards the customers see, made again from the drivers' records (ratings, trips) while the booking is open.
+  try { refreshDriverCards_(q.assigned, q.drivers); } catch (err) { console.warn('driver cards: ' + (err && err.stack || err)); }
+  // HIDE_DRIVER_PHONE: live maps an older Driver app wrote with his number lose it.
+  if (hideDriverPhone_()) {
+    try { stripTrackingPhones_(); } catch (err) { console.warn('tracking numbers: ' + (err && err.stack || err)); }
+  }
   // Today's web calls, for the record (Google allows 20,000 a day).
   console.log('UrlFetch calls today: ' + fetchBudget_().n);
   // Once a day the ranking's copy of ratings and strikes is made again from the
@@ -4374,11 +4438,17 @@ function syncSheet_(collection, bookmark, table, toRecord) {
 }
 
 function syncBookingsSheet_() {
-  return syncSheet_('bookings', 'sheetBookingsMs', bookingsTable_, bookingRecord);
+  return changedSince_('bookings', 'sheetBookingsMs', function (rows) {
+    var phones = driverPhones_(rows.map(function (r) { return r.data.assignedDriver; }));
+    upsertRows_(bookingsTable_(), rows.map(function (r) { return bookingRecord(r.id, r.data, phones); }));
+  });
 }
 
 function syncDriversSheet_() {
-  return syncSheet_('drivers', 'sheetDriversMs', driversTable_, driverRecord);
+  return changedSince_('drivers', 'sheetDriversMs', function (rows) {
+    upsertRows_(driversTable_(), rows.map(function (r) { return driverRecord(r.id, r.data); }));
+    approvedDrivers_(rows);
+  });
 }
 
 /**
@@ -4391,7 +4461,7 @@ function pushToCustomer_(uid, build) {
   var pairs = devices
     .map(function (d) { return { d: d, m: build(d.data.language, d.data.token) }; })
     .filter(function (p) { return p.m; });
-  var tickets = sendPush_(pairs.map(function (p) { return p.m; }));
+  var tickets = sendPush_(pairs.map(function (p) { return p.m; }), pairs.map(function () { return { c: 1 }; }));
   var gone = pairs.filter(function (p, i) {
     var t = tickets[i];
     return t && t.status === 'error' && t.details && t.details.error === 'DeviceNotRegistered';
@@ -4424,11 +4494,13 @@ function notifyCustomer_(id, b) {
     fields.pushedKey = key;
   }
 
-  // Everyone, once WhatsApp is set up: the driver's name and number on WhatsApp.
-  if (b.status === 'assigned' && b.assignedDriver && b.ref && b.whatsappKey !== key && whatsappReady_()) {
+  // Everyone, once WhatsApp is set up: the confirmed driver's name and DriveBuddy's number on WhatsApp.
+  var contactPhone = '';
+  if (b.status === 'assigned' && b.assignedDriver && confirmedFor(b, b.assignedDriver.id) && b.ref && b.whatsappKey !== key && whatsappReady_() &&
+      (contactPhone = officePhone_())) {
     fields.whatsappKey = key;
     fields.whatsappAssigned = sendWhatsapp_(whatsappAssigned({
-      booking: b, ref: b.ref, template: prop_('WHATSAPP_TEMPLATE'), language: prop_('WHATSAPP_LANGUAGE'),
+      booking: b, ref: b.ref, template: prop_('WHATSAPP_TEMPLATE'), language: prop_('WHATSAPP_LANGUAGE'), contactPhone: contactPhone,
     }));
   }
 
@@ -5189,6 +5261,697 @@ function returnChoices_(rows) {
   });
 }
 
+/* ======================= the driver's number, his card, Change driver, job alerts
+   (25 Nov 2026, SPEC-privacy.)
+   • Customers never get the driver's number (like Rapido). Bookings name the
+     driver by id: assignedDriver { id, name } — his number too only until
+     Nihal turns the Script Property HIDE_DRIVER_PHONE on, once the drivers
+     have the Driver app update that finds its jobs by id. From then the robot
+     takes the number off every booking (the newest first, 100 every 10
+     minutes), off every booking it sees change, and off the live maps; /admin
+     follows meta/flags. The office, the Sheet and Telegram get his number
+     from drivers/{id} (driverPhoneOf_).
+   • driverCard: what the customer sees of him once DriveBuddy has confirmed
+     him — name, photo, rating, trips, experience, verified, since; never a
+     number or an address. Made with the confirmation (and when /admin
+     confirms), again every night while the booking is open.
+   • Change driver: the customer may ask twice per booking, before Start
+     (driverChangeRequest). Like Telegram's "Give to someone else", with no
+     strike: offered to the zone again, never to him or an earlier one.
+   • Job alerts that arrive: Expo's ticket for every push is kept and its
+     receipt read a minute later (a missing Android key fails only there).
+     drivers/{id}.lastAlert says whether his phone took the last alert; a
+     failure other than "the app is gone from that phone" reaches Telegram
+     once a day per kind, in plain words. alertTests/{driverId}: a test. */
+
+function hideDriverPhone_() {
+  return /^(on|yes|true|1)$/i.test(String(prop_('HIDE_DRIVER_PHONE')).trim());
+}
+
+/** Drivers' numbers read this run (drivers/{id}.phone), so a run asks for each at most once. */
+var driverPhoneCache_ = {};
+/** Bookings whose driver card this run already wrote (writeDriverConfirmed_). */
+var cardedThisRun_ = {};
+
+/** A driver ref's number: on the ref (older bookings and offers), else from his record. '' if unknown. */
+function driverPhoneOf_(ref) {
+  if (!ref) return '';
+  if (ref.phone) return String(ref.phone);
+  if (!ref.id) return '';
+  if (!(ref.id in driverPhoneCache_)) {
+    var d = fsGet_('drivers/' + ref.id);
+    driverPhoneCache_[ref.id] = d && d.phone ? String(d.phone) : '';
+  }
+  return driverPhoneCache_[ref.id];
+}
+
+/** Is the driver who tapped (his login's number, on tripTaps) the driver on this ref? */
+function sameDriver_(ref, phone) {
+  var mine = driverPhoneOf_(ref);
+  return Boolean(mine) && mine === String(phone || '');
+}
+
+/** { driverId: number } for refs without a number (one batch read; none while bookings still carry it). */
+function driverPhones_(refs) {
+  var ids = {};
+  (refs || []).forEach(function (d) { if (d && d.id && !d.phone && !(d.id in driverPhoneCache_)) ids[d.id] = true; });
+  var list = Object.keys(ids);
+  if (list.length) {
+    var docs = fsBatchGet_(list.map(function (id) { return 'drivers/' + id; }));
+    list.forEach(function (id) {
+      var d = docs['drivers/' + id];
+      driverPhoneCache_[id] = d && d.phone ? String(d.phone) : '';
+    });
+  }
+  var out = {};
+  Object.keys(driverPhoneCache_).forEach(function (id) { if (driverPhoneCache_[id]) out[id] = driverPhoneCache_[id]; });
+  return out;
+}
+
+/** DriveBuddy's own number for customers (the site's contact.phone; Script Property OFFICE_PHONE if the site is down). */
+function officePhone_() {
+  var cfg = siteConfig_();
+  var phone = (cfg && cfg.contact && cfg.contact.phone) || prop_('OFFICE_PHONE');
+  return String(phone || '').replace(/\D/g, '').slice(-10);
+}
+
+/* ----------------------------------------------------- HIDE_DRIVER_PHONE */
+
+/** meta/flags for /admin: written only when a switch changed (remembered in flagsSaid). */
+function robotFlags_() {
+  var props = PropertiesService.getScriptProperties();
+  var hide = hideDriverPhone_();
+  var said = props.getProperty('flagsSaid');
+  if (said === (hide ? 'hide' : 'show')) return;
+  fsCommit_([{ update: { name: docName_('meta/flags'), fields: toFields({ hideDriverPhone: hide, at: new Date() }) } }]);
+  props.setProperty('flagsSaid', hide ? 'hide' : 'show');
+  // Switched off again: a later switch-on cleans every booking again from the newest.
+  if (!hide) props.setProperty('phoneBackfill', '');
+}
+
+/** Drivers by number ({ phone: id }), read once a run when a booking's driver has no id (very old bookings). */
+var driverIdsByPhone_ = null;
+function driverIdByPhone_(phone) {
+  if (!driverIdsByPhone_) {
+    driverIdsByPhone_ = {};
+    fsQuery_('drivers', null, 'ASCENDING', 1000, 'createdAt').forEach(function (r) {
+      if (r.data.phone) driverIdsByPhone_[String(r.data.phone)] = r.id;
+    });
+  }
+  return driverIdsByPhone_[String(phone)] || '';
+}
+
+/**
+ * The number off these bookings' driver: assignedDriver becomes { id, name }
+ * (the id from his record when an old booking lacks it). updatedAt is left
+ * alone: nothing else needs to wake up. → how many were changed.
+ */
+function stripDriverPhones_(rows) {
+  var writes = [];
+  (rows || []).forEach(function (row) {
+    var d = row.data && row.data.assignedDriver;
+    if (!d || !d.phone) return;
+    var id = d.id || driverIdByPhone_(d.phone);
+    driverPhoneCache_[id] = String(d.phone); // still known for this run's Telegram and taps
+    writes.push({
+      update: { name: docName_('bookings/' + row.id), fields: toFields({ assignedDriver: id ? { id: id, name: d.name || '' } : null }) },
+      updateMask: { fieldPaths: ['assignedDriver'] },
+      currentDocument: { exists: true },
+    });
+  });
+  for (var i = 0; i < writes.length; i += 400) fsCommit_(writes.slice(i, i + 400));
+  return writes.length;
+}
+
+/** Live maps (tracking/) an older Driver app wrote with his number: the number goes, his id stays. → how many. */
+function stripTrackingPhones_() {
+  var rows = fsQuery_('tracking', null, 'ASCENDING', 100, 'driverPhone');
+  var writes = rows.map(function (r) {
+    var id = driverIdByPhone_(r.data.driverPhone);
+    var fields = id ? { driverId: id } : {};
+    return {
+      update: { name: docName_('tracking/' + r.id), fields: toFields(fields) },
+      updateMask: { fieldPaths: id ? ['driverPhone', 'driverId'] : ['driverPhone'] },
+      currentDocument: { exists: true },
+    };
+  });
+  if (writes.length) fsCommit_(writes);
+  return writes.length;
+}
+
+function phoneBackfillState_() {
+  try {
+    return JSON.parse(PropertiesService.getScriptProperties().getProperty('phoneBackfill') || 'null') || {};
+  } catch (err) {
+    return {};
+  }
+}
+
+function phoneBackfillDue_() {
+  return hideDriverPhone_() && !phoneBackfillState_().done;
+}
+
+/**
+ * HIDE_DRIVER_PHONE on: every booking loses its driver's number, 100 at a
+ * time (every 10 minutes), the newest first, then the live maps. The state
+ * (phoneBackfill: { before, done }) survives between runs.
+ */
+var PHONE_BACKFILL_PAGE = 100;
+function phoneBackfill_() {
+  var props = PropertiesService.getScriptProperties();
+  var st = phoneBackfillState_();
+  var where = st.before ? fieldFilter_('createdAt', 'LESS_THAN_OR_EQUAL', new Date(st.before)) : null;
+  var rows = fsQuery_('bookings', where, 'DESCENDING', PHONE_BACKFILL_PAGE, 'createdAt');
+  var n = stripDriverPhones_(rows);
+  if (rows.length < PHONE_BACKFILL_PAGE) {
+    var maps = stripTrackingPhones_();
+    st = { done: true, at: Date.now() };
+    telegramLine_('🔒 Drivers\' numbers are off every booking now' + (maps ? ' (and ' + maps + ' live maps)' : '') +
+      ' — customers see "Call DriveBuddy". (HIDE_DRIVER_PHONE)');
+  } else {
+    var last = rows[rows.length - 1].data.createdAt;
+    var ms = last && last.getTime ? last.getTime() : 0;
+    st = { before: st.before && ms >= st.before ? st.before - 1 : ms, done: false, n: (st.n || 0) + n };
+  }
+  props.setProperty('phoneBackfill', JSON.stringify(st));
+}
+
+/* ------------------------------------------------------- the driver card */
+
+/** epoch-safe: a Date from this or another realm (the tests'), else null. */
+function dateOrNull_(d) {
+  return d && typeof d.getTime === 'function' && !isNaN(d.getTime()) ? d : null;
+}
+
+/**
+ * What the customer sees of the driver (bookings/{id}.driverCard): no number,
+ * no address. d: his drivers/{id} record; trips: his completed bookings.
+ * since: when DriveBuddy approved him (approvedAt; a driver the office added
+ * itself, his record's date), else null.
+ */
+function driverCardOf(d, trips) {
+  d = d || {};
+  var count = Math.max(0, Math.round(Number(d.ratingCount) || 0));
+  var avg = Number(d.ratingAvg);
+  var years = d.experienceYears == null ? NaN : Math.round(Number(d.experienceYears));
+  return {
+    name: String(d.name || '').trim().slice(0, 60) || 'Your driver',
+    photoUrl: typeof d.photoUrl === 'string' && /^https:\/\/\S+$/.test(d.photoUrl) ? d.photoUrl : null,
+    rating: count > 0 && avg > 0 ? Math.round(avg * 10) / 10 : null,
+    ratingCount: count,
+    trips: Math.max(0, Math.round(Number(trips) || 0)),
+    experienceYears: years >= 0 && years <= 60 ? years : null,
+    verified: d.status === 'verified' || d.status === 'active',
+    since: dateOrNull_(d.approvedAt) || (d.source === 'admin' ? dateOrNull_(d.createdAt) : null),
+  };
+}
+
+/** Count of documents matching all `filters` (equality filters merge single-field indexes: no composite index). */
+function fsCount_(collection, filters) {
+  var res = fsFetch_(fsBase_() + ':runAggregationQuery', {
+    structuredAggregationQuery: {
+      structuredQuery: { from: [{ collectionId: collection }], where: filters.length > 1 ? { compositeFilter: { op: 'AND', filters: filters } } : filters[0] },
+      aggregations: [{ alias: 'n', count: {} }],
+    },
+  }) || [];
+  var n = res[0] && res[0].result && res[0].result.aggregateFields && res[0].result.aggregateFields.n;
+  return n ? Number(n.integerValue) || 0 : 0;
+}
+
+/** His completed bookings (null when it could not be counted: the card then says 0 rather than failing). */
+function driverTrips_(driverId) {
+  try {
+    return fsCount_('bookings', [fieldFilter_('assignedDriver.id', 'EQUAL', driverId), fieldFilter_('status', 'EQUAL', 'completed')]);
+  } catch (err) {
+    console.warn('trips of ' + driverId + ': ' + err);
+    return 0;
+  }
+}
+
+/** The card for driver `driverId` (his record, his trips), or null when he has no record. */
+function driverCardFor_(driverId, driver) {
+  if (!driverId) return null;
+  var d = driver || fsGet_('drivers/' + driverId);
+  return d ? driverCardOf(d, driverTrips_(driverId)) : null;
+}
+
+/**
+ * Changed bookings: a confirmed driver without his card gets it (the office
+ * confirmed in /admin, or assigned him itself); a card whose driver is gone
+ * (no driver, or not confirmed any more) is taken off. A completed booking
+ * keeps its card (the customer rates him).
+ */
+function driverCards_(rows) {
+  var writes = [];
+  rows.forEach(function (row) {
+    var b = row.data;
+    var d = b.assignedDriver;
+    if (cardedThisRun_[row.id]) return;
+    var his = Boolean(d && d.id && confirmedFor(b, d.id));
+    if (b.status === 'assigned' && his && !(b.driverCard && b.driverCard.name === driverCardOf({ name: d.name }, 0).name)) {
+      var card = driverCardFor_(d.id);
+      if (!card) return;
+      writes.push({ update: { name: docName_('bookings/' + row.id), fields: toFields({ driverCard: card }) }, updateMask: { fieldPaths: ['driverCard'] }, currentDocument: { exists: true } });
+    } else if (b.driverCard && (!d || (b.status === 'assigned' && !his))) {
+      writes.push({ update: { name: docName_('bookings/' + row.id), fields: {} }, updateMask: { fieldPaths: ['driverCard'] }, currentDocument: { exists: true } });
+    }
+  });
+  if (writes.length) fsCommit_(writes);
+}
+
+/**
+ * Once, after this version is pasted (flag: script property
+ * driverCardBackfill = v1): every booking assigned now with a confirmed
+ * driver gets his card, so the website and the apps show him at once.
+ */
+function driverCardBackfill_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('driverCardBackfill') === 'v1') return;
+  var rows = fsQuery_('bookings', fieldFilter_('status', 'EQUAL', 'assigned'), 'ASCENDING', 300, 'status');
+  var n = refreshDriverCards_(rows, []);
+  props.setProperty('driverCardBackfill', 'v1');
+  console.log('driverCard backfill: ' + n + ' of ' + rows.length + ' assigned bookings');
+}
+
+/** Nightly: the open bookings' cards made again (new ratings, trips), written only where they changed. */
+function refreshDriverCards_(assignedRows, driverRows) {
+  var drivers = {};
+  (driverRows || []).forEach(function (r) { drivers[r.id] = r.data; });
+  var trips = {};
+  var writes = [];
+  (assignedRows || []).forEach(function (row) {
+    var b = row.data;
+    var d = b.assignedDriver;
+    if (!d || !d.id || !confirmedFor(b, d.id)) return;
+    if (!(d.id in drivers)) drivers[d.id] = fsGet_('drivers/' + d.id);
+    if (!drivers[d.id]) return;
+    if (!(d.id in trips)) trips[d.id] = driverTrips_(d.id);
+    var card = driverCardOf(drivers[d.id], trips[d.id]);
+    if (b.driverCard && JSON.stringify(toFields(b.driverCard)) === JSON.stringify(toFields(card))) return;
+    writes.push({ update: { name: docName_('bookings/' + row.id), fields: toFields({ driverCard: card }) }, updateMask: { fieldPaths: ['driverCard'] }, currentDocument: { exists: true } });
+  });
+  for (var i = 0; i < writes.length; i += 400) fsCommit_(writes.slice(i, i + 400));
+  return writes.length;
+}
+
+/**
+ * Drivers who changed (the Drivers sheet's look): one newly Verified or
+ * Active gets approvedAt — the time of that change — once (the card's "since").
+ */
+function approvedDrivers_(rows) {
+  var writes = [];
+  rows.forEach(function (r) {
+    var d = r.data;
+    if ((d.status !== 'verified' && d.status !== 'active') || d.approvedAt) return;
+    writes.push({
+      update: { name: docName_('drivers/' + r.id), fields: toFields({ approvedAt: d.updatedAt || d.createdAt || new Date() }) },
+      updateMask: { fieldPaths: ['approvedAt'] },
+      currentDocument: { exists: true },
+    });
+  });
+  if (writes.length) fsCommit_(writes);
+}
+
+/* ---------------------------------------------------------- Change driver */
+
+var DRIVER_CHANGES_MAX = 2;
+
+var CHANGE_PUSH = {
+  en: {
+    finding: function (c) { return { title: 'Finding you another driver', body: c.ref + ': finding you another driver. You will see him here once DriveBuddy confirms him.' }; },
+    started: function (c) { return { title: 'Your driver has started', body: c.ref + ': your driver has already set off, so he cannot be changed here. Call DriveBuddy.' }; },
+  },
+  hi: {
+    finding: function (c) { return { title: 'दूसरा ड्राइवर ढूँढ रहे हैं', body: c.ref + ': आपके लिए दूसरा ड्राइवर ढूँढ रहे हैं। DriveBuddy के कन्फ़र्म करते ही वे यहीं दिखेंगे।' }; },
+    started: function (c) { return { title: 'ड्राइवर निकल चुके हैं', body: c.ref + ': आपके ड्राइवर निकल चुके हैं, इसलिए यहाँ से नहीं बदल सकते। DriveBuddy को कॉल करें।' }; },
+  },
+};
+
+/** The old driver's phone, both languages (as job alerts): no strike for him. */
+function changedDriverPush(token, id, ref) {
+  return pushMsg_(token, {
+    title: 'Job given to another driver · काम दूसरे ड्राइवर को',
+    body: 'The customer chose another driver for ' + ref + ' — this does not count against you · ग्राहक ने ' + ref +
+      ' के लिए दूसरा ड्राइवर चुना — इससे आपका रिकॉर्ड खराब नहीं होगा',
+  }, { bookingId: id, action: 'given-away' }, 'jobs');
+}
+
+/** Drivers this booking must never be offered to again: those it already skips, those the customer changed, and `plus`. */
+function skipIdsWith_(b, alert, plus) {
+  var out = [];
+  [].concat((alert && alert.skipIds) || [], (b && b.changedDrivers) || [], plus ? [plus] : []).forEach(function (id) {
+    if (id && out.indexOf(id) < 0) out.push(id);
+  });
+  return out;
+}
+
+/** The doorbell's run for Change driver: the requests, then the offers (out in seconds). */
+function driverChangesStep_() {
+  return changedSince_('bookings', 'driverChangeMs', driverChanges_, 'driverChangeRequest.at');
+}
+
+/** Has the driver started this job? (his Start tap, the clock, or a trip link's start) */
+function jobStarted_(id, b) {
+  if (b.clock && b.clock.startAt) return true;
+  var taps = fsGet_('tripTaps/' + id);
+  if (taps && taps.leftAt) return true;
+  if (!TRIP_TAP_KINDS[b.package]) return false;
+  return fsQuery_('tripLinks', fieldFilter_('bookingId', 'EQUAL', id), 'ASCENDING', 5, 'bookingId').some(function (l) { return Boolean(l.data.startAt); });
+}
+
+/**
+ * The customers' "Change driver" (driverChangeRequest): the booking back to
+ * confirmed with no driver, its offer out again to the zone (a fresh
+ * automatic cycle), never to him or an earlier one (skipIds), no strike;
+ * driverChanges + 1, changedDrivers + him, the request cleared. He, the
+ * customer and the office hear. Once he has started: only the request goes,
+ * and the customer is asked to call.
+ */
+function driverChanges_(rows) {
+  rows.forEach(function (row) {
+    var b = row.data;
+    var req = b.driverChangeRequest;
+    if (!req) return;
+    var d = b.assignedDriver;
+    var ref = b.ref || row.id;
+    var clear = { update: { name: docName_('bookings/' + row.id), fields: {} }, updateMask: { fieldPaths: ['driverChangeRequest'] }, currentDocument: { exists: true } };
+    if (b.status !== 'assigned' || !d || !d.id || (Number(b.driverChanges) || 0) >= DRIVER_CHANGES_MAX) {
+      fsCommit_([clear]); // nothing to change any more (given back, cancelled …): only the request goes
+      return;
+    }
+    if (jobStarted_(row.id, b)) {
+      fsCommit_([clear]);
+      telegramLine_('⚠️ <b>' + escapeHtml(ref) + '</b>: the customer asked to change driver ' + escapeHtml(d.name || '') +
+        ', but he has already started — call the customer' + (req.reason ? ' (reason: ' + escapeHtml(req.reason) + ')' : '') + '.');
+      if (b.customerUid) {
+        pushToCustomer_(b.customerUid, function (lang, token) { return pushMsg_(token, (CHANGE_PUSH[lang] || CHANGE_PUSH.en).started({ ref: ref }), { bookingId: row.id }); });
+      }
+      return;
+    }
+    var now = new Date();
+    var changed = ((b.changedDrivers || []).indexOf(d.id) < 0 ? (b.changedDrivers || []).concat([d.id]) : b.changedDrivers).slice(-10);
+    var alert = fsGet_('offerAlerts/' + row.id) || {};
+    var skip = skipIdsWith_(b, alert, d.id);
+    var rates = driverRates_();
+    var cut = autoCuts(prop_('AUTO_OFFER_CUTS'))[0];
+    var o = fsGet_('offers/' + row.id);
+    var after = { status: 'confirmed', assignedDriver: null }; // the booking as the offer is made from it
+    Object.keys(b).forEach(function (k) { if (!(k in after)) after[k] = b[k]; });
+    var offer = null; // the offer's fields as it goes out again
+    var offerWrite = null;
+    if (o) {
+      offer = reopenedOffer(o, cut, now, after, rates, rates && b.trip ? siteNearKm_() : 0, rates && b.trip ? siteDrive_() : null);
+      offerWrite = { update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, updateMask: { fieldPaths: Object.keys(offer) }, currentDocument: { exists: true } };
+    } else if (prop_('AUTO_OFFERS') !== 'off') {
+      // The office had assigned him itself: an automatic offer like any confirmed booking's (if there is a price).
+      var prices = estimateNeedsPrices(after) ? sitePrices_() : {};
+      offer = autoOfferFor(row.id, after, prices || {}, cut, now, rates, rates && b.trip ? siteNearKm_() : 0, rates && b.trip ? siteDrive_() : null);
+      if (offer) offerWrite = { update: { name: docName_('offers/' + row.id), fields: toFields(offer) }, currentDocument: { exists: false } };
+    }
+    var writes = [
+      {
+        // driverConfirmed, driverCard and the request are in the mask but not the fields: removed, they were about him.
+        update: {
+          name: docName_('bookings/' + row.id),
+          fields: toFields({ status: 'confirmed', assignedDriver: null, driverChanges: (Number(b.driverChanges) || 0) + 1, changedDrivers: changed, updatedAt: now, updatedBy: 'robot' }),
+        },
+        updateMask: { fieldPaths: ['status', 'assignedDriver', 'driverChanges', 'changedDrivers', 'updatedAt', 'updatedBy', 'driverConfirmed', 'driverCard', 'driverChangeRequest'] },
+        currentDocument: { exists: true },
+      },
+      robotEvent_(row.id, 'assigned', 'confirmed', 'The customer changed driver ' + (d.name || '') + (req.reason ? ' (' + req.reason + ')' : '') + ' — no strike', now),
+      {
+        update: {
+          name: docName_('offerAlerts/' + row.id),
+          fields: toFields({ stage: 0, stageAt: now, alerted: [], skipIds: skip, widenedAt: null, stillPushedAt: null, basePay: offer && offer.payBy === 'rates' ? offer.driverPay : null }),
+        },
+      },
+    ];
+    if (offerWrite) writes.push(offerWrite);
+    fsCommit_(writes);
+    if (offerWrite) dispatchOn_();
+    var pending = confirmsPending_();
+    if (pending[row.id]) {
+      delete pending[row.id];
+      saveConfirmsPending_(pending);
+    }
+    var av = fsGet_('availability/' + d.id);
+    if (av && av.pushToken) sendPush_([changedDriverPush(av.pushToken, row.id, ref)], [driverMeta(d.id, av.pushToken)]);
+    if (b.customerUid) {
+      pushToCustomer_(b.customerUid, function (lang, token) { return pushMsg_(token, (CHANGE_PUSH[lang] || CHANGE_PUSH.en).finding({ ref: ref }), { bookingId: row.id }); });
+    }
+    telegramLine_('🔁 <b>' + escapeHtml(ref) + '</b>: the customer changed driver ' + escapeHtml(d.name || '') +
+      (req.reason ? ' (reason: ' + escapeHtml(req.reason) + ')' : '') + '. ' +
+      (offerWrite ? 'Offered to other drivers.' : 'Back to Confirmed — offer it to another driver in /admin.') +
+      ' Change ' + ((Number(b.driverChanges) || 0) + 1) + ' of ' + DRIVER_CHANGES_MAX + ', no strike for him.');
+  });
+}
+
+/* ------------------------------------------------- job alerts that arrive */
+
+var RECEIPT_AFTER_MS = 30 * 1000; //      Expo's receipt is usually there within seconds; asked for after this
+var RECEIPT_KEEP_MS = 30 * 60 * 1000; //  no receipt after this: given up (a test says so)
+var RECEIPTS_MAX = 70; //                 tickets waiting at most (a script property holds 9 KB)
+
+/** A short tag of a push token (8 hex digits): enough to see that a driver's phone has a new one since. */
+function tokenTag(token) {
+  var text = String(token || '');
+  var h = 5381;
+  for (var i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return ('0000000' + h.toString(16)).slice(-8);
+}
+
+/** sendPush_'s meta for a message to a driver's phone. */
+function driverMeta(driverId, token) {
+  return { d: driverId, k: tokenTag(token) };
+}
+
+function receiptsPending_() {
+  try {
+    return JSON.parse(PropertiesService.getScriptProperties().getProperty('pushReceipts') || '[]') || [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveReceiptsPending_(list) {
+  PropertiesService.getScriptProperties().setProperty('pushReceipts', JSON.stringify(list.slice(-RECEIPTS_MAX)));
+}
+
+/** Expo's tickets for one sendPush_: those it took wait for their receipt; those it refused are outcomes now. */
+function keepTickets_(tickets, metas) {
+  var now = Date.now();
+  var waiting = [];
+  var outcomes = [];
+  tickets.forEach(function (t, i) {
+    var m = metas[i] || {};
+    if (t && t.status === 'ok' && t.id) {
+      var e = { i: String(t.id), a: now };
+      if (m.d) { e.d = m.d; e.k = m.k; }
+      if (m.t) e.t = 1;
+      waiting.push(e);
+    } else if (t && t.status === 'error') {
+      outcomes.push({ d: m.d, k: m.k, t: m.t, ok: false, error: (t.details && t.details.error) || 'PushError' });
+    }
+  });
+  if (waiting.length) saveReceiptsPending_(receiptsPending_().concat(waiting));
+  if (outcomes.length) alertOutcomes_(outcomes);
+}
+
+function receiptsDue_() {
+  var list = receiptsPending_();
+  var now = Date.now();
+  return list.some(function (e) { return now - e.a >= RECEIPT_AFTER_MS; });
+}
+
+/**
+ * The receipts of the tickets waiting (one call, while any wait): each says
+ * whether Apple / Google took the notification. Not there yet: asked again
+ * next minute, for half an hour.
+ */
+function pushReceipts_() {
+  var list = receiptsPending_();
+  var now = Date.now();
+  var due = list.filter(function (e) { return now - e.a >= RECEIPT_AFTER_MS; });
+  if (!due.length) return;
+  var headers = { Accept: 'application/json' };
+  var expoToken = prop_('EXPO_ACCESS_TOKEN');
+  if (expoToken) headers.Authorization = 'Bearer ' + expoToken;
+  var res = fetch_('https://exp.host/--/api/v2/push/getReceipts', {
+    method: 'post',
+    contentType: 'application/json',
+    headers: headers,
+    payload: JSON.stringify({ ids: due.slice(0, 1000).map(function (e) { return e.i; }) }),
+    muteHttpExceptions: true,
+  });
+  if (res.getResponseCode() !== 200) {
+    console.warn('Expo receipts ' + res.getResponseCode() + ': ' + res.getContentText().slice(0, 200));
+    saveReceiptsPending_(list.filter(function (e) { return now - e.a < RECEIPT_KEEP_MS; }));
+    return;
+  }
+  var data = (JSON.parse(res.getContentText() || '{}') || {}).data || {};
+  var keep = [];
+  var outcomes = [];
+  list.forEach(function (e) {
+    var r = data[e.i];
+    if (r) {
+      outcomes.push({ d: e.d, k: e.k, t: e.t, ok: r.status === 'ok', error: r.status === 'ok' ? null : (r.details && r.details.error) || 'PushError' });
+    } else if (now - e.a < RECEIPT_KEEP_MS) {
+      keep.push(e);
+    } else if (e.t) {
+      outcomes.push({ d: e.d, t: 1, ok: false, error: 'NoReceipt', noLast: true });
+    }
+  });
+  saveReceiptsPending_(keep);
+  if (outcomes.length) alertOutcomes_(outcomes);
+}
+
+/** Plain words for the office, by Expo's error (expo.dev → the project → Credentials). */
+var ALERT_ERROR_TEXT = {
+  InvalidCredentials: function (who) {
+    return who === 'driver'
+      ? 'Job alerts can\'t reach drivers\' phones: the Android notification key is missing in Expo (expo.dev → drivebuddy-driver → Credentials → Android → FCM V1 service account key).'
+      : 'Notifications can\'t reach customers\' phones: the Android notification key is missing in Expo (expo.dev → the DriveBuddy app → Credentials → Android → FCM V1 service account key).';
+  },
+  MismatchSenderId: function (who) {
+    return (who === 'driver' ? 'Job alerts' : 'Customer notifications') +
+      ' can\'t reach Android phones: the notification key in Expo belongs to another Firebase project (expo.dev → Credentials → Android → FCM V1 service account key).';
+  },
+  MessageTooBig: function () { return 'A notification was too long for the phone and was not delivered (MessageTooBig) — tell the developer.'; },
+  MessageRateExceeded: function () { return 'Too many notifications to one phone at once: some were not delivered (MessageRateExceeded).'; },
+  RequestFailed: function () { return 'Notifications could not be sent: Expo\'s push service did not answer. They are not sent again by themselves.'; },
+};
+
+function alertErrorText(kind, who) {
+  var f = ALERT_ERROR_TEXT[kind];
+  return f ? f(who) : 'Notifications failed: Expo answered "' + kind + '".';
+}
+
+/** In words for /admin and the Driver app: a test's or lastAlert's error. */
+var ALERT_RESULT_TEXT = {
+  NoToken: 'He has not signed up for alerts on his phone: he must open the Driver app and allow notifications.',
+  DeviceNotRegistered: 'His phone no longer takes alerts (the app was removed or logged out): he must open the Driver app.',
+  NoReceipt: 'Expo did not say whether it arrived — try again.',
+};
+
+/**
+ * What happened to pushes: { d (driver id), k (token tag), t (a test), ok,
+ * error, noLast (no push went out) }. Per driver his lastAlert (the latest
+ * outcome), per test its result; DeviceNotRegistered clears his token (if
+ * still that one); any other error reaches Telegram once a day per kind.
+ */
+function alertOutcomes_(list) {
+  var now = new Date();
+  var writes = [];
+  var last = {};
+  var tests = {};
+  var gone = {};
+  list.forEach(function (o) {
+    var res = { at: now, ok: Boolean(o.ok), error: o.ok ? null : String(o.error || 'PushError') };
+    if (o.d && !o.noLast) last[o.d] = res;
+    if (o.d && o.t) tests[o.d] = res;
+    if (o.d && o.error === 'DeviceNotRegistered' && o.k) gone[o.d] = o.k;
+  });
+  Object.keys(last).forEach(function (id) {
+    writes.push({ update: { name: docName_('drivers/' + id), fields: toFields({ lastAlert: last[id] }) }, updateMask: { fieldPaths: ['lastAlert'] }, currentDocument: { exists: true } });
+  });
+  Object.keys(tests).forEach(function (id) {
+    writes.push({ update: { name: docName_('alertTests/' + id), fields: toFields({ result: tests[id] }) }, updateMask: { fieldPaths: ['result'] }, currentDocument: { exists: true } });
+  });
+  var goneIds = Object.keys(gone);
+  if (goneIds.length) {
+    var avs = fsBatchGet_(goneIds.map(function (id) { return 'availability/' + id; }));
+    goneIds.forEach(function (id) {
+      var av = avs['availability/' + id];
+      if (!av || !av.pushToken || tokenTag(av.pushToken) !== gone[id]) return; // he has a new token since
+      writes.push({ update: { name: docName_('availability/' + id), fields: {} }, updateMask: { fieldPaths: ['pushToken'] }, currentDocument: { exists: true } });
+    });
+  }
+  if (writes.length) {
+    try {
+      fsCommit_(writes);
+    } catch (err) {
+      // One missing document (a driver deleted meanwhile) fails the batch: each on its own.
+      writes.forEach(function (w) { try { fsCommit_([w]); } catch (e) { console.warn('alert outcome: ' + e); } });
+    }
+  }
+  // Telegram: once a day per kind (and audience), never for a phone that dropped the app.
+  var props = PropertiesService.getScriptProperties();
+  var told;
+  try { told = JSON.parse(props.getProperty('alertErrorsTold') || '{}') || {}; } catch (err) { told = {}; }
+  var day = istDay(now.getTime());
+  var changed = false;
+  list.forEach(function (o) {
+    if (o.ok || !o.error || o.noLast || o.error === 'DeviceNotRegistered' || o.error === 'NoToken' || o.error === 'NoReceipt') return;
+    var who = o.d ? 'driver' : 'customer';
+    var key = o.error + ':' + who;
+    if (told[key] === day) return;
+    told[key] = day;
+    changed = true;
+    telegramLine_('📵 ' + escapeHtml(alertErrorText(o.error, who)));
+  });
+  if (changed) props.setProperty('alertErrorsTold', JSON.stringify(told));
+}
+
+/** The test alert on a driver's phone (the jobs channel, as a real job alert). */
+function testAlertPush(token) {
+  return pushMsg_(token, { title: 'Test alert — job alerts work ✓', body: 'टेस्ट अलर्ट — जॉब अलर्ट काम कर रहे हैं ✓' }, { action: 'test-alert' }, 'jobs');
+}
+
+/** The doorbell's run for a test alert. */
+function alertTestsStep_() {
+  return changedSince_('alertTests', 'alertTestsMs', alertTests_, 'at');
+}
+
+/**
+ * Test alerts asked for (alertTests/{driverId}.at): a push to his phone's
+ * token (availability/{id}.pushToken); the result once Expo answers — the
+ * ticket now, else the receipt a minute later (pushReceipts_). No token: he
+ * must open the Driver app.
+ */
+function alertTests_(rows) {
+  var todo = rows.filter(function (r) {
+    var at = r.data.at;
+    var res = r.data.result;
+    return at && !(res && res.at && res.at.getTime() >= at.getTime());
+  });
+  if (!todo.length) return;
+  var avs = fsBatchGet_(todo.map(function (r) { return 'availability/' + r.id; }));
+  var msgs = [];
+  var metas = [];
+  var none = [];
+  todo.forEach(function (r) {
+    var av = avs['availability/' + r.id];
+    if (av && av.pushToken) {
+      msgs.push(testAlertPush(av.pushToken));
+      var m = driverMeta(r.id, av.pushToken);
+      m.t = 1;
+      metas.push(m);
+    } else {
+      none.push({ d: r.id, t: 1, ok: false, error: 'NoToken', noLast: true });
+    }
+  });
+  if (msgs.length) sendPush_(msgs, metas);
+  if (none.length) alertOutcomes_(none);
+}
+
+/** "Change driver" / "Send test alert": their own doorbell — only that look (and the offers), merged within 10 seconds. */
+function actionPing_(action) {
+  var cache = CacheService.getScriptCache();
+  var key = 'ping-' + action;
+  if (!cache.get(key)) {
+    cache.put(key, '1', 10);
+    if (fetchBudget_().n <= FETCH_SLOW_ABOVE) {
+      runSteps_(action === 'alert-test' ? [alertTestsStep_] : [driverChangesStep_, onlyIf_(dispatchWaiting_, dispatchOffers_)], 25000);
+    }
+  }
+  return ContentService.createTextOutput('ok');
+}
+
+/** After a change of driver: dispatch at once when an offer was reopened. */
+function dispatchWaiting_() {
+  return PropertiesService.getScriptProperties().getProperty('dispatchOn') === '1';
+}
+
 /* Node test hook — ignored by Apps Script, where "module" does not exist. */
 if (typeof module !== 'undefined') {
   module.exports = {
@@ -5210,5 +5973,7 @@ if (typeof module !== 'undefined') {
     oneWayOf: oneWayOf, trainRulesOf: trainRulesOf, v4Drive: v4Drive, v4WaitCharge: v4WaitCharge, v4Total: v4Total,
     returnBaseOf: returnBaseOf, returnPriceOf: returnPriceOf, railLegs: railLegs, planReturnRobot: planReturnRobot, returnCheckOf: returnCheckOf,
     istTime: istTime, tapsClockOf: tapsClockOf,
+    driverCardOf: driverCardOf, tokenTag: tokenTag, driverMeta: driverMeta, alertErrorText: alertErrorText, ALERT_RESULT_TEXT: ALERT_RESULT_TEXT,
+    skipIdsWith_: skipIdsWith_, changedDriverPush: changedDriverPush, testAlertPush: testAlertPush, DRIVER_CHANGES_MAX: DRIVER_CHANGES_MAX,
   };
 }

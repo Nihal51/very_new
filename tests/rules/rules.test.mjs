@@ -780,11 +780,13 @@ describe('users and customers', () => {
 
 describe('driver app — jobs and live tracking', () => {
   const RAJU = '9893302783';
+  // Raju is d1; any other number is another driver (d9) — drivers are known by id first (25 Nov 2026).
+  const idOf = (phone) => (phone === RAJU ? 'd1' : 'd9');
   const driver = (phone = RAJU, extra = {}) =>
-    env.authenticatedContext(`driver-${phone}`, { role: 'driver', driverPhone: phone, driverId: 'd1', ...extra }).firestore();
+    env.authenticatedContext(`driver-${phone}`, { role: 'driver', driverPhone: phone, driverId: idOf(phone), ...extra }).firestore();
   // Confirmed by the office for d1 (the driver() login's id) unless said otherwise.
   const assigned = (phone = RAJU, confirmedFor = 'd1') => ({
-    status: 'assigned', assignedDriver: { id: 'd1', name: 'Raju Sahu', phone }, customerUid: 'cust1',
+    status: 'assigned', assignedDriver: { id: idOf(phone), name: 'Raju Sahu', phone }, customerUid: 'cust1',
     ...(confirmedFor ? { driverConfirmed: { at: new Date(), by: 'telegram', driverId: confirmedFor } } : {}),
   });
   const myJobs = (db, driverId = 'd1') =>
@@ -886,6 +888,188 @@ describe('driver app — jobs and live tracking', () => {
     await assertFails(setDoc(t, point({ active: 'yes' })));
     const { heading, speed, driverName, ...bare } = point();
     await assertSucceeds(setDoc(t, bare));
+  });
+});
+
+describe('the driver by id, never his number to customers (25 Nov 2026)', () => {
+  const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+  const SONU = { id: 'd2', name: 'Sonu Verma', phone: '9425212345' };
+  const ID = { id: 'd1', name: 'Raju Sahu' }; // the booking as customers may read it
+  const drv = (d) => env.authenticatedContext(`driver-${d.phone}`, { role: 'driver', driverPhone: d.phone, driverId: d.id }).firestore();
+  const ok = (id = 'd1') => ({ driverConfirmed: { at: new Date(), by: 'office', driverId: id } });
+  const point = (extra = {}) => ({ lat: 21.25, lng: 81.63, acc: 12, active: true, at: serverTimestamp(), phoneAt: new Date(), driverId: 'd1', driverName: 'Raju Sahu', ...extra });
+  const seed = () =>
+    env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'drivers', 'd1'), { ...RAJU, city: 'Raipur', status: 'active' });
+      await setDoc(doc(ctx.firestore(), 'drivers', 'd2'), { ...SONU, city: 'Raipur', status: 'active' });
+    });
+  beforeEach(seed);
+
+  test('a booking without his number: he finds it by his id (the new app’s query), nobody else does', async () => {
+    await seedBooking('mine', { status: 'assigned', assignedDriver: ID, customerUid: 'cust1', ...ok() });
+    await assertSucceeds(getDoc(doc(drv(RAJU), 'bookings', 'mine')));
+    await assertFails(getDoc(doc(drv(SONU), 'bookings', 'mine')));
+    const q = (d) => query(collection(drv(d), 'bookings'), where('assignedDriver.id', '==', d.id), where('status', '==', 'assigned'), where('driverConfirmed.driverId', '==', d.id));
+    const snap = await assertSucceeds(getDocs(q(RAJU)));
+    assert.deepEqual(snap.docs.map((d) => d.id), ['mine']);
+    await assertFails(getDocs(query(collection(drv(SONU), 'bookings'), where('assignedDriver.id', '==', 'd1'), where('status', '==', 'assigned'), where('driverConfirmed.driverId', '==', 'd1'))));
+    // The older app's query by his number still works on bookings that carry it.
+    await seedBooking('old', { status: 'assigned', assignedDriver: RAJU, customerUid: 'cust1', ...ok() });
+    const old = await assertSucceeds(getDocs(query(collection(drv(RAJU), 'bookings'), where('assignedDriver.phone', '==', RAJU.phone), where('status', '==', 'assigned'), where('driverConfirmed.driverId', '==', 'd1'))));
+    assert.deepEqual(old.docs.map((d) => d.id), ['old']);
+  });
+
+  test('his taps and his live map on a booking without his number; the map by driverId, never another’s', async () => {
+    await seedBooking('mine', { status: 'assigned', assignedDriver: ID, customerUid: 'cust1', ...ok() });
+    await assertSucceeds(setDoc(doc(drv(RAJU), 'tripTaps', 'mine'), { driverPhone: RAJU.phone, leftAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(doc(drv(RAJU), 'tripTaps', 'mine'), { arrivedAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(doc(drv(RAJU), 'tripTaps', 'mine'), { doneAt: serverTimestamp() }));
+    await assertSucceeds(updateDoc(doc(drv(RAJU), 'tripTaps', 'mine'), { paidBy: 'cash', paidAt: serverTimestamp() }));
+    const t = doc(drv(RAJU), 'tracking', 'mine');
+    await assertSucceeds(setDoc(t, point()));
+    await assertFails(setDoc(t, point({ driverId: 'd2' })));
+    await assertFails(setDoc(doc(drv(SONU), 'tracking', 'mine'), point({ driverId: 'd2' })));
+    const { driverId, ...neither } = point();
+    await assertFails(setDoc(t, neither), 'who is driving must be said');
+    await assertSucceeds(setDoc(t, point({ driverPhone: RAJU.phone })), 'an older app’s number, while it lasts');
+    await assertFails(setDoc(t, point({ driverPhone: SONU.phone })));
+    await assertSucceeds(getDoc(doc(customer('cust1'), 'tracking', 'mine')));
+  });
+
+  test('taking an offer and giving it back with { id, name } (the new app) — or with his number (the old one)', async () => {
+    const offer = { bookingId: 'b1', ref: 'DB-1042', city: 'Raipur', package: '3-hours-600', when: '', area: 'Shankar Nagar', to: '', price: 600, cutPercent: 25, driverPay: 450, status: 'open', takenBy: null, takenAt: null, done: false, paid: false, paidAt: null, createdAt: new Date(), updatedAt: new Date(), by: 'robot', cities: ['Raipur'] };
+    const take = (db, who) => runTransaction(db, async (tx) => {
+      const ref = doc(db, 'offers', 'b1');
+      await tx.get(ref);
+      tx.update(ref, { status: 'taken', takenBy: who, takenAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      tx.update(doc(db, 'bookings', 'b1'), { status: 'assigned', assignedDriver: who, updatedAt: serverTimestamp(), updatedBy: `driver-${RAJU.phone}` });
+    });
+    await seedBooking('b1', { status: 'confirmed' });
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'offers', 'b1'), offer));
+    await assertFails(take(drv(RAJU), { id: 'd1', name: 'Raju S' }), 'exactly his record');
+    await assertFails(take(drv(RAJU), { id: 'd2', name: 'Raju Sahu' }));
+    await assertSucceeds(take(drv(RAJU), ID));
+    await assertSucceeds(getDocs(query(collection(drv(RAJU), 'offers'), where('takenBy.id', '==', 'd1'))));
+    const giveBack = (db) => runTransaction(db, async (tx) => {
+      const ref = doc(db, 'offers', 'b1');
+      await tx.get(ref);
+      tx.update(ref, { status: 'released', updatedAt: serverTimestamp() });
+      tx.update(doc(db, 'bookings', 'b1'), { status: 'confirmed', assignedDriver: null, updatedAt: serverTimestamp(), updatedBy: `driver-${RAJU.phone}` });
+    });
+    await assertFails(giveBack(drv(SONU)));
+    await assertSucceeds(giveBack(drv(RAJU)));
+    // The older app's ref, with his number.
+    await seedBooking('b1', { status: 'confirmed' });
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'offers', 'b1'), offer));
+    await assertSucceeds(take(drv(RAJU), RAJU));
+  });
+
+  test('/admin assigns { id, name } (after HIDE_DRIVER_PHONE) or with his number; never a bad number or no id', async () => {
+    await seedBooking('b1', { status: 'confirmed' });
+    const assign = (d) => updateDoc(doc(admin(), 'bookings', 'b1'), { status: 'assigned', assignedDriver: d, driverConfirmed: { at: serverTimestamp(), by: 'office', driverId: 'd1' }, updatedAt: serverTimestamp(), updatedBy: 'admin1' });
+    await assertSucceeds(assign(ID));
+    await assertSucceeds(assign(RAJU));
+    await assertFails(assign({ ...ID, phone: '12345' }));
+    await assertFails(assign({ name: 'Raju Sahu', phone: RAJU.phone }));
+    await assertFails(assign({ ...ID, address: 'x' }));
+  });
+
+  test('nobody but the robot writes driverCard, driverChanges or changedDrivers; the customer reads the card', async () => {
+    await seedBooking('b1', { status: 'assigned', assignedDriver: ID, customerUid: 'cust1', ...ok(), driverCard: { name: 'Raju Sahu', trips: 3 } });
+    const stamp = { updatedAt: serverTimestamp(), updatedBy: 'admin1' };
+    for (const field of [{ driverCard: { name: 'X' } }, { driverChanges: 0 }, { changedDrivers: [] }]) {
+      await assertFails(updateDoc(doc(admin(), 'bookings', 'b1'), { ...field, ...stamp }));
+      await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), field));
+      await assertFails(updateDoc(doc(drv(RAJU), 'bookings', 'b1'), field));
+    }
+    const seen = await assertSucceeds(getDoc(doc(customer('cust1'), 'bookings', 'b1')));
+    assert.equal(seen.data().driverCard.trips, 3);
+  });
+});
+
+describe('Change driver — the customer, twice at most, before Start (25 Nov 2026)', () => {
+  const ask = (db, extra = {}) => updateDoc(doc(db, 'bookings', 'b1'), { driverChangeRequest: { at: serverTimestamp(), reason: 'Not picking up', ...extra } });
+  const base = { status: 'assigned', assignedDriver: { id: 'd1', name: 'Raju Sahu' }, customerUid: 'cust1', driverConfirmed: { at: new Date(), by: 'office', driverId: 'd1' } };
+
+  test('the customer who owns the booking asks, with an optional reason', async () => {
+    await seedBooking('b1', base);
+    await assertSucceeds(ask(customer('cust1')));
+    await assertFails(ask(customer('cust1')), 'one request at a time');
+    await seedBooking('b1', { ...base, driverChanges: 1 });
+    await assertSucceeds(ask(customer('cust1'), { reason: '' }));
+  });
+
+  test('nobody else; not before a driver, after Start, twice already, or in another shape', async () => {
+    await seedBooking('b1', base);
+    await assertFails(ask(customer('cust2')));
+    await assertFails(ask(guest()));
+    await assertFails(ask(admin()));
+    await assertFails(ask(customer('cust1'), { at: new Date(Date.now() - 60000) }));
+    await assertFails(ask(customer('cust1'), { reason: 'x'.repeat(201) }));
+    await assertFails(ask(customer('cust1'), { reason: 3 }));
+    await assertFails(ask(customer('cust1'), { note: 'x' }));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { driverChangeRequest: { at: serverTimestamp() } }));
+    await assertFails(updateDoc(doc(customer('cust1'), 'bookings', 'b1'), { driverChangeRequest: { at: serverTimestamp(), reason: '' }, driverChanges: 0 }));
+    for (const status of ['new', 'confirmed', 'completed', 'cancelled']) {
+      await seedBooking('b1', { ...base, status });
+      await assertFails(ask(customer('cust1')), status);
+    }
+    await seedBooking('b1', { ...base, driverChanges: 2 });
+    await assertFails(ask(customer('cust1')), 'twice is the most');
+    await seedBooking('b1', { ...base, clock: { startAt: new Date() } });
+    await assertFails(ask(customer('cust1')), 'the meter has started');
+    await seedBooking('b1', { ...base, clock: null });
+    await assertSucceeds(ask(customer('cust1')));
+    await seedBooking('b1', base);
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'tripTaps', 'b1'), { driverPhone: '9893302783', leftAt: new Date() }));
+    await assertFails(ask(customer('cust1')), 'he tapped Start');
+  });
+});
+
+describe('alert tests and the robot’s flags (25 Nov 2026)', () => {
+  const RAJU = { id: 'd1', name: 'Raju Sahu', phone: '9893302783' };
+  const SONU = { id: 'd2', name: 'Sonu Verma', phone: '9425212345' };
+  const drv = (d) => env.authenticatedContext(`driver-${d.phone}`, { role: 'driver', driverPhone: d.phone, driverId: d.id }).firestore();
+  const ask = (db, id = 'd1', extra = {}) => setDoc(doc(db, 'alertTests', id), { at: serverTimestamp(), ...extra });
+
+  test('an admin, or the driver himself, asks for a test alert — at the server time, nothing else', async () => {
+    await assertSucceeds(ask(admin(), 'd2'));
+    await assertSucceeds(ask(drv(RAJU)));
+    await assertSucceeds(getDoc(doc(drv(RAJU), 'alertTests', 'd1')));
+    await assertSucceeds(getDoc(doc(admin(), 'alertTests', 'd1')));
+    await assertFails(getDoc(doc(drv(SONU), 'alertTests', 'd1')));
+    await assertFails(ask(drv(SONU), 'd1'));
+    await assertFails(ask(customer('cust1')));
+    await assertFails(ask(guest()));
+    await assertFails(ask(admin(), 'd3', { at: new Date(Date.now() - 60000) }));
+    await assertFails(ask(admin(), 'd3', { result: { ok: true } }), 'the result is the robot’s');
+    await assertFails(deleteDoc(doc(admin(), 'alertTests', 'd1')));
+  });
+
+  test('again only after a minute (a new ask replaces the result)', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'alertTests', 'd1'), { at: new Date(Date.now() - 30_000), result: { at: new Date(), ok: true, error: null } }));
+    await assertFails(ask(drv(RAJU)));
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'alertTests', 'd1'), { at: new Date(Date.now() - 61_000), result: { at: new Date(), ok: true, error: null } }));
+    await assertSucceeds(ask(drv(RAJU)));
+  });
+
+  test('lastAlert on his record is the robot’s; he and the office read it', async () => {
+    await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'drivers', 'd1'), { ...RAJU, city: 'Raipur', status: 'active', lastAlert: { at: new Date(), ok: false, error: 'InvalidCredentials' } }));
+    await assertSucceeds(getDoc(doc(drv(RAJU), 'drivers', 'd1')));
+    await assertFails(updateDoc(doc(drv(RAJU), 'drivers', 'd1'), { lastAlert: { at: new Date(), ok: true, error: null } }));
+    await assertFails(updateDoc(doc(admin(), 'drivers', 'd1'), { lastAlert: null, updatedAt: serverTimestamp(), updatedBy: 'admin1' }));
+  });
+
+  test('meta/flags: /admin reads the robot’s switches; nobody writes them; meta/counters stays closed', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'meta', 'flags'), { hideDriverPhone: true, at: new Date() });
+      await setDoc(doc(ctx.firestore(), 'meta', 'counters'), { bookings: 3 });
+    });
+    await assertSucceeds(getDoc(doc(admin(), 'meta', 'flags')));
+    await assertFails(getDoc(doc(customer('cust1'), 'meta', 'flags')));
+    await assertFails(getDoc(doc(drv(RAJU), 'meta', 'flags')));
+    await assertFails(setDoc(doc(admin(), 'meta', 'flags'), { hideDriverPhone: false, at: new Date() }));
+    await assertFails(getDoc(doc(admin(), 'meta', 'counters')));
   });
 });
 

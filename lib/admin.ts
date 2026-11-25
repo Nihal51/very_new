@@ -6,7 +6,18 @@
 
 import type { User } from 'firebase/auth';
 
-import { type BookingQuote, type BookingStatus, type DriverRef, type DriverStatus, type Rating, type TripTaps, toDate, toTripTaps } from './bookings';
+import {
+  type AlertTest,
+  type BookingQuote,
+  type BookingStatus,
+  type DriverRef,
+  type DriverStatus,
+  type Rating,
+  type TripTaps,
+  toAlertTest,
+  toDate,
+  toTripTaps,
+} from './bookings';
 import { getFirebaseApp } from './firebase';
 import { type Offer, clampCut, driverPayFor, offerCitiesFor } from './offers';
 
@@ -32,6 +43,51 @@ export async function ensureAdmin(user: User): Promise<boolean> {
   }
 }
 
+/**
+ * The alerts robot's switches /admin follows (meta/flags, robot-written):
+ * hideDriverPhone — HIDE_DRIVER_PHONE is on, so a driver goes onto a booking
+ * without his number (customers read bookings). Read at most every 5
+ * minutes; not readable yet (rules not published) or never written: off.
+ */
+let flagsAt = 0;
+let flags = { hideDriverPhone: false };
+export async function robotFlags(): Promise<{ hideDriverPhone: boolean }> {
+  if (Date.now() - flagsAt < 5 * 60_000) return flags;
+  const { db, doc, getDoc } = await fs();
+  try {
+    const d = (await getDoc(doc(db, 'meta', 'flags'))).data();
+    flags = { hideDriverPhone: d?.hideDriverPhone === true };
+  } catch {
+    flags = { hideDriverPhone: false };
+  }
+  flagsAt = Date.now();
+  return flags;
+}
+
+/** A driver as the booking stores him: { id, name } — his number too until HIDE_DRIVER_PHONE is on. */
+export async function bookingDriverRef(d: DriverRef): Promise<DriverRef> {
+  const { hideDriverPhone } = await robotFlags();
+  return hideDriverPhone || !d.phone ? { id: d.id, name: d.name } : { id: d.id, name: d.name, phone: d.phone };
+}
+
+/** "Send test alert" (Drivers tab): the robot pushes a test to his phone and writes the result (alertTests/{id}). */
+export async function sendTestAlert(driverId: string) {
+  const { db, doc, setDoc, serverTimestamp } = await fs();
+  await setDoc(doc(db, 'alertTests', driverId), { at: serverTimestamp() });
+  const { pingAlerts } = await import('./firebase');
+  pingAlerts('alert-test');
+}
+
+/** A driver's last test alert, live: { at, result: { at, ok, error } | null } or null when none was asked for. */
+export async function watchAlertTest(driverId: string, onData: (t: AlertTest | null) => void): Promise<() => void> {
+  const { db, doc, onSnapshot } = await fs();
+  return onSnapshot(
+    doc(db, 'alertTests', driverId),
+    (snap) => onData(snap.exists() ? toAlertTest(snap.data()) : null),
+    () => onData(null),
+  );
+}
+
 export async function changeBookingStatus(
   user: User,
   bookingId: string,
@@ -42,9 +98,10 @@ export async function changeBookingStatus(
   const { db, doc, collection, writeBatch, serverTimestamp } = await fs();
   const ref = doc(db, 'bookings', bookingId);
   const batch = writeBatch(db);
+  const stored = driver ? await bookingDriverRef(driver) : driver;
   batch.update(ref, {
     status: to,
-    ...(driver !== undefined && { assignedDriver: driver }),
+    ...(driver !== undefined && { assignedDriver: stored }),
     // A driver the office assigns itself is confirmed by the office: he sees
     // the customer's details at once (firestore.rules). No driver: no confirmation.
     ...(driver !== undefined && {

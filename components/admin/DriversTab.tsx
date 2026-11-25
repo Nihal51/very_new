@@ -25,8 +25,8 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Field, Input, Select, Textarea } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
-import { addDriver, changeDriverStatus, type NewDriver, watchOnline } from '@/lib/admin';
-import { DRIVER_STATUS, formatDateTime, prettyPhone, type Driver, type DriverStatus } from '@/lib/bookings';
+import { addDriver, changeDriverStatus, sendTestAlert, type NewDriver, watchAlertTest, watchOnline } from '@/lib/admin';
+import { alertResultText, DRIVER_STATUS, formatDateTime, prettyPhone, type AlertTest, type Driver, type DriverStatus } from '@/lib/bookings';
 import { cn } from '@/lib/cn';
 import { cities } from '@/lib/content';
 import { downloadCsv, exportName, sheetPhone } from '@/lib/export';
@@ -360,6 +360,8 @@ function DriverDetail({ d, user, onClose }: { d: Driver; user: User; onClose: ()
           </Alert>
         )}
 
+        <JobAlerts d={d} />
+
         <div className="border-border mt-5 border-t pt-5">
           <SectionTitle>Status</SectionTitle>
           <div className="flex flex-wrap gap-2">
@@ -398,6 +400,66 @@ function DriverDetail({ d, user, onClose }: { d: Driver; user: User; onClose: ()
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * Job alerts (25 Nov 2026): whether his phone took the last one (lastAlert,
+ * from Expo's receipt) and "Send test alert" — the robot pushes "Test alert —
+ * job alerts work ✓" to his phone and writes the result here in words.
+ */
+function JobAlerts({ d }: { d: Driver }) {
+  const [test, setTest] = useState<AlertTest | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let alive = true;
+    void watchAlertTest(d.id, setTest).then((u) => (alive ? (off = u) : u()));
+    return () => {
+      alive = false;
+      off?.();
+    };
+  }, [d.id]);
+  const waiting = Boolean(test?.at && !test.result);
+  async function send() {
+    setBusy(true);
+    setErr('');
+    try {
+      await sendTestAlert(d.id);
+    } catch {
+      setErr('Could not ask for a test — wait a minute between tests, and check your internet.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="border-border mt-5 border-t pt-5 text-sm">
+      <SectionTitle>Job alerts</SectionTitle>
+      <p>
+        {d.lastAlert ? (
+          <>
+            Last alert {formatDateTime(d.lastAlert.at)}: <span className={d.lastAlert.ok ? 'text-success' : 'text-error'}>{alertResultText(d.lastAlert)}</span>
+          </>
+        ) : (
+          <span className="text-fg-subtle">No alert sent to his phone yet (since 25 Nov 2026).</span>
+        )}
+      </p>
+      {test?.result && (
+        <p className="mt-1">
+          Test {formatDateTime(test.result.at)}: <span className={test.result.ok ? 'text-success' : 'text-error'}>{alertResultText(test.result)}</span>
+        </p>
+      )}
+      {waiting && <p className="text-fg-muted mt-1">Test sent {formatDateTime(test?.at)} — the answer comes within a minute or two.</p>}
+      <Button size="sm" variant="outline" className="mt-2" loading={busy} onClick={send}>
+        Send test alert
+      </Button>
+      {err && (
+        <Alert tone="error" className="mt-2">
+          {err}
+        </Alert>
+      )}
+    </div>
   );
 }
 

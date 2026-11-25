@@ -73,15 +73,22 @@ async function startAppCheck(app: Parameters<typeof import('firebase/app-check')
 
 /**
  * Ring the alerts robot so it looks right now instead of at the next minute.
- * Fire-and-forget: no data is sent, a failure changes nothing (the robot's
- * every-minute check still finds the booking), and `keepalive` lets the ping
+ * Fire-and-forget: no data is sent (only, for `action`, which look to make —
+ * 'driver-change' or 'alert-test', 25 Nov 2026), a failure changes nothing
+ * (the robot's own schedule still finds it), and `keepalive` lets the ping
  * finish even if the customer closes the page straight away.
  */
-export function pingAlerts() {
+export function pingAlerts(action?: 'driver-change' | 'alert-test') {
   const url = settings.alerts.pingUrl;
   if (!url) return;
   try {
-    fetch(url, { method: 'POST', mode: 'no-cors', keepalive: true }).catch(() => {});
+    fetch(url, {
+      method: 'POST',
+      mode: 'no-cors',
+      keepalive: true,
+      // text/plain: a "simple" request the browser sends without asking first; the robot reads the JSON.
+      ...(action && { headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ action }) }),
+    }).catch(() => {});
   } catch {
     /* never let an alert ping affect the booking */
   }

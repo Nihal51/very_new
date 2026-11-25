@@ -42,7 +42,37 @@ export const BOOKING_STATUS: Record<
   cancelled: { label: 'Cancelled', customerLabel: 'Cancelled', tone: 'outline' },
 };
 
-export type DriverRef = { id: string; name: string; phone: string };
+/**
+ * A driver on a booking or an offer. Bookings name him by id and name; his
+ * number is on older bookings only, until HIDE_DRIVER_PHONE (25 Nov 2026:
+ * customers never get it — the office looks it up in drivers/{id}).
+ */
+export type DriverRef = { id: string; name: string; phone?: string };
+
+/**
+ * What the customer sees of the driver once DriveBuddy has confirmed him
+ * (bookings/{id}.driverCard, the alerts robot's): no number, no address.
+ */
+export type DriverCard = {
+  name: string;
+  photoUrl: string | null;
+  /** Average of his ratings, one decimal; null before the first. */
+  rating: number | null;
+  ratingCount: number;
+  /** His completed bookings. */
+  trips: number;
+  experienceYears: number | null;
+  /** An approved, checked driver. */
+  verified: boolean;
+  /** When DriveBuddy approved him. */
+  since?: Date;
+};
+
+/** "Change driver": when the customer asked and why (bookings/{id}.driverChangeRequest; the robot clears it). */
+export type DriverChangeRequest = { at?: Date; reason: string };
+
+/** How many times a customer may change the driver of one booking (firestore.rules, the robot). */
+export const DRIVER_CHANGES_MAX = 2;
 
 /** Put first in the notes by the booking form and the app when the customer wants a drop driven day and night. */
 export const NONSTOP_NOTE = 'Day and night driving (non-stop).';
@@ -282,6 +312,12 @@ export type Booking = {
   localBill?: BookingLocalBill | null;
   payment?: BookingPayment | null;
   driverConfirmed?: DriverConfirmed | null;
+  /** The confirmed driver as the customer sees him (robot-only). */
+  driverCard?: DriverCard | null;
+  driverChangeRequest?: DriverChangeRequest | null;
+  /** Drivers the customer changed so far, and who they were (robot-only). */
+  driverChanges?: number;
+  changedDrivers?: string[];
   ref?: string;
   number?: number;
   isReturning?: boolean;
@@ -323,6 +359,8 @@ export type Driver = {
   ratingCount?: number;
   /** Kept by the alerts robot: jobs he took and gave back ("Can't make it"). */
   strikes?: number;
+  /** Kept by the alerts robot: whether his phone took the last job alert (25 Nov 2026). */
+  lastAlert?: AlertResult | null;
 };
 
 export type Customer = {
@@ -603,6 +641,104 @@ export function toDriverConfirmed(v: unknown): DriverConfirmed | null {
 /** Is the booking's current driver the one the office confirmed by call? */
 export const isDriverConfirmed = (b: Pick<Booking, 'assignedDriver' | 'driverConfirmed'>) =>
   Boolean(b.assignedDriver && b.driverConfirmed && b.driverConfirmed.driverId === b.assignedDriver.id);
+
+/** A stored driver card → typed; null when there is none. */
+export function toDriverCard(v: unknown): DriverCard | null {
+  if (!v || typeof v !== 'object') return null;
+  const c = v as Record<string, unknown>;
+  if (typeof c.name !== 'string' || !c.name) return null;
+  const n = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+  const photo = typeof c.photoUrl === 'string' && /^https:\/\/\S+$/.test(c.photoUrl) ? c.photoUrl : null;
+  return {
+    name: c.name,
+    photoUrl: photo,
+    rating: n(c.rating),
+    ratingCount: n(c.ratingCount) ?? 0,
+    trips: n(c.trips) ?? 0,
+    experienceYears: n(c.experienceYears),
+    verified: c.verified === true,
+    since: toDate(c.since),
+  };
+}
+
+/** A stored change-driver request → typed; null when there is none. */
+export function toDriverChangeRequest(v: unknown): DriverChangeRequest | null {
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown>;
+  return { at: toDate(r.at), reason: typeof r.reason === 'string' ? r.reason : '' };
+}
+
+/** The customer sees the driver only once DriveBuddy has confirmed him and the robot has made his card. */
+export const showsDriver = (b: Pick<Booking, 'assignedDriver' | 'driverConfirmed' | 'driverCard'>) => isDriverConfirmed(b) && Boolean(b.driverCard);
+
+/** Changes of driver the customer has left on this booking (0–2). */
+export const driverChangesLeft = (b: Pick<Booking, 'driverChanges'>) =>
+  Math.max(0, DRIVER_CHANGES_MAX - Math.max(0, Math.round(Number(b.driverChanges) || 0)));
+
+/**
+ * May the customer ask for another driver now? A driver is on it and shown,
+ * none asked for yet, changes left, and he has not started (the clock; the
+ * rules also check his Start tap, which the customer cannot see).
+ */
+export const canChangeDriver = (b: Pick<Booking, 'status' | 'assignedDriver' | 'driverConfirmed' | 'driverCard' | 'driverChanges' | 'driverChangeRequest' | 'clock'>) =>
+  b.status === 'assigned' && showsDriver(b) && !b.driverChangeRequest && driverChangesLeft(b) > 0 && !b.clock?.startAt;
+
+/** "Rating 4.7 (12)", "New driver"; "12 trips"; "7 years' experience"; "With DriveBuddy since Mar 2026". */
+export function driverCardLines(c: DriverCard): string[] {
+  const month = c.since ? new Intl.DateTimeFormat('en-IN', { month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(c.since) : '';
+  return [
+    c.rating !== null && c.ratingCount > 0 ? `★ ${c.rating.toFixed(1)} (${c.ratingCount} rating${c.ratingCount === 1 ? '' : 's'})` : 'New on DriveBuddy — no ratings yet',
+    `${c.trips} trip${c.trips === 1 ? '' : 's'} with DriveBuddy`,
+    c.experienceYears !== null ? `${c.experienceYears} years' driving experience` : '',
+    month ? `With DriveBuddy since ${month}` : '',
+  ].filter(Boolean);
+}
+
+/** Whether a driver's phone took an alert: drivers/{id}.lastAlert, alertTests/{id}.result (the robot's). */
+export type AlertResult = { at?: Date; ok: boolean; error: string | null };
+export type AlertTest = { at?: Date; result: AlertResult | null };
+
+export function toAlertResult(v: unknown): AlertResult | null {
+  if (!v || typeof v !== 'object') return null;
+  const r = v as Record<string, unknown>;
+  return typeof r.ok === 'boolean' ? { at: toDate(r.at), ok: r.ok, error: typeof r.error === 'string' ? r.error : null } : null;
+}
+
+export function toAlertTest(v: unknown): AlertTest | null {
+  if (!v || typeof v !== 'object') return null;
+  const t = v as Record<string, unknown>;
+  return { at: toDate(t.at), result: toAlertResult(t.result) };
+}
+
+/** An alert's result in words for the office (the same words as the robot's ALERT_RESULT_TEXT and Telegram). */
+export function alertResultText(r: AlertResult): string {
+  if (r.ok) return 'Reached his phone ✓';
+  switch (r.error) {
+    case 'NoToken':
+      return 'He has not signed up for alerts on his phone: he must open the Driver app and allow notifications.';
+    case 'DeviceNotRegistered':
+      return 'His phone no longer takes alerts (the app was removed or logged out): he must open the Driver app.';
+    case 'InvalidCredentials':
+      return "Not delivered: the Android notification key is missing in Expo (expo.dev → drivebuddy-driver → Credentials → Android → FCM V1 service account key).";
+    case 'MismatchSenderId':
+      return 'Not delivered: the notification key in Expo belongs to another Firebase project.';
+    case 'MessageRateExceeded':
+      return 'Not delivered: too many alerts to his phone at once.';
+    case 'NoReceipt':
+      return 'Expo did not say whether it arrived — try again.';
+    default:
+      return `Not delivered (${r.error ?? 'unknown error'}).`;
+  }
+}
+
+/** "RS" for Raju Sahu: the card without a photo. */
+export const initialsOf = (name: string) =>
+  name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? '')
+    .join('') || '?';
 
 /** A stored taps document → typed; null when there is none. */
 export function toTripTaps(v: unknown): TripTaps | null {

@@ -90,19 +90,36 @@ service cloud.firestore {
         && myDriver().phone == request.auth.token.driverPhone;
     }
 
-    // How he appears on a booking he takes: exactly his record.
+    // How he appears on a booking or an offer he takes: exactly his record —
+    // by id and name (25 Nov 2026: customers never get the driver's number),
+    // or, from older Driver app versions, with his number too.
     function meAsDriverRef() {
       return { 'id': request.auth.token.driverId, 'name': myDriver().name, 'phone': request.auth.token.driverPhone };
     }
 
-    // A booking this driver is on right now: assigned to his number, and still
+    function isMeAsDriver(d) {
+      return d == { 'id': request.auth.token.driverId, 'name': myDriver().name } || d == meAsDriverRef();
+    }
+
+    // A driver ref ({ id, name } or { id, name, phone }) that is this driver:
+    // his id — or, for bookings and offers from before 25 Nov 2026 and older
+    // app versions, his number (dropped once HIDE_DRIVER_PHONE has run, see
+    // docs/bookings-system.md). Plain comparisons, so the app's queries
+    // (assignedDriver.id == his id, or assignedDriver.phone == his number)
+    // can be checked against them; a missing field errors, which counts as no
+    // unless the other one matches.
+    function isMe(d) {
+      return d.id == request.auth.token.driverId
+        || d.phone == request.auth.token.driverPhone;
+    }
+
+    // A booking this driver is on right now: assigned to him, and still
     // "assigned" (once it is completed or cancelled he no longer sees it).
-    // Plain comparisons, so the app's query (assignedDriver.phone == his number,
-    // status == 'assigned') can be checked against it; a booking without a
-    // driver errors here, which counts as no.
+    // A booking without a driver errors here, which counts as no.
     function isMyJob(b) {
       return b.status == 'assigned'
-        && b.assignedDriver.phone == request.auth.token.driverPhone;
+        && (b.assignedDriver.id == request.auth.token.driverId
+          || b.assignedDriver.phone == request.auth.token.driverPhone);
     }
 
     // The office has confirmed this driver on the booking (driverConfirmed:
@@ -179,13 +196,15 @@ service cloud.firestore {
       return ['new', 'confirmed', 'assigned', 'completed', 'cancelled'];
     }
 
+    // A driver on a booking or an offer: his id and name; his number only
+    // until HIDE_DRIVER_PHONE (bookings are customer-readable).
     function isDriverRef(d) {
       return d is map
         && d.keys().hasOnly(['id', 'name', 'phone'])
-        && d.keys().hasAll(['id', 'name', 'phone'])
+        && d.keys().hasAll(['id', 'name'])
         && isText(d.id, 1, 128)
         && isText(d.name, 2, 60)
-        && isMobile(d.phone);
+        && (!('phone' in d) || isMobile(d.phone));
     }
 
     // The trip on an outstation booking ('round': the driver stays with the
@@ -384,6 +403,16 @@ service cloud.firestore {
         && a.at == request.time;
     }
 
+    // "Change driver" (25 Nov 2026): when the customer asked, at the server's
+    // time, and why (optional, at most 200 characters).
+    function isChangeRequest(r) {
+      return r is map
+        && r.keys().hasOnly(['at', 'reason'])
+        && r.keys().hasAll(['at', 'reason'])
+        && r.at == request.time
+        && isOptionalText(r.reason, 200);
+    }
+
     // The driver has not tapped Start on this job yet (no tripTaps, or no leftAt).
     function notStarted(bookingId) {
       return !exists(/databases/$(database)/documents/tripTaps/$(bookingId))
@@ -493,12 +522,12 @@ service cloud.firestore {
         && changedOnly(['status', 'assignedDriver', 'updatedAt', 'updatedBy'])
         && resource.data.status in ['new', 'confirmed']
         && request.resource.data.status == 'assigned'
-        && request.resource.data.assignedDriver == meAsDriverRef()
+        && isMeAsDriver(request.resource.data.assignedDriver)
         && request.resource.data.updatedAt == request.time
         && request.resource.data.updatedBy == request.auth.uid
         && get(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'open'
         && getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'taken'
-        && getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.takenBy == meAsDriverRef();
+        && isMeAsDriver(getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.takenBy);
 
       // The customer accepting the trip's estimate in the app ("Accept price"),
       // once, while the booking is still open: exactly the estimate they were
@@ -524,6 +553,23 @@ service cloud.firestore {
         && isReturnChoice(request.resource.data.returnChoice)
         && isOfferedTrain(request.resource.data.returnChoice.train, resource.data.returnCheck);
 
+      // "Change driver" (25 Nov 2026): the customer who owns the booking asks
+      // for another driver — while one is assigned and before he has tapped
+      // Start (no clock start, no leftAt), at most twice per booking
+      // (driverChanges, the robot's count), one request at a time. The robot
+      // then offers the job to other drivers (never to him again, no strike)
+      // and clears the request. driverChanges, changedDrivers and driverCard
+      // are the robot's alone.
+      allow update: if isSignedIn()
+        && resource.data.get('customerUid', '') == request.auth.uid
+        && resource.data.status == 'assigned'
+        && resource.data.get('driverChangeRequest', null) == null
+        && resource.data.get('driverChanges', 0) < 2
+        && (resource.data.get('clock', null) == null || !('startAt' in resource.data.clock))
+        && notStarted(bookingId)
+        && changedOnly(['driverChangeRequest'])
+        && isChangeRequest(request.resource.data.driverChangeRequest);
+
       // "Can't make it": the driver who took the job gives it back before he
       // has tapped Start, in the same transaction as his offer becoming
       // "released". The robot offers it again (never to him) and counts a strike.
@@ -536,7 +582,7 @@ service cloud.firestore {
         && request.resource.data.updatedBy == request.auth.uid
         && notStarted(bookingId)
         && get(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'taken'
-        && get(/databases/$(database)/documents/offers/$(bookingId)).data.takenBy.phone == request.auth.token.driverPhone
+        && isMe(get(/databases/$(database)/documents/offers/$(bookingId)).data.takenBy)
         && getAfter(/databases/$(database)/documents/offers/$(bookingId)).data.status == 'released';
 
       allow delete: if false;
@@ -708,7 +754,7 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidBy', 'paidAt'])
         && request.resource.data.paidBy in ['upi', 'cash']
         && request.resource.data.paidAt == request.time
-        && job().assignedDriver.phone == request.auth.token.driverPhone
+        && isMe(job().assignedDriver)
         && job().status in ['assigned', 'completed'];
 
       // An admin clears them when he gives the job to another driver.
@@ -797,9 +843,14 @@ service cloud.firestore {
     //  the booking is assigned to and only while it is "assigned". The customer
     //  who booked while logged in sees it on a map in the DriveBuddy app.
 
+    // Who is driving: driverId (25 Nov 2026 on — the customer reads this
+    // document, so never his number) or, from older app versions, driverPhone.
     function isTrack(d) {
-      return d.keys().hasOnly(['lat', 'lng', 'acc', 'heading', 'speed', 'active', 'at', 'phoneAt', 'driverPhone', 'driverName'])
-        && d.keys().hasAll(['lat', 'lng', 'acc', 'active', 'at', 'phoneAt', 'driverPhone'])
+      return d.keys().hasOnly(['lat', 'lng', 'acc', 'heading', 'speed', 'active', 'at', 'phoneAt', 'driverId', 'driverPhone', 'driverName'])
+        && d.keys().hasAll(['lat', 'lng', 'acc', 'active', 'at', 'phoneAt'])
+        && ('driverId' in d || 'driverPhone' in d)
+        && (!('driverId' in d) || d.driverId == request.auth.token.driverId)
+        && (!('driverPhone' in d) || d.driverPhone == request.auth.token.driverPhone)
         && d.lat is number && d.lat >= 6 && d.lat <= 37
         && d.lng is number && d.lng >= 68 && d.lng <= 98
         && d.acc is number && d.acc >= 0 && d.acc <= 100000
@@ -810,7 +861,6 @@ service cloud.firestore {
         && d.phoneAt is timestamp
         && d.phoneAt > request.time - duration.value(24, 'h')
         && d.phoneAt < request.time + duration.value(10, 'm')
-        && d.driverPhone == request.auth.token.driverPhone
         && (!('driverName' in d) || isText(d.driverName, 2, 60));
     }
 
@@ -850,6 +900,39 @@ service cloud.firestore {
         && (!('acc' in request.resource.data) || (request.resource.data.acc is number && request.resource.data.acc >= 0 && request.resource.data.acc <= 100000))
         && (!('pushToken' in request.resource.data) || isOptionalText(request.resource.data.pushToken, 200));
       allow delete: if false;
+    }
+
+    /* ------------------------------------------------------- alert tests -- */
+    //  alertTests/{driverId}: "Send test alert" in /admin's Drivers tab or
+    //  "Send me a test alert" in the Driver app (25 Nov 2026) — the time it
+    //  was asked for, at most once a minute. The alerts robot pushes "Test
+    //  alert — job alerts work ✓" to his phone and writes `result` ({ at, ok,
+    //  error }) once Expo answers; drivers/{id}.lastAlert is the robot's too.
+    //  A new request replaces the document (the old result goes).
+
+    match /alertTests/{driverId} {
+      function mayTest() {
+        return isAdmin() || (isDriver() && request.auth.token.get('driverId', '') == driverId);
+      }
+      function isTestAsk() {
+        return request.resource.data.keys().hasOnly(['at'])
+          && request.resource.data.at == request.time;
+      }
+      allow read: if mayTest();
+      allow create: if mayTest() && isTestAsk();
+      allow update: if mayTest() && isTestAsk()
+        && resource.data.at < request.time - duration.value(1, 'm');
+      allow delete: if false;
+    }
+
+    /* ------------------------------------------------------------- meta -- */
+    //  meta/flags: the alerts robot's switches /admin must follow —
+    //  hideDriverPhone (Script Property HIDE_DRIVER_PHONE): once on, /admin
+    //  writes a driver onto a booking without his number. Robot-written.
+
+    match /meta/flags {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     /* ------------------------------------------------------------ offers -- */
@@ -930,7 +1013,7 @@ service cloud.firestore {
     match /offers/{bookingId} {
       allow read: if isAdmin()
         || (isActiveDriver() && resource.data.status == 'open' && offeredToMe(resource.data))
-        || (isDriver() && resource.data.takenBy.phone == request.auth.token.driverPhone);
+        || (isDriver() && isMe(resource.data.takenBy));
 
       // An admin posts an offer (open, nobody yet) for a booking that exists, to its zone.
       allow create: if isAdmin()
@@ -968,17 +1051,17 @@ service cloud.firestore {
         && offeredToMe(resource.data)
         && changedOnly(['status', 'takenBy', 'takenAt', 'updatedAt'])
         && request.resource.data.status == 'taken'
-        && request.resource.data.takenBy == meAsDriverRef()
+        && isMeAsDriver(request.resource.data.takenBy)
         && request.resource.data.takenAt == request.time
         && request.resource.data.updatedAt == request.time
-        && getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.assignedDriver == meAsDriverRef();
+        && isMeAsDriver(getAfter(/databases/$(database)/documents/bookings/$(bookingId)).data.assignedDriver);
 
       // "Can't make it": the driver who took it gives it back — not done yet,
       // before he tapped Start — and the booking goes back to "confirmed" with
       // no driver in the same transaction.
       allow update: if isDriver()
         && resource.data.status == 'taken'
-        && resource.data.takenBy.phone == request.auth.token.driverPhone
+        && isMe(resource.data.takenBy)
         && resource.data.done == false
         && changedOnly(['status', 'updatedAt'])
         && request.resource.data.status == 'released'

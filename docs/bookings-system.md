@@ -40,6 +40,8 @@ How a booking travels from a customer's phone to a driver, and how to set it up.
 | `admins/{email}` | admin Google account | robot's `setup` (or the Firebase console) | that admin, to check their own access |
 | `meta/counters` | — | robot only | nobody from a browser |
 | `offers/{bookingId}` | job offered to drivers | admin, robot (also `cashCollected`: cash the driver kept); the driver who takes it or gives it back | admin; Active drivers of the cities in `cities` (open offers); the driver who took it |
+| `alertTests/{driverId}` | test alert asked for (*Send test alert* in /admin, *Send me a test alert* in the Driver app) | admin or that driver (`at`, once a minute at most); robot (`result`) | admin, that driver |
+| `meta/flags` | the robot's switches /admin follows (`hideDriverPhone`) | robot only | admin |
 | `tripTaps/{bookingId}` | job a driver is on | the assigned driver (Start, Arrived, Job done, Boarded the train, Reached home, then *Paid by UPI* / *Paid in cash* once) — never a price | admin, that driver (also after the job is completed) |
 | `ratings/{bookingId}` | completed job the customer rated | that customer (once) | admin, that customer |
 | `reminders/{bookingId}`, `offerAlerts/{bookingId}` | the robot's own notes (reminders, payment, rating request; who was alerted) | robot only | nobody from a browser |
@@ -121,6 +123,83 @@ The Driver and Customer apps and the robot now handle the simple jobs without a 
 8. **Payouts.** Mondays around 9:30, one Telegram per driver with done, unpaid jobs: what he earned **minus the cash he kept**. *"Pay Raju Sahu ₹450 · UPI raju@okaxis · 3 jobs (earned ₹1,350 − cash he kept ₹900)"* with **Paid ✓** — pay him, then press it. If he kept more cash than he earned: *"Raju Sahu owes DriveBuddy ₹300 … — collect it"* with **Settled ✓**; if it comes out even, *"nothing to pay"* with **Settled ✓**. Either button marks those jobs paid. Only presses in your own chat count.
 9. **9 pm report.** Today's bookings, revenue, DriveBuddy's cut, jobs nobody took, drivers online, payments today (*UPI ₹X (n) · cash ₹Y (n) · unpaid ₹Z (n)*) and payouts due (and cash to collect from drivers).
 10. **One zone: Raipur, Bhilai and Durg.** Every offer — yours and the robot's — goes to the drivers of all three cities at once (a driver registered in Bhilai often waits in Raipur), nearest first by GPS; Bilaspur is its own zone. If nobody has taken an automatic offer 10 minutes after its pay reached the top, the customer hears "Still finding your driver".
+
+### The driver's number, his card, Change driver, job alerts (25 Nov 2026)
+
+**Customers never get the driver's number** (like Rapido). They see his
+**driver card** once DriveBuddy has confirmed him — `bookings/{id}.driverCard`
+= `{ name, photoUrl, rating, ratingCount, trips, experienceYears, verified,
+since }`, written by the robot with the confirmation and again every night
+while the booking is open (no number, no address) — and a **Call DriveBuddy**
+button (`contact.phone`, and WhatsApp). Before the confirmation: *"Driver found
+— DriveBuddy is confirming him"*. Pushes, the WhatsApp template (its 4th value
+is now DriveBuddy's number, see docs/whatsapp.md) and the one-tap WhatsApp in
+/admin never carry his number. The office, the Sheet and Telegram still get it
+from `drivers/{id}`. The driver still gets the customer's details once
+confirmed, as before.
+
+Drivers are known **by id**: `assignedDriver` = `{ id, name }` (his number too
+only until the switch below), `tracking/{bookingId}.driverId` (instead of
+`driverPhone`). `tripTaps` and `offers` (never customer-readable) keep his
+number. The rules accept the id **or** the old number for now, so no driver
+loses his jobs while phones update.
+
+**The switch, `HIDE_DRIVER_PHONE`** (Script Property, off by default). In this
+order:
+
+1. Paste the new `apps-script/Code.js` first (its first minute gives every
+   assigned booking its driver card). Then publish `firestore.rules` and the
+   website together (one push to `main`): the rules accept both ways, and
+   they must be live before the apps that find jobs by id.
+2. Release the Driver app update that finds its jobs by id and writes the live
+   map with `driverId` (and the customer app with the driver card). Wait until
+   every active driver has updated — check in the Play Console, or ask in the
+   drivers' group; an old Driver app still works until step 3.
+3. Set `HIDE_DRIVER_PHONE` = `on`. Within 10 minutes the robot tells /admin
+   (`meta/flags`; /admin then assigns drivers without their number), takes the
+   number off every booking it sees change, and works through every booking
+   (100 every 10 minutes, the newest first; an old booking without an id gets
+   it from `drivers/`) and the live maps; Telegram says when it is done. Any
+   booking or live map an older app writes with the number afterwards loses it
+   again (at once for bookings, nightly for live maps). From then an **old**
+   Driver app no longer finds its jobs: that is why step 2 comes first.
+4. In a later release the rules' phone fallback can go (`isMe`, `isMyJob`,
+   `meAsDriverRef`, `isTrack`).
+
+Setting it back to `off` makes /admin write the number again; switching on
+again later cleans every booking again.
+
+**Change driver.** The customer (the app, My account) may ask for another
+driver twice per booking, before he taps Start: `driverChangeRequest = { at,
+reason }` (rules: the owner, while assigned, no clock start, no Start tap,
+`driverChanges` < 2, one at a time). The robot (at once on its doorbell, else
+within 10 minutes) — like Telegram's *Give to someone else*, **no strike** —
+puts the booking back to *Confirmed* with no driver, offers the job to the
+zone again (a fresh automatic offer if the office had assigned him itself),
+never to him or an earlier one (`offerAlerts.skipIds`), counts
+`driverChanges`, keeps `changedDrivers`, and clears the request. He hears
+*"The customer chose another driver for DB-1042 — this does not count against
+you"*, the customer *"Finding you another driver"*, the office *"DB-1042: the
+customer changed driver Raju Sahu (reason: …). Offered to other drivers."*
+Already started: only the request goes, and the customer is asked to call.
+
+**Job alerts that arrive.** Every push's Expo ticket is kept and its receipt
+read the next minute (only while some wait — an idle robot asks nothing). A
+missing Android key (`InvalidCredentials`) used to fail silently for every
+alert; now `drivers/{id}.lastAlert = { at, ok, error }` says whether his phone
+took the last one (Drivers tab), and any failure other than *the app is gone
+from that phone* reaches Telegram once a day per kind, in plain words —
+*"Job alerts can't reach drivers' phones: the Android notification key is
+missing in Expo (expo.dev → drivebuddy-driver → Credentials → Android → FCM V1
+service account key)"*. `DeviceNotRegistered` clears that phone's token: he
+must open the Driver app. **Send test alert** (Drivers tab, and the Driver
+app) writes `alertTests/{driverId}`; the robot pushes *"Test alert — job
+alerts work ✓"* on the jobs channel and writes the result in words.
+
+The apps ring the robot's doorbell with `{ "action": "driver-change" }` or `{
+"action": "alert-test" }` (a POST body) for these two, so the plain doorbell
+stays at its 6 calls; without it the robot finds a change within 10 minutes
+and a test within the hour.
 
 ### Payments without a gateway (UPI link + the driver confirms)
 

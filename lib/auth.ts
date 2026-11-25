@@ -12,7 +12,7 @@
 
 import type { ConfirmationResult, User } from 'firebase/auth';
 
-import { getFirebaseApp } from './firebase';
+import { getFirebaseApp, pingAlerts } from './firebase';
 
 const HINT = 'db.signedIn';
 
@@ -137,6 +137,19 @@ export async function chooseReturnTrain(bookingId: string, train: string, dep: D
   await updateDoc(doc(getFirestore(app), 'bookings', bookingId), {
     returnChoice: { train, dep: Timestamp.fromDate(dep), at: serverTimestamp() },
   });
+}
+
+/**
+ * "Change driver" (25 Nov 2026): ask DriveBuddy for another driver — before
+ * he starts, twice per booking at most (firestore.rules). The robot offers
+ * the job to other drivers (never him again) within seconds of the doorbell.
+ */
+export async function requestDriverChange(bookingId: string, reason: string) {
+  const [app, { getFirestore, doc, updateDoc, serverTimestamp }] = await Promise.all([getFirebaseApp(), import('firebase/firestore')]);
+  await updateDoc(doc(getFirestore(app), 'bookings', bookingId), {
+    driverChangeRequest: { at: serverTimestamp(), reason: reason.trim().slice(0, 200) },
+  });
+  pingAlerts('driver-change');
 }
 
 export async function saveProfile(uid: string, profile: Profile, isNew: boolean) {

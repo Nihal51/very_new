@@ -43,7 +43,15 @@ WhatsApp Business Platform (Cloud API).
    ```
 
    Sample values for review: `Ramesh`, `DB-1042`, `Suresh Verma`,
-   `+91 98933 02783`, `Thu 8 Oct, 3:30 PM`. Submit and wait for *Approved*.
+   `+91 91114 73929`, `Thu 8 Oct, 3:30 PM`. Submit and wait for *Approved*.
+
+   **{{4}} is DriveBuddy's own number, not the driver's** (25 Nov 2026:
+   customers never get the driver's number — they call DriveBuddy). The robot
+   fills it with the site's `contact.phone` (Script Property `OFFICE_PHONE` if
+   the site cannot be read; neither: the message waits). The words around it
+   ("Mobile:") are Meta's approved template and cannot be changed by the
+   robot; if you want them to say "Call DriveBuddy:", submit a new template
+   with that wording and set `WHATSAPP_TEMPLATE` to its name.
 
    Want Hindi instead? Create the same template in **Hindi**:
 
@@ -82,5 +90,8 @@ WhatsApp Business Platform (Cloud API).
 - To switch it off, delete `WHATSAPP_TOKEN`. The one-tap buttons in `/admin`
   keep working either way.
 
-Each booking is messaged once per driver: assigning a different driver sends
-the new driver's details; saving the same booking again does not.
+Each booking is messaged once per driver, once DriveBuddy has confirmed him
+(the office's call, or an office assignment): assigning a different driver
+sends the new driver's name; saving the same booking again does not. The
+one-tap message in `/admin` likewise names the driver and gives DriveBuddy's
+number, never his.

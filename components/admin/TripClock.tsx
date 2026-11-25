@@ -64,7 +64,7 @@ const linkUrl = (key: string) =>
  * he taps, the bill so far while he is on the road, and — once he is home —
  * the final bill to check and save. Times can be corrected here.
  */
-export function TripClock({ b, user }: { b: Booking; user: User }) {
+export function TripClock({ b, user, driverPhone = '' }: { b: Booking; user: User; driverPhone?: string }) {
   const [links, setLinks] = useState<TripLink[] | null>(null);
   const [loadErr, setLoadErr] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -136,7 +136,7 @@ export function TripClock({ b, user }: { b: Booking; user: User }) {
               </Button>
             </Alert>
           )}
-          <LinkActions b={b} link={link} />
+          <LinkActions b={b} link={link} phone={driverPhone} />
           <Steps b={b} link={link} user={user} />
           <BillPanel b={b} link={link} user={user} now={now} />
         </div>
@@ -153,10 +153,11 @@ export function TripClock({ b, user }: { b: Booking; user: User }) {
 
 /* ------------------------------------------------------------------ link */
 
-function LinkActions({ b, link }: { b: Booking; link: TripLink }) {
+function LinkActions({ b, link, phone: known }: { b: Booking; link: TripLink; phone: string }) {
   const [copied, setCopied] = useState(false);
   const url = linkUrl(link.key);
-  const phone = b.assignedDriver?.phone ?? '';
+  // His number from his record (bookings lose it once HIDE_DRIVER_PHONE is on).
+  const phone = b.assignedDriver?.phone || known;
   if (link.closed)
     return <p className="text-fg-subtle text-xs">The link is closed (the bill is saved): the driver can no longer tap.</p>;
   return (

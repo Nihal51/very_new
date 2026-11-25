@@ -64,6 +64,8 @@ import {
   type BookingStatus,
   type DateRange,
   type Driver,
+  type DriverRef,
+  DRIVER_CHANGES_MAX,
 } from '@/lib/bookings';
 import { estimateBasisText, estimateOf } from '@/lib/estimate';
 import { rupeeRange, rupees, settings } from '@/lib/settings';
@@ -127,6 +129,8 @@ export function BookingsTab({
   }, []);
 
   const activeDrivers = useMemo(() => drivers.filter((d) => d.status === 'active'), [drivers]);
+  // A driver's number for the office: on older bookings, else from his record (HIDE_DRIVER_PHONE, 25 Nov 2026).
+  const phoneOf = useMemo(() => driverPhoneLookup(drivers), [drivers]);
   const rows = useMemo(() => bookings ?? [], [bookings]);
   const cities = useMemo(() => [...new Set(rows.map((b) => b.city).filter(Boolean))].sort(), [rows]);
 
@@ -176,7 +180,7 @@ export function BookingsTab({
         b.pickupGeo ? mapsLink(b.pickupGeo) : '',
         formatPreferred(b.preferredTime),
         b.assignedDriver?.name ?? '',
-        b.assignedDriver ? sheetPhone(b.assignedDriver.phone) : '',
+        b.assignedDriver ? sheetPhone(phoneOf(b.assignedDriver)) : '',
         b.notes ?? '',
         `${b.isReturning ? 'Returning' : 'New'}${b.customerUid ? ' · logged in' : ''}`,
         b.status === 'cancelled' ? (b.cancelReason ?? '') : '',
@@ -318,6 +322,8 @@ export function BookingsTab({
             b={open}
             user={user}
             drivers={activeDrivers}
+            allDrivers={drivers}
+            phoneOf={phoneOf}
             now={now}
             initialMode={openMode}
             onClose={() => onOpen(null)}
@@ -533,8 +539,9 @@ function BlockNumber({ phone, user }: { phone: string; user: User }) {
 /* ------------------------------------------------------- tell the customer */
 
 /**
- * One tap opens WhatsApp to the customer with the driver's name, number and
- * trip time already typed — press Send. Free; no WhatsApp Business API needed.
+ * One tap opens WhatsApp to the customer with the driver's name, the trip
+ * time and DriveBuddy's number already typed — press Send (never the
+ * driver's number: 25 Nov 2026). Free; no WhatsApp Business API needed.
  */
 function TellCustomer({ b }: { b: Booking }) {
   const driver = b.assignedDriver;
@@ -546,7 +553,6 @@ function TellCustomer({ b }: { b: Booking }) {
         customerName: b.name,
         bookingRef: b.ref ?? '',
         driverName: driver.name,
-        driverPhone: prettyPhone(driver.phone),
         when: formatPreferred(b.preferredTime),
         pickup: b.pickup,
         helpPhone: prettyPhone(site.phone),
@@ -575,6 +581,12 @@ function TellCustomer({ b }: { b: Booking }) {
   );
 }
 
+/** id → number from the drivers list: a driver ref's number (on the ref while bookings still carry it). */
+function driverPhoneLookup(drivers: Driver[]) {
+  const byId = new Map(drivers.map((d) => [d.id, d.phone]));
+  return (d?: DriverRef | null) => (d ? d.phone || byId.get(d.id) || '' : '');
+}
+
 /* --------------------------------------------------------------- the drawer */
 
 export type Mode = null | 'assign' | 'cancel';
@@ -583,6 +595,8 @@ function BookingDetail({
   b,
   user,
   drivers,
+  allDrivers,
+  phoneOf,
   now,
   initialMode,
   onClose,
@@ -590,6 +604,8 @@ function BookingDetail({
   b: Booking;
   user: User;
   drivers: Driver[];
+  allDrivers: Driver[];
+  phoneOf: (d?: DriverRef | null) => string;
   now: number;
   initialMode: Mode;
   onClose: () => void;
@@ -620,7 +636,7 @@ function BookingDetail({
       if (to === 'confirmed') pingAlerts();
       // Keep the job offer in step: assigned by hand or cancelled → no longer
       // open to drivers; completed → the driver who took it can be paid.
-      const otherDriver = opts.driver && offer?.takenBy && opts.driver.phone !== offer.takenBy.phone;
+      const otherDriver = opts.driver && offer?.takenBy && opts.driver.id !== offer.takenBy.id;
       if (offer?.status === 'open' && (to === 'cancelled' || opts.driver)) await withdrawOffer(user, b.id).catch(() => {});
       else if (offer?.status === 'taken' && (to === 'cancelled' || otherDriver)) await withdrawOffer(user, b.id).catch(() => {});
       else if (offer?.status === 'taken' && (to === 'completed' || to === 'confirmed'))
@@ -685,10 +701,33 @@ function BookingDetail({
           )}
           {b.assignedDriver && (
             <Detail label="Driver" wide>
-              {b.assignedDriver.name} ·{' '}
-              <a href={`tel:+91${b.assignedDriver.phone}`} className="text-accent-text font-semibold tabular">
-                {prettyPhone(b.assignedDriver.phone)}
-              </a>
+              {b.assignedDriver.name}
+              {phoneOf(b.assignedDriver) && (
+                <>
+                  {' '}
+                  ·{' '}
+                  <a href={`tel:+91${phoneOf(b.assignedDriver)}`} className="text-accent-text font-semibold tabular">
+                    {prettyPhone(phoneOf(b.assignedDriver))}
+                  </a>
+                </>
+              )}
+              {b.driverCard && <span className="text-fg-subtle block text-xs">The customer sees his card (no number) and calls DriveBuddy.</span>}
+            </Detail>
+          )}
+          {(b.driverChangeRequest || (b.driverChanges ?? 0) > 0) && (
+            <Detail label="Change driver (customer)" wide>
+              {b.driverChangeRequest
+                ? `Asked ${formatDateTime(b.driverChangeRequest.at)}${b.driverChangeRequest.reason ? ` — “${b.driverChangeRequest.reason}”` : ''} · the robot offers it to other drivers within a minute.`
+                : ''}
+              {(b.driverChanges ?? 0) > 0 && (
+                <span className="block">
+                  Changed {b.driverChanges} of {DRIVER_CHANGES_MAX} times
+                  {b.changedDrivers?.length
+                    ? ` (${b.changedDrivers.map((id) => allDrivers.find((d) => d.id === id)?.name ?? id).join(', ')} — never offered it again, no strike)`
+                    : ''}
+                  .
+                </span>
+              )}
             </Detail>
           )}
           {b.status === 'assigned' && b.assignedDriver && (
@@ -795,10 +834,10 @@ function BookingDetail({
           )}
         </div>
 
-        <OfferPanel key={`offer-${b.id}-${offer?.status ?? 'none'}`} b={b} offer={offer} user={user} />
+        <OfferPanel key={`offer-${b.id}-${offer?.status ?? 'none'}`} b={b} offer={offer} user={user} takerPhone={phoneOf(offer?.takenBy)} />
 
         {isTripPackage(b.package) && <QuoteCalculator key={b.id} b={b} user={user} />}
-        {isTripPackage(b.package) && b.status !== 'cancelled' && <TripClock key={`clock-${b.id}`} b={b} user={user} />}
+        {isTripPackage(b.package) && b.status !== 'cancelled' && <TripClock key={`clock-${b.id}`} b={b} user={user} driverPhone={phoneOf(b.assignedDriver)} />}
         {b.package === 'one-way-drop' && <ReturnTrains key={`trains-${b.id}`} b={b} user={user} />}
 
         <div className="border-border mt-5 border-t pt-5">

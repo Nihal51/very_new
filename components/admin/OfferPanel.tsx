@@ -23,7 +23,18 @@ const CUTS = Array.from({ length: CUT.max - CUT.min + 1 }, (_, i) => CUT.min + i
  * once and the customer hears about it as usual. Drivers see only the area,
  * never the customer's name, number or address, until they have accepted.
  */
-export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null | undefined; user: User }) {
+export function OfferPanel({
+  b,
+  offer,
+  user,
+  takerPhone = '',
+}: {
+  b: Booking;
+  offer: Offer | null | undefined;
+  user: User;
+  /** The number of the driver who took it (offers keep it; else from his record). */
+  takerPhone?: string;
+}) {
   // Nothing quoted or offered yet: the estimate from the site's prices (the same the robot offers at).
   const est = estimateOf(b, settings.prices);
   const fromEstimate = b.quote?.amount == null && offer?.price == null && est.amount > 0;
@@ -126,7 +137,8 @@ export function OfferPanel({ b, offer, user }: { b: Booking; offer: Offer | null
       {offer?.status === 'taken' && offer.takenBy && (
         <div className="flex flex-col gap-2">
           <p>
-            Taken by <strong>{offer.takenBy.name}</strong> ({prettyPhone(offer.takenBy.phone)})
+            Taken by <strong>{offer.takenBy.name}</strong>
+            {(offer.takenBy.phone || takerPhone) && ` (${prettyPhone(offer.takenBy.phone || takerPhone)})`}
             {offer.takenAt ? ` · ${formatDateTime(offer.takenAt)}` : ''}.
           </p>
           <p className="text-fg-muted text-sm">

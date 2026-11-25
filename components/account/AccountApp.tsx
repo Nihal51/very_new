@@ -12,22 +12,31 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, Input } from '@/components/ui/Field';
 import { Spinner } from '@/components/ui/Spinner';
-import { chooseReturnTrain, loadProfile, saveProfile, signOutUser, watchUser, type Profile } from '@/lib/auth';
+import { chooseReturnTrain, loadProfile, requestDriverChange, saveProfile, signOutUser, watchUser, type Profile } from '@/lib/auth';
 import {
   BOOKING_STATUS,
+  canChangeDriver,
+  driverCardLines,
+  driverChangesLeft,
   formatDateTime,
   formatPreferred,
+  initialsOf,
   packageName,
   prettyPhone,
+  showsDriver,
   toBill,
   toClock,
   toDate,
+  toDriverCard,
+  toDriverChangeRequest,
+  toDriverConfirmed,
   toReturnCheck,
   toReturnChoice,
   toReturnPrice,
   type Booking,
 } from '@/lib/bookings';
 import { seatsLink } from '@/lib/rail';
+import { formatPhone, site, telHref, waHref } from '@/lib/site';
 import { getFirebaseApp, isFirebaseConfigured } from '@/lib/firebase';
 import { rupees } from '@/lib/settings';
 import { quoteBreakdown, tripSummary } from '@/lib/trip';
@@ -217,6 +226,9 @@ function Dashboard({ user, profile, onProfile }: { user: User; profile: Profile;
                   returnCheck: toReturnCheck(data.returnCheck),
                   returnChoice: toReturnChoice(data.returnChoice),
                   returnPrice: toReturnPrice(data.returnPrice),
+                  driverConfirmed: toDriverConfirmed(data.driverConfirmed),
+                  driverCard: toDriverCard(data.driverCard),
+                  driverChangeRequest: toDriverChangeRequest(data.driverChangeRequest),
                 };
               })
               .sort((a, b) => (b.createdAt?.getTime() ?? 9e15) - (a.createdAt?.getTime() ?? 9e15)),
@@ -434,20 +446,125 @@ function BookingRow({ b }: { b: Booking }) {
         )}
       </dl>
       {b.returnCheck && <ReturnTrainsCard b={b} />}
-      {b.assignedDriver && b.status === 'assigned' && (
-        <div className="border-border mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-4">
-          <p className="text-[0.9375rem]">
-            Your driver: <strong>{b.assignedDriver.name}</strong>
-          </p>
-          <a
-            href={`tel:+91${b.assignedDriver.phone}`}
-            className="text-accent-text inline-flex items-center gap-2 font-semibold tabular"
-          >
-            <PhoneIcon className="size-4" />
-            {prettyPhone(b.assignedDriver.phone)}
-          </a>
-        </div>
+      {b.assignedDriver && (b.status === 'assigned' || b.status === 'completed') && <DriverCardView b={b} />}
+      {b.status === 'confirmed' && b.driverChangeRequest === null && (b.driverChanges ?? 0) > 0 && (
+        <p className="border-border text-fg-muted mt-4 border-t pt-4 text-[0.9375rem]">Finding you another driver…</p>
       )}
     </Card>
+  );
+}
+
+/**
+ * The driver, as DriveBuddy shows him (25 Nov 2026): only once DriveBuddy has
+ * confirmed him — his card (photo or initials, rating, trips, experience,
+ * verified) — never his number: "Call DriveBuddy". Before Start the customer
+ * may ask for another driver, twice per booking.
+ */
+function DriverCardView({ b }: { b: Booking }) {
+  const [asking, setAsking] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const card = b.driverCard;
+  if (!showsDriver(b) || !card) {
+    if (b.status !== 'assigned') return null;
+    return (
+      <div className="border-border mt-4 border-t pt-4 text-[0.9375rem]">
+        <p className="font-semibold">Driver found — DriveBuddy is confirming him.</p>
+        <p className="text-fg-muted text-sm">You will see who he is here in a few minutes.</p>
+        <CallDriveBuddy />
+      </div>
+    );
+  }
+  const left = driverChangesLeft(b);
+  const may = canChangeDriver(b);
+  async function change() {
+    setBusy(true);
+    setErr('');
+    try {
+      await requestDriverChange(b.id, reason);
+      setAsking(false);
+    } catch {
+      setErr('Could not ask for another driver — if he has already set off, call DriveBuddy.');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="border-border mt-4 border-t pt-4 text-[0.9375rem]">
+      <div className="flex items-start gap-3">
+        {card.photoUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element -- a photo from the driver's record, any host
+          <img src={card.photoUrl} alt="" className="size-12 shrink-0 rounded-full object-cover" />
+        ) : (
+          <span aria-hidden="true" className="bg-accent-subtle text-accent-text grid size-12 shrink-0 place-items-center rounded-full font-semibold">
+            {initialsOf(card.name)}
+          </span>
+        )}
+        <div className="min-w-0">
+          <p>
+            {b.status === 'completed' ? 'Your driver was' : 'Your driver:'} <strong>{card.name}</strong>
+            {card.verified && (
+              <Badge tone="success" className="ml-2 align-middle">
+                ✓ Police verified
+              </Badge>
+            )}
+          </p>
+          <p className="text-fg-muted text-sm">{driverCardLines(card).join(' · ')}</p>
+        </div>
+      </div>
+      {b.status === 'assigned' && (
+        <>
+          <CallDriveBuddy />
+          {b.driverChangeRequest ? (
+            <p className="text-fg-muted mt-2 text-sm">You asked for another driver — finding one now.</p>
+          ) : may && !asking ? (
+            <Button size="sm" variant="ghost" className="mt-2" onClick={() => setAsking(true)}>
+              Change driver ({left === 1 ? '1 change left' : `${left} changes left`})
+            </Button>
+          ) : null}
+          {asking && (
+            <div className="border-border mt-3 rounded-lg border p-3">
+              <p className="font-semibold">Ask for another driver?</p>
+              <p className="text-fg-muted text-sm">
+                We offer your booking to other drivers at once. {left === 1 ? 'This is your last change for this booking.' : `You can change ${left} times for this booking.`}
+              </p>
+              <Field label="Why?" name={`why-${b.id}`} optionalLabel className="mt-2">
+                {(p) => <Input {...p} value={reason} maxLength={200} onChange={(e) => setReason(e.target.value)} />}
+              </Field>
+              <div className="mt-2 flex gap-2">
+                <Button size="sm" loading={busy} onClick={change}>
+                  Yes, change driver
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setAsking(false)}>
+                  Keep {card.name.split(' ')[0]}
+                </Button>
+              </div>
+            </div>
+          )}
+          {err && (
+            <Alert tone="error" className="mt-2">
+              {err}
+            </Alert>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Customers call DriveBuddy, never the driver: the office's number and WhatsApp. */
+function CallDriveBuddy() {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+      <a href={telHref} className="text-accent-text inline-flex items-center gap-2 font-semibold">
+        <PhoneIcon className="size-4" />
+        Call DriveBuddy
+      </a>
+      <a href={waHref()} target="_blank" rel="noopener noreferrer" className="text-accent-text font-semibold">
+        WhatsApp DriveBuddy
+      </a>
+      <span className="text-fg-subtle tabular text-sm">{formatPhone(site.phone)}</span>
+    </div>
   );
 }

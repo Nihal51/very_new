@@ -45,6 +45,7 @@ function makeStore() {
   return {
     docs,
     queries: [],
+    counts: [], // aggregation queries (their filters may name two fields: equality only)
     get(path) {
       return docs.has(path) ? { name: PREFIX + path, fields: docs.get(path) } : null;
     },
@@ -60,6 +61,12 @@ function makeStore() {
         .sort(([, a], [, b]) => dir * cmp(val(at(a, by)), val(at(b, by))))
         .slice(0, q.limit)
         .map(([p, f]) => ({ document: { name: PREFIX + p, fields: f } }));
+    },
+    /** runAggregationQuery's count (equality filters, no order: Firestore merges single-field indexes). */
+    count(q) {
+      this.counts.push(q);
+      const col = q.from[0].collectionId;
+      return [...docs.entries()].filter(([p, f]) => p.startsWith(`${col}/`) && p.split('/').length === 2 && matches(f, q.where)).length;
     },
     /** listDocuments: the documents directly inside a collection path. */
     list(collectionPath) {
@@ -79,7 +86,11 @@ function makeStore() {
         if (w.currentDocument?.exists === true && !exists) throw new Error(`precondition: ${path} missing`);
         if (w.currentDocument?.exists === false && exists) throw new Error(`precondition: ${path} exists`);
         const next = w.updateMask ? { ...(docs.get(path) ?? {}) } : {};
-        for (const k of w.updateMask?.fieldPaths ?? Object.keys(w.update.fields)) next[k] = w.update.fields[k];
+        // Like Firestore: a masked field that is not in `fields` is removed.
+        for (const k of w.updateMask?.fieldPaths ?? Object.keys(w.update.fields)) {
+          if (k in w.update.fields) next[k] = w.update.fields[k];
+          else delete next[k];
+        }
         for (const t of w.updateTransforms ?? []) {
           if (t.increment) next[t.fieldPath] = { integerValue: String((val(next[t.fieldPath]) ?? 0) + Number(t.increment.integerValue)) };
           if (t.appendMissingElements) {
@@ -147,6 +158,8 @@ function load() {
   const whatsapps = []; // every WhatsApp Cloud API request
   const warnings = [];
   const deadTokens = new Set(); // tokens Expo answers with DeviceNotRegistered
+  // Expo's tickets (unique ids) and receipts: `receipts[id]` overrides the default ok; `late` ids have none yet.
+  const expo = { n: 0, receipts: {}, late: new Set(), receiptCalls: [], ticketError: new Map() };
   const rail = { calls: [], answer: () => ({ code: 404, body: { success: false } }) }; // RailRadar stand-in
   // Every HTTP request the robot makes (each one inside fetchAll too): Apps Script's daily UrlFetch quota.
   const http = { n: 0, urls: [] };
@@ -272,15 +285,22 @@ function load() {
           pushes.push(...body);
           return response(200, {
             data: body.map((m) =>
-              deadTokens.has(m.to) ? { status: 'error', details: { error: 'DeviceNotRegistered' } } : { status: 'ok', id: 'r' },
+              deadTokens.has(m.to) ? { status: 'error', details: { error: 'DeviceNotRegistered' } }
+                : expo.ticketError.has(m.to) ? { status: 'error', details: { error: expo.ticketError.get(m.to) } }
+                : { status: 'ok', id: `r${++expo.n}` },
             ),
           });
+        }
+        if (url === 'https://exp.host/--/api/v2/push/getReceipts') {
+          expo.receiptCalls.push(body.ids);
+          return response(200, { data: Object.fromEntries(body.ids.filter((id) => !expo.late.has(id)).map((id) => [id, expo.receipts[id] ?? { status: 'ok' }])) });
         }
         if (url.endsWith('/app-config.json')) {
           return response(200, {
             prices: { oneHour: 300, threeHours: 600, twelveHours: 1400, fullDay: { from: 1000, to: 1200 }, nightFrom: 500, localExtraHour: 150 },
             google: { profile: 'https://maps.app.goo.gl/x', writeReview: 'https://search.google.com/local/writereview?placeid=P1' },
             payments: { cashLimit: 2000 },
+            contact: { phone: '9111473929', phoneAlt: '9893302783', whatsapp: '9111473929', email: 'drivebuddyind@gmail.com' },
             // The train check at the drop: a destination's stations (the site publishes every one).
             destinations: [{ id: 'ranchi', name: 'Ranchi', rail: { stations: ['RNC', 'HTE'], hubs: [] } }],
           });
@@ -298,6 +318,10 @@ function load() {
           return response(200, { documents: store.list(url.slice(BASE.length + 1).split('?')[0]) });
         }
         if (url === `${BASE}:runQuery`) return response(200, store.runQuery(body.structuredQuery));
+        if (url === `${BASE}:runAggregationQuery`) {
+          const n = store.count(body.structuredAggregationQuery.structuredQuery);
+          return response(200, [{ result: { aggregateFields: { n: { integerValue: String(n) } } } }]);
+        }
         if (url === `${BASE}:commit`) return response(200, store.commit(body.writes));
         if (url === `${BASE}:batchGet`) {
           return response(200, body.documents.map((name) => {
@@ -328,7 +352,7 @@ function load() {
     const [head = [], ...rows] = g;
     return rows.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i] ?? ''])));
   };
-  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, rail, mc, tg, rzp, http, clock };
+  return { ctx, store, props, telegram, mail, sheets, table, pushes, whatsapps, warnings, deadTokens, expo, rail, mc, tg, rzp, http, clock };
 }
 
 const ts = (msAgo) => ({ timestampValue: new Date(Date.now() - msAgo).toISOString() });
@@ -561,6 +585,8 @@ describe('customer updates', () => {
   beforeEach(() => (env = load()));
 
   const driver = (id, name, phone) => ({ mapValue: { fields: { id: s(id), name: s(name), phone: s(phone) } } });
+  // /admin assigns a driver confirmed by the office, in the same write.
+  const confirmed = (id) => ({ mapValue: { fields: { at: { timestampValue: new Date().toISOString() }, by: s('office'), driverId: s(id) } } });
   let clock = 0;
   /** An admin action in the panel: new fields and a fresh updatedAt. */
   const adminSets = (id, fields) => {
@@ -593,17 +619,30 @@ describe('customer updates', () => {
     env.ctx.tick(); // nothing new: nothing sent
     assert.equal(env.pushes.length, 2);
 
-    adminSets('b1', { status: s('assigned'), assignedDriver: driver('d1', 'Suresh Verma', '9893302783') });
+    adminSets('b1', { status: s('assigned'), assignedDriver: driver('d1', 'Suresh Verma', '9893302783'), driverConfirmed: confirmed('d1') });
     env.ctx.tick();
     assert.equal(env.pushes.length, 4);
     assert.equal(env.pushes[3].title, 'Driver assigned');
     assert.ok(env.pushes[3].body.includes('Suresh Verma will drive for DB-1001'));
+    assert.ok(!/98933|call him|their number/i.test(env.pushes[3].body + env.pushes[0].body + env.pushes[1].body), 'never the driver’s number');
     assert.equal(env.store.docs.get('bookings/b1').pushedKey.stringValue, 'assigned:d1');
 
-    adminSets('b1', { assignedDriver: driver('d2', 'Manoj Patel', '9893300000') }); // a different driver
+    adminSets('b1', { assignedDriver: driver('d2', 'Manoj Patel', '9893300000'), driverConfirmed: confirmed('d2') }); // a different driver
     env.ctx.tick();
     assert.equal(env.pushes.length, 6);
     assert.ok(env.pushes[5].body.includes('Manoj Patel'));
+  });
+
+  test('a driver who took the job in the app is told to the customer only once DriveBuddy confirms him', () => {
+    seedBooking(env.store, 'b1', { extra: { ref: s('DB-1001'), customerUid: s('u1'), status: s('confirmed'), pushedKey: s('confirmed') } });
+    device('u1', 'p1', 'ExponentPushToken[englishPhone2]', 'en');
+    adminSets('b1', { status: s('assigned'), assignedDriver: driver('d1', 'Suresh Verma', '9893302783'), updatedBy: s('driver-9893302783') });
+    env.ctx.tick();
+    assert.equal(env.pushes.filter((p) => p.title === 'Driver assigned').length, 0, 'found, not confirmed: nothing yet');
+    assert.equal(env.store.docs.get('bookings/b1').pushedKey.stringValue, 'confirmed');
+    adminSets('b1', { driverConfirmed: confirmed('d1') }); // Confirm driver ✓ in /admin
+    env.ctx.tick();
+    assert.equal(env.pushes.filter((p) => p.title === 'Driver assigned').length, 1);
   });
 
   test('guests, new bookings and customers without the app get no push', () => {
@@ -642,14 +681,14 @@ describe('customer updates', () => {
 
   test('WhatsApp stays off until it is set up, then sends the driver details once', () => {
     seedBooking(env.store, 'b1', { extra: { ref: s('DB-1001'), name: s('Ramesh Kumar Sahu'), preferredTime: s('2026-10-09T09:30') } });
-    adminSets('b1', { status: s('assigned'), assignedDriver: driver('d1', 'Suresh Verma', '9893302783') });
+    adminSets('b1', { status: s('assigned'), assignedDriver: driver('d1', 'Suresh Verma', '9893302783'), driverConfirmed: confirmed('d1') });
     env.ctx.tick();
     assert.equal(env.whatsapps.length, 0);
     assert.equal(env.store.docs.get('bookings/b1').whatsappKey, undefined);
 
     env.props.set('WHATSAPP_TOKEN', 'EAAG-test');
     env.props.set('WHATSAPP_PHONE_ID', '1234567890');
-    adminSets('b1', { assignedDriver: driver('d2', 'Manoj Patel', '9893300000') });
+    adminSets('b1', { assignedDriver: driver('d2', 'Manoj Patel', '9893300000'), driverConfirmed: confirmed('d2') });
     env.ctx.tick();
     env.ctx.tick();
     assert.equal(env.whatsapps.length, 1);
@@ -661,7 +700,8 @@ describe('customer updates', () => {
     assert.equal(w.body.template.language.code, 'en');
     assert.deepEqual(
       w.body.template.components[0].parameters.map((p) => p.text),
-      ['Ramesh', 'DB-1001', 'Manoj Patel', '+91 98933 00000', 'Fri 9 Oct, 9:30 AM'],
+      // The 4th value: DriveBuddy's number (the site's contact.phone), never the driver's (25 Nov 2026).
+      ['Ramesh', 'DB-1001', 'Manoj Patel', '+91 91114 73929', 'Fri 9 Oct, 9:30 AM'],
     );
     const b = env.store.docs.get('bookings/b1');
     assert.equal(b.whatsappAssigned.stringValue, 'sent');
@@ -2836,6 +2876,248 @@ describe('automation', () => {
     });
   });
 
+  describe('the driver’s number, his card, Change driver, job alerts (25 Nov 2026)', () => {
+    const doorbell = (action) => env.ctx.doPost({ postData: { contents: JSON.stringify({ action }) } });
+    const minuteLater = () => {
+      const waiting = JSON.parse(env.props.get('pushReceipts') || '[]');
+      env.props.set('pushReceipts', JSON.stringify(waiting.map((e) => ({ ...e, a: e.a - 60_000 }))));
+    };
+    const online = (id, token, extra = {}) =>
+      put(`availability/${id}`, { online: true, city: 'Raipur', name: id, phone: '9000000000', lat: 21.252, lng: 81.63, pushToken: token, at: ago(MIN), ...extra });
+
+    test('pure: the driver card has no number or address; rating to 1 decimal; since = approved', () => {
+      const approved = new Date('2026-03-01T10:00:00Z');
+      const card = plain(env.ctx.driverCardOf({ name: 'Raju Sahu', phone: RAJU.phone, city: 'Raipur', ratingAvg: 4.666, ratingCount: 3, experienceYears: 7, status: 'active', approvedAt: approved, adminNote: 'x' }, 12));
+      assert.deepEqual(card, { name: 'Raju Sahu', photoUrl: null, rating: 4.7, ratingCount: 3, trips: 12, experienceYears: 7, verified: true, since: approved.toISOString() });
+      assert.deepEqual(plain(env.ctx.driverCardOf({ name: 'New', status: 'verified', source: 'admin', createdAt: approved, photoUrl: 'https://x.example/p.jpg' }, 0)),
+        { name: 'New', photoUrl: 'https://x.example/p.jpg', rating: null, ratingCount: 0, trips: 0, experienceYears: null, verified: true, since: approved.toISOString() });
+      assert.equal(env.ctx.driverCardOf({ name: 'A', status: 'inactive', createdAt: approved }, 1).verified, false);
+      assert.equal(env.ctx.driverCardOf({ name: 'A', status: 'active', createdAt: approved }, 1).since, null, 'an application: its date is not the approval');
+      assert.equal(env.ctx.driverCardOf({ name: 'A', photoUrl: 'javascript:alert(1)' }, 1).photoUrl, null);
+      assert.deepEqual(plain(env.ctx.skipIdsWith_({ changedDrivers: ['d2'] }, { skipIds: ['d3', 'd2'] }, 'd1')), ['d3', 'd2', 'd1']);
+      assert.match(env.ctx.alertErrorText('InvalidCredentials', 'driver'), /expo\.dev → drivebuddy-driver → Credentials → Android → FCM V1 service account key/);
+    });
+
+    test('Confirmed ✓ writes the card with the confirmation — rating, trips, experience — and the customer hears, never his number', () => {
+      put('drivers/d1', { name: 'Raju Sahu', phone: RAJU.phone, city: 'Raipur', status: 'active', strikes: 1, ratingAvg: 4.5, ratingCount: 2, experienceYears: 9, createdAt: ago(86_400_000), approvedAt: ago(30 * 86_400_000) });
+      booking('old1', { status: 'completed', assignedDriver: RAJU });
+      booking('old2', { status: 'completed', assignedDriver: RAJU });
+      booking('old3', { status: 'cancelled', assignedDriver: RAJU });
+      device('u1', 'p1', 'ExponentPushToken[customer0001]', 'en');
+      booking('b1', { status: 'assigned', assignedDriver: RAJU, updatedBy: `driver-${RAJU.phone}`, updatedAt: new Date(), customerUid: 'u1', pushedKey: 'confirmed' });
+      takenOffer('b1');
+      env.ctx.watchChanges_();
+      env.ctx.notifyCustomers_();
+      assert.equal(env.pushes.filter((p) => p.to === 'ExponentPushToken[customer0001]').length, 0, 'not confirmed yet: the customer is not told');
+      env.tg.updates.push({ update_id: 30, callback_query: { id: 'cq30', data: 'conf:b1', message: { message_id: 70, chat: { id: 555 }, text: 'DB-1042: Raju Sahu took it' } } });
+      env.ctx.telegramCallbacks_();
+      const b = get('bookings/b1');
+      assert.equal(b.driverConfirmed.by, 'telegram');
+      assert.deepEqual([b.driverCard.name, b.driverCard.rating, b.driverCard.ratingCount, b.driverCard.trips, b.driverCard.experienceYears, b.driverCard.verified], ['Raju Sahu', 4.5, 2, 2, 9, true]);
+      assert.ok(!JSON.stringify(plain(b.driverCard)).includes('9893302783'));
+      assert.deepEqual(env.store.counts.at(-1).where.compositeFilter.filters.map((f) => f.fieldFilter.field.fieldPath), ['assignedDriver.id', 'status'], 'trips: a count, no documents read');
+      env.ctx.notifyCustomers_();
+      const told = env.pushes.filter((p) => p.to === 'ExponentPushToken[customer0001]');
+      assert.equal(told.length, 1);
+      assert.match(told[0].body, /Raju Sahu will drive for DB-1042, confirmed by DriveBuddy/);
+      assert.ok(!told[0].body.includes('98933'));
+    });
+
+    test('the office confirms in /admin: the robot adds the card; no driver any more: the card goes; a completed booking keeps it', () => {
+      booking('b2', { status: 'assigned', assignedDriver: RAJU, updatedBy: 'admin1', updatedAt: new Date(), driverConfirmed: { at: new Date(), by: 'office', driverId: 'd1' } });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/b2').driverCard.name, 'Raju Sahu');
+      put('bookings/b2', { ...get('bookings/b2'), status: 'confirmed', assignedDriver: null, driverConfirmed: null, updatedAt: new Date(Date.now() + 1000) });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/b2').driverCard, undefined);
+      booking('b3', { status: 'completed', assignedDriver: RAJU, driverConfirmed: { at: new Date(), by: 'office', driverId: 'd1' }, driverCard: { name: 'Raju Sahu', trips: 4 }, updatedAt: new Date(Date.now() + 2000) });
+      env.ctx.watchChanges_();
+      assert.equal(get('bookings/b3').driverCard.trips, 4);
+    });
+
+    test('every night the open bookings’ cards are made again (a new rating), only where they changed', () => {
+      booking('b4', { status: 'assigned', assignedDriver: RAJU, driverConfirmed: { at: new Date(), by: 'office', driverId: 'd1' }, driverCard: { name: 'Raju Sahu', photoUrl: null, rating: null, ratingCount: 0, trips: 0, experienceYears: null, verified: true, since: null } });
+      put('drivers/d1', { name: 'Raju Sahu', phone: RAJU.phone, city: 'Raipur', status: 'active', ratingAvg: 5, ratingCount: 1, createdAt: ago(86_400_000) });
+      env.ctx.dailyReport();
+      assert.deepEqual([get('bookings/b4').driverCard.rating, get('bookings/b4').driverCard.ratingCount], [5, 1]);
+      const n = env.http.urls.filter((u) => u === 'fs:commit').length;
+      env.ctx.dailyReport();
+      assert.equal(env.http.urls.filter((u) => u === 'fs:commit').length, n, 'unchanged: nothing written');
+    });
+
+    test('once, after the new robot is pasted: every assigned booking with a confirmed driver gets his card', () => {
+      booking('b6', { status: 'assigned', assignedDriver: RAJU, driverConfirmed: { at: new Date(), by: 'office', driverId: 'd1' } });
+      booking('b7', { status: 'assigned', assignedDriver: RAJU }); // not confirmed: no card
+      env.ctx.driverCardBackfill_();
+      assert.equal(get('bookings/b6').driverCard.name, 'Raju Sahu');
+      assert.equal(get('bookings/b7').driverCard, undefined);
+      assert.equal(env.props.get('driverCardBackfill'), 'v1');
+      const n = env.http.n;
+      env.ctx.driverCardBackfill_();
+      assert.equal(env.http.n, n, 'once');
+    });
+
+    test('a newly approved driver gets approvedAt once (the card’s "since")', () => {
+      put('drivers/d5', { name: 'Sonu', phone: '9425212345', city: 'Raipur', status: 'active', createdAt: ago(5 * 86_400_000), updatedAt: new Date() });
+      env.ctx.syncDriversSheet_();
+      const at = get('drivers/d5').approvedAt;
+      assert.ok(at);
+      env.store.docs.get('drivers/d5').updatedAt = { timestampValue: new Date(Date.now() + 5000).toISOString() };
+      env.ctx.syncDriversSheet_();
+      assert.equal(get('drivers/d5').approvedAt.getTime(), at.getTime());
+    });
+
+    test('Change driver: offered to the zone again never to him, no strike; he, the customer and the office hear; twice at most', () => {
+      online('d1', 'ExponentPushToken[raju]');
+      online('d2', 'ExponentPushToken[sonu]');
+      device('u1', 'p1', 'ExponentPushToken[customer0001]', 'hi');
+      booking('b1', {
+        status: 'assigned', assignedDriver: RAJU, customerUid: 'u1', updatedBy: 'admin1', updatedAt: ago(MIN),
+        driverConfirmed: { at: ago(MIN), by: 'office', driverId: 'd1' }, driverCard: { name: 'Raju Sahu' },
+        driverChangeRequest: { at: new Date(), reason: 'He is not picking up' },
+      });
+      takenOffer('b1');
+      doorbell('driver-change');
+      const b = get('bookings/b1');
+      assert.deepEqual([b.status, b.assignedDriver, b.driverChanges, plain(b.changedDrivers), b.updatedBy], ['confirmed', null, 1, ['d1'], 'robot']);
+      assert.deepEqual([b.driverConfirmed, b.driverCard, b.driverChangeRequest], [undefined, undefined, undefined]);
+      assert.equal(get('offers/b1').status, 'open');
+      assert.deepEqual(plain(get('offerAlerts/b1').skipIds), ['d1']);
+      assert.equal(get('drivers/d1').strikes, 1, 'no strike');
+      assert.ok(events('b1').some((e) => /The customer changed driver Raju Sahu \(He is not picking up\) — no strike/.test(e.note)));
+      const him = env.pushes.filter((p) => p.to === 'ExponentPushToken[raju]');
+      assert.equal(him.length, 1);
+      assert.match(him[0].body, /^The customer chose another driver for DB-1042 — this does not count against you · /);
+      assert.equal(env.pushes.find((p) => p.to === 'ExponentPushToken[customer0001]').title, 'दूसरा ड्राइवर ढूँढ रहे हैं');
+      assert.ok(env.telegram.some((m) => m.text === '🔁 <b>DB-1042</b>: the customer changed driver Raju Sahu (reason: He is not picking up). Offered to other drivers. Change 1 of 2, no strike for him.'));
+      // The offer went out in the same doorbell run: to Sonu, not to Raju.
+      assert.deepEqual(env.pushes.filter((p) => p.data.offerId === 'b1').map((p) => p.to), ['ExponentPushToken[sonu]']);
+      // Given back later by the next driver: still never to Raju.
+      env.ctx.releasedOffers_([{ id: 'b1', data: { ...get('offers/b1'), status: 'released', takenBy: { id: 'd2', name: 'Sonu' } } }]);
+      assert.deepEqual(plain(get('offerAlerts/b1').skipIds), ['d1', 'd2']);
+    });
+
+    test('Change driver once he has started: only the request goes; the customer is asked to call, the office hears', () => {
+      device('u1', 'p1', 'ExponentPushToken[customer0001]', 'en');
+      booking('b1', { status: 'assigned', assignedDriver: RAJU, customerUid: 'u1', driverConfirmed: { at: ago(MIN), by: 'office', driverId: 'd1' }, driverChangeRequest: { at: new Date(), reason: '' } });
+      put('tripTaps/b1', { driverPhone: RAJU.phone, leftAt: ago(MIN) });
+      doorbell('driver-change');
+      const b = get('bookings/b1');
+      assert.deepEqual([b.status, b.assignedDriver.id, b.driverChangeRequest, b.driverChanges], ['assigned', 'd1', undefined, undefined]);
+      assert.match(env.pushes.at(-1).body, /already set off.*Call DriveBuddy/);
+      assert.ok(env.telegram.some((m) => /asked to change driver Raju Sahu, but he has already started/.test(m.text)));
+    });
+
+    test('Change driver of a job the office assigned itself (no offer): an automatic offer is made', () => {
+      booking('b1', { status: 'assigned', assignedDriver: RAJU, driverConfirmed: { at: ago(MIN), by: 'office', driverId: 'd1' }, driverChanges: 1, changedDrivers: ['d7'], driverChangeRequest: { at: new Date(), reason: '' } });
+      doorbell('driver-change');
+      assert.equal(get('offers/b1').status, 'open');
+      assert.equal(get('offers/b1').price, 600);
+      assert.deepEqual(plain(get('offerAlerts/b1').skipIds), ['d7', 'd1']);
+      assert.equal(get('bookings/b1').driverChanges, 2);
+    });
+
+    test('a ticket error and a receipt error: his lastAlert, Telegram once a day in plain words; a phone without the app loses its token', () => {
+      put('drivers/d2', { name: 'Sonu', phone: '9425212345', city: 'Raipur', status: 'active', createdAt: ago(86_400_000) });
+      online('d1', 'ExponentPushToken[raju]');
+      online('d2', 'ExponentPushToken[sonu]');
+      env.ctx.sendPush_([env.ctx.testAlertPush('ExponentPushToken[raju]'), env.ctx.testAlertPush('ExponentPushToken[sonu]')],
+        [env.ctx.driverMeta('d1', 'ExponentPushToken[raju]'), env.ctx.driverMeta('d2', 'ExponentPushToken[sonu]')]);
+      const waiting = JSON.parse(env.props.get('pushReceipts'));
+      assert.deepEqual(waiting.map((e) => e.d), ['d1', 'd2']);
+      assert.equal(env.ctx.receiptsDue_(), false, 'not yet: Expo is given a moment');
+      minuteLater();
+      env.expo.receipts[waiting[0].i] = { status: 'error', details: { error: 'InvalidCredentials' } };
+      env.expo.receipts[waiting[1].i] = { status: 'error', details: { error: 'DeviceNotRegistered' } };
+      env.ctx.pushReceipts_();
+      assert.deepEqual([get('drivers/d1').lastAlert.ok, get('drivers/d1').lastAlert.error], [false, 'InvalidCredentials']);
+      assert.equal(get('drivers/d2').lastAlert.error, 'DeviceNotRegistered');
+      assert.equal(get('availability/d2').pushToken, undefined, 'the dead token is cleared');
+      assert.equal(get('availability/d1').pushToken, 'ExponentPushToken[raju]');
+      const said = env.telegram.filter((m) => /^📵/.test(m.text));
+      assert.equal(said.length, 1, 'DeviceNotRegistered is not the office’s problem');
+      assert.match(said[0].text, /Job alerts can't reach drivers' phones: the Android notification key is missing in Expo/);
+      assert.deepEqual(JSON.parse(env.props.get('pushReceipts')), []);
+      // The same failure again today: no second Telegram. A good one later: lastAlert ok.
+      env.expo.ticketError.set('ExponentPushToken[raju]', 'InvalidCredentials');
+      env.ctx.sendPush_([env.ctx.testAlertPush('ExponentPushToken[raju]')], [env.ctx.driverMeta('d1', 'ExponentPushToken[raju]')]);
+      assert.equal(env.telegram.filter((m) => /^📵/.test(m.text)).length, 1);
+      env.expo.ticketError.clear();
+      env.ctx.sendPush_([env.ctx.testAlertPush('ExponentPushToken[raju]')], [env.ctx.driverMeta('d1', 'ExponentPushToken[raju]')]);
+      minuteLater();
+      env.ctx.pushReceipts_();
+      assert.equal(get('drivers/d1').lastAlert.ok, true);
+    });
+
+    test('a test alert: its own doorbell pushes "Test alert" on the jobs channel; the result after the receipt; no token: said at once', () => {
+      put('drivers/d2', { name: 'Sonu', phone: '9425212345', city: 'Raipur', status: 'active', createdAt: ago(86_400_000) });
+      online('d1', 'ExponentPushToken[raju]');
+      put('alertTests/d1', { at: new Date() });
+      put('alertTests/d2', { at: new Date() });
+      const n0 = env.http.n;
+      doorbell('alert-test');
+      assert.ok(env.http.n - n0 <= 5, String(env.http.n - n0));
+      const test1 = env.pushes.find((p) => p.to === 'ExponentPushToken[raju]');
+      assert.deepEqual([test1.title, test1.channelId, test1.priority], ['Test alert — job alerts work ✓', 'jobs', 'high']);
+      assert.deepEqual([get('alertTests/d2').result.ok, get('alertTests/d2').result.error], [false, 'NoToken']);
+      assert.equal(get('drivers/d2').lastAlert, undefined, 'no alert went out: lastAlert stays');
+      assert.equal(get('alertTests/d1').result, undefined, 'waits for the receipt');
+      minuteLater();
+      env.ctx.tick();
+      assert.deepEqual([get('alertTests/d1').result.ok, get('alertTests/d1').result.error], [true, null]);
+      assert.equal(get('drivers/d1').lastAlert.ok, true);
+      doorbell('alert-test');
+      assert.equal(env.pushes.filter((p) => p.to === 'ExponentPushToken[raju]').length, 1, 'answered once');
+    });
+
+    test('HIDE_DRIVER_PHONE off: bookings keep his number; on: /admin hears (meta/flags), every booking and live map loses it, newest first', () => {
+      env.ctx.robotFlags_();
+      assert.equal(get('meta/flags').hideDriverPhone, false);
+      const commits = () => env.http.urls.filter((u) => u === 'fs:commit').length;
+      const c0 = commits();
+      env.ctx.robotFlags_();
+      assert.equal(commits(), c0, 'written only when it changes');
+      for (let i = 0; i < 150; i++) booking(`h${String(i).padStart(3, '0')}`, { status: 'completed', assignedDriver: RAJU, createdAt: ago((i + 1) * MIN) });
+      booking('legacy', { status: 'completed', assignedDriver: { name: 'Raju Sahu', phone: RAJU.phone }, createdAt: ago(1000 * MIN) });
+      put('tracking/h000', { lat: 21.25, lng: 81.63, acc: 10, active: true, at: new Date(), phoneAt: new Date(), driverPhone: RAJU.phone, driverName: 'Raju Sahu' });
+      assert.equal(env.ctx.phoneBackfillDue_(), false);
+      env.props.set('HIDE_DRIVER_PHONE', 'on');
+      env.ctx.robotFlags_();
+      assert.equal(get('meta/flags').hideDriverPhone, true);
+      env.ctx.phoneBackfill_();
+      assert.deepEqual(plain(get('bookings/h000').assignedDriver), { id: 'd1', name: 'Raju Sahu' });
+      assert.equal(get('bookings/h149').assignedDriver.phone, RAJU.phone, 'the oldest wait for the next turn');
+      env.ctx.phoneBackfill_();
+      assert.equal(get('bookings/h149').assignedDriver.phone, undefined);
+      assert.deepEqual(plain(get('bookings/legacy').assignedDriver), { id: 'd1', name: 'Raju Sahu' }, 'an old booking gets his id');
+      assert.equal(get('tracking/h000').driverPhone, undefined);
+      assert.equal(get('tracking/h000').driverId, 'd1');
+      assert.equal(env.ctx.phoneBackfillDue_(), false, 'done');
+      assert.equal(env.telegram.filter((m) => /numbers are off every booking/.test(m.text)).length, 1);
+      // A booking assigned afterwards with his number (an older /admin or Driver app): the next look takes it off.
+      booking('late', { status: 'assigned', assignedDriver: RAJU, updatedBy: 'admin1', updatedAt: new Date(), driverConfirmed: { at: new Date(), by: 'office', driverId: 'd1' } });
+      env.ctx.watchChanges_();
+      assert.deepEqual(plain(get('bookings/late').assignedDriver), { id: 'd1', name: 'Raju Sahu' });
+    });
+
+    test('without his number on the booking the robot still knows him: taps, the confirm call, the Sheet', () => {
+      const RAJU_ID = { id: 'd1', name: 'Raju Sahu' };
+      booking('b1', { status: 'assigned', assignedDriver: RAJU_ID, updatedBy: `driver-${RAJU.phone}`, updatedAt: new Date(), preferredTime: '2026-11-22T15:30' });
+      takenOffer('b1', { takenBy: RAJU_ID });
+      env.ctx.watchChanges_();
+      const asked = env.telegram.find((m) => /took it — call him to confirm/.test(m.text));
+      assert.match(asked.text, /<a href="tel:\+919893302783">98933 02783<\/a>/, 'his number from drivers/d1');
+      put('bookings/b1', { ...get('bookings/b1'), driverConfirmed: { at: new Date(), by: 'telegram', driverId: 'd1' } });
+      put('tripTaps/b1', { driverPhone: RAJU.phone, leftAt: ago(20 * MIN), arrivedAt: ago(10 * MIN) });
+      env.ctx.syncTaps_('b1', get('tripTaps/b1'));
+      assert.ok(get('bookings/b1').clock.startAt, 'his Arrived tap starts the meter');
+      put('tripTaps/b1', { driverPhone: '9000000001', leftAt: ago(20 * MIN), arrivedAt: ago(5 * MIN) });
+      assert.equal(env.ctx.sameDriver_(RAJU_ID, '9000000001'), false);
+      env.ctx.syncBookingsSheet_();
+      assert.equal(env.table('Bookings').find((r) => r.ID === 'b1')['Driver phone'], '98933 02783');
+    });
+  });
+
   describe('9 pm report (11) and the triggers', () => {
     test('the day in numbers', () => {
       booking('n1', { createdAt: ago(1000) });
@@ -2900,6 +3182,7 @@ describe('web calls: within Google’s daily UrlFetch quota', () => {
   const busyDay = () => {
     for (const [id, lat] of [['d1', 21.252], ['d2', 21.26], ['d3', 21.28], ['d4', 21.35]]) {
       put(`availability/${id}`, { online: true, city: 'Raipur', name: id, phone: '9000000000', lat, lng: 81.63, pushToken: `ExponentPushToken[${id}]`, at: ago(60_000) });
+      put(`drivers/${id}`, { name: id, phone: '9000000000', city: 'Raipur', status: 'active', experienceYears: 8, createdAt: ago(86_400_000) });
     }
     put('bookings/o1', { name: 'A', phone: '9111473929', city: 'Raipur', package: '3-hours-600', pickup: '12, Shankar Nagar', preferredTime: '', notes: '', status: 'confirmed', source: 'app', createdAt: ago(600_000), ref: 'DB-1050' });
     put('offers/o1', {
@@ -2919,16 +3202,27 @@ describe('web calls: within Google’s daily UrlFetch quota', () => {
     tenMinutes(); // the first runs: the one-time backfill and the list of current jobs
   });
 
-  test('an idle robot: at most 4 calls a minute, about 4,300 a day (it was 16 a minute, about 24,000 a day)', () => {
+  test('an idle robot: at most 4 calls a minute, about 4,500 a day (it was 16 a minute, about 24,000 a day)', () => {
     const calls = tenMinutes();
     assert.ok(calls.every((n) => n <= 4), JSON.stringify(calls));
-    const day = (calls.reduce((a, b) => a + b, 0) / 10) * 1440;
+    // A whole hour: the hourly look for test alerts and the 10-minute look for Change driver included (25 Nov 2026).
+    const hour = Array.from({ length: 60 }, (_, m) => tickAt(m));
+    assert.ok(hour.every((n) => n <= 4), JSON.stringify(hour));
+    const day = hour.reduce((a, b) => a + b, 0) * 24;
     assert.ok(day <= 4500, `${day} a day`);
+    assert.equal(env.http.urls.filter((u) => u.includes('getReceipts')).length, 0, 'no push sent: no receipts asked for');
   });
 
   test('a busy stretch (an offer being dispatched, a take waiting for the call, a payout waiting, a driver on a job): about 8 a minute', () => {
     busyDay();
-    const calls = tenMinutes();
+    // A minute passes between ticks: the tickets of one minute's alerts get their receipts at the next.
+    const calls = Array.from({ length: 10 }, (_, m) => {
+      const waiting = JSON.parse(env.props.get('pushReceipts') || '[]');
+      env.props.set('pushReceipts', JSON.stringify(waiting.map((e) => ({ ...e, a: e.a - 60_000 }))));
+      return tickAt(m);
+    });
+    assert.ok(env.expo.receiptCalls.length >= 1, 'the alerts’ receipts were read');
+    assert.equal(get(env, 'drivers/d1').lastAlert.ok, true, 'and each driver’s last alert noted');
     assert.ok(calls.every((n) => n <= 14), JSON.stringify(calls)); // the first minute does the tap's and the offer's work
     assert.ok(calls.reduce((a, b) => a + b, 0) <= 90, JSON.stringify(calls));
     assert.ok(env.pushes.some((p) => p.data && p.data.offerId === 'o1'), 'the offer still reaches the drivers');

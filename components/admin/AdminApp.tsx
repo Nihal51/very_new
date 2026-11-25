@@ -25,6 +25,9 @@ import {
   toDate,
   toLocalBill,
   toPayment,
+  toAlertResult,
+  toDriverCard,
+  toDriverChangeRequest,
   toDriverConfirmed,
   type Booking,
   type Driver,
@@ -152,11 +155,13 @@ const mapBooking = (id: string, d: Record<string, unknown>): Booking => {
     localBill: toLocalBill(d.localBill),
     payment: toPayment(d.payment),
     driverConfirmed: toDriverConfirmed(d.driverConfirmed),
+    driverCard: toDriverCard(d.driverCard),
+    driverChangeRequest: toDriverChangeRequest(d.driverChangeRequest),
     pickupGeo: readPickupGeo(d.pickupGeo),
   } as Booking;
 };
 const mapDriver = (id: string, d: Record<string, unknown>): Driver =>
-  ({ ...(d as Omit<Driver, 'id'>), id, createdAt: toDate(d.createdAt) }) as Driver;
+  ({ ...(d as Omit<Driver, 'id'>), id, createdAt: toDate(d.createdAt), lastAlert: toAlertResult(d.lastAlert) }) as Driver;
 
 /** A short two-tone chime, made in the browser — no sound file to load. */
 function chime() {
