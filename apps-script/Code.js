@@ -2703,7 +2703,8 @@ function msOf_(d) {
 /** A taps document as a short hash (8 hex digits), to see whether it changed; '' for none. */
 function tapsPrint(t) {
   if (!t) return '';
-  var text = [t.driverPhone || '', msOf_(t.leftAt), msOf_(t.arrivedAt), msOf_(t.doneAt), msOf_(t.homeAt), t.paidBy || '', msOf_(t.paidAt)].join('|');
+  // Every tap the robot acts on (Boarded too: a tap that only adds boardAt must still be seen).
+  var text = [t.driverPhone || '', msOf_(t.leftAt), msOf_(t.arrivedAt), msOf_(t.doneAt), msOf_(t.boardAt), msOf_(t.homeAt), t.paidBy || '', msOf_(t.paidAt)].join('|');
   var h = 5381;
   for (var i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
   return ('0000000' + h.toString(16)).slice(-8);
@@ -2987,6 +2988,18 @@ function saveConfirmsPending_(pending) {
   PropertiesService.getScriptProperties().setProperty('confirmsPending', JSON.stringify(pending));
 }
 
+/**
+ * Now, but never earlier than (or equal to) the booking's own updatedAt: a
+ * robot write must move updatedAt forward, or the steps that follow bookings
+ * by updatedAt (the Sheet, the customer's notifications) could take it for a
+ * change they have already handled — when /admin's server clock is ahead of
+ * Apps Script's, or two writes fall in one millisecond.
+ */
+function notBefore_(prevUpdatedAt) {
+  var prev = prevUpdatedAt && typeof prevUpdatedAt.getTime === 'function' ? prevUpdatedAt.getTime() : 0;
+  return new Date(Math.max(Date.now(), prev + 1));
+}
+
 /** Has the office (or the robot) confirmed this booking's driver `driverId`? (booking.driverConfirmed) */
 function confirmedFor(b, driverId) {
   var c = b && b.driverConfirmed;
@@ -2999,8 +3012,8 @@ function confirmedFor(b, driverId) {
  * the customer sees (driverCard) — and updatedAt, so the customer's
  * notification ("Driver assigned") follows in the next look.
  */
-function writeDriverConfirmed_(id, by, driverId) {
-  var now = new Date();
+function writeDriverConfirmed_(id, by, driverId, prevUpdatedAt) {
+  var now = notBefore_(prevUpdatedAt);
   var card = driverCardFor_(driverId);
   var fields = { driverConfirmed: { at: now, by: by, driverId: driverId }, updatedAt: now };
   if (card) fields.driverCard = card;
@@ -3038,8 +3051,8 @@ function confirmAssignments_(rows, backfill) {
     var b = row.data;
     var d = b.assignedDriver;
     if (b.status !== 'assigned' || !d || !d.id || confirmedFor(b, d.id)) return;
-    if (!takenInApp_(row.id, b, d.id)) return writeDriverConfirmed_(row.id, 'office', d.id);
-    if (!askByCall) return writeDriverConfirmed_(row.id, 'auto', d.id);
+    if (!takenInApp_(row.id, b, d.id)) return writeDriverConfirmed_(row.id, 'office', d.id, b.updatedAt);
+    if (!askByCall) return writeDriverConfirmed_(row.id, 'auto', d.id, b.updatedAt);
     var take = String(b.updatedBy || '').indexOf('driver-') === 0 && b.updatedAt && !backfill;
     var key = d.id + '@' + (take ? b.updatedAt.getTime() : 'seen');
     pending = pending || confirmsPending_();
@@ -3163,7 +3176,7 @@ function confirmPress_(cq, c, pending) {
     if (confirmedFor(b, e.driverId)) {
       word = 'Confirmed ✓ (already' + (b.driverConfirmed.by === 'admin' || b.driverConfirmed.by === 'office' ? ', in /admin' : '') + ')';
     } else {
-      writeDriverConfirmed_(c.bookingId, 'telegram', e.driverId);
+      writeDriverConfirmed_(c.bookingId, 'telegram', e.driverId, b.updatedAt);
       word = 'Confirmed ✓';
     }
   } else {
@@ -5648,7 +5661,7 @@ function driverChanges_(rows) {
       }
       return;
     }
-    var now = new Date();
+    var now = notBefore_(b.updatedAt);
     var changed = ((b.changedDrivers || []).indexOf(d.id) < 0 ? (b.changedDrivers || []).concat([d.id]) : b.changedDrivers).slice(-10);
     var alert = fsGet_('offerAlerts/' + row.id) || {};
     var skip = skipIdsWith_(b, alert, d.id);

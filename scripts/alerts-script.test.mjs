@@ -2090,7 +2090,9 @@ describe('automation', () => {
         device('u1', 'p1', 'ExponentPushToken[customer0001]', 'hi');
         ranchi();
         const dropped = ago(5 * MIN);
-        tapped('w1', { leftAt: ago(13 * 3600_000), arrivedAt: ago(12 * 3600_000), doneAt: dropped });
+        const left = ago(13 * 3600_000);
+        const arrived = ago(12 * 3600_000);
+        tapped('w1', { leftAt: left, arrivedAt: arrived, doneAt: dropped });
         env.ctx.watchChanges_();
         const b = get('bookings/w1');
         const check = b.returnCheck;
@@ -2128,9 +2130,10 @@ describe('automation', () => {
         env.ctx.watchChanges_();
         assert.equal(env.pushes.length, n, 'priced once');
 
-        // Boarded: into the clock, and Telegram hears it.
+        // Boarded: into the clock, and Telegram hears it — a tap that adds only boardAt
+        // (the other times exactly as before, as on a real phone) is still seen.
         const boarded = ago(MIN);
-        tapped('w1', { leftAt: ago(13 * 3600_000), arrivedAt: ago(12 * 3600_000), doneAt: dropped, boardAt: boarded });
+        tapped('w1', { leftAt: left, arrivedAt: arrived, doneAt: dropped, boardAt: boarded });
         env.ctx.watchChanges_();
         assert.equal(get('bookings/w1').clock.boardAt.getTime(), boarded.getTime());
         assert.ok(env.telegram.some((m) => /Raju Sahu boarded his train home/.test(m.text)));
@@ -3324,6 +3327,11 @@ describe('web calls: within Google’s daily UrlFetch quota', () => {
     assert.equal(env.ctx.tapsPrint(null), '');
     assert.match(env.ctx.tapsPrint({ driverPhone: '9893302783', leftAt: new Date(0) }), /^[0-9a-f]{8}$/);
     assert.notEqual(env.ctx.tapsPrint({ driverPhone: '9893302783', leftAt: new Date(0) }), env.ctx.tapsPrint({ driverPhone: '9893302783', leftAt: new Date(1000) }));
+    // Boarded the train (one-way drops): a tap of its own, so it must change the print.
+    assert.notEqual(
+      env.ctx.tapsPrint({ driverPhone: '9893302783', leftAt: new Date(0), doneAt: new Date(1000) }),
+      env.ctx.tapsPrint({ driverPhone: '9893302783', leftAt: new Date(0), doneAt: new Date(1000), boardAt: new Date(2000) }),
+    );
   });
 
   test('the quota answers "too many times": the run stops at once, logged once, then a pause of half an hour', () => {
