@@ -385,10 +385,10 @@ export const homeText = (home: NonNullable<TripView['home']>) =>
 /** 1214 → "1,214 km" */
 export const kmText = (km: number) => `${new Intl.NumberFormat('en-IN').format(km)} km`;
 
-/** "2 days" / "2 days + 23 h for the driver to get home". */
+/** "2 days" / "2 days on the road + 23 h for him to get home". */
 export function tripDays(t: Pick<BookingTrip, 'kind' | 'days' | 'returnHours'>): string {
   const days = plural(t.days, 'day');
-  return t.kind === 'one-way' && t.returnHours > 0 ? `${days} + ${t.returnHours} h for the driver to get home` : days;
+  return t.kind === 'one-way' && t.returnHours > 0 ? `${days} on the road + ${t.returnHours} h for him to get home` : days;
 }
 
 /** One line for WhatsApp, the confirmation and the account page. */
