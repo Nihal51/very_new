@@ -3047,3 +3047,19 @@ describe('web calls: within Google’s daily UrlFetch quota', () => {
 function get(env, path) {
   return env.store.docs.has(path) ? env.ctx.fromFields(env.store.docs.get(path)) : null;
 }
+
+test('ticks share 3 s a minute of each hour (Google: 90 min a day of trigger time)', () => {
+  const env = load();
+  // 2 s a minute in hand at minute 0 (3 s + 15 s burst = 18 s); at minute 30, 93 s + 15 s.
+  assert.equal(env.ctx.tickAllowed_(0, 0), true);
+  assert.equal(env.ctx.tickAllowed_(17_999, 0), true);
+  assert.equal(env.ctx.tickAllowed_(18_000, 0), false);
+  assert.equal(env.ctx.tickAllowed_(100_000, 30), true);
+  assert.equal(env.ctx.tickAllowed_(108_000, 30), false);
+  assert.equal(env.ctx.tickAllowed_(194_999, 59), true);
+  assert.equal(env.ctx.tickAllowed_(195_000, 59), false);
+  // A tick records its time for the hour.
+  env.ctx.tick();
+  const used = JSON.parse(env.props.get('tickTime') || 'null');
+  assert.ok(used && typeof used.ms === 'number' && used.ms >= 0);
+});

@@ -1002,7 +1002,45 @@ function telegramDue_(m) {
 }
 
 /** Runs every minute (set up by setup()): the safety net behind the instant ping below. See "schedule". */
+/**
+ * Google gives a free (gmail.com) account 90 minutes a day of time-driven
+ * trigger time, and a tick takes several seconds (mostly waiting for
+ * Firestore). So ticks share TICK_SECONDS_PER_HOUR out evenly over each clock
+ * hour (about 3 s a minute, 72 min a day — the rest is for the 9 pm report,
+ * Monday's payouts and the 3 am timetables): a tick that would run ahead of
+ * that share returns at once. New bookings are not slowed: the website and
+ * the apps ring the doorbell (doPost), which handles them in seconds.
+ */
+var TICK_SECONDS_PER_HOUR = 180;
+var TICK_BURST_SECONDS = 15;
+
 function tick() {
+  var startMs = Date.now();
+  var props = PropertiesService.getScriptProperties();
+  var hour = String(Math.floor(startMs / 3600000));
+  var used;
+  try {
+    used = JSON.parse(props.getProperty('tickTime') || 'null');
+  } catch (err) {
+    used = null;
+  }
+  if (!used || used.h !== hour) used = { h: hour, ms: 0 };
+  var minute = Math.floor((startMs % 3600000) / 60000);
+  if (!tickAllowed_(used.ms, minute)) return;
+  try {
+    tickWork_();
+  } finally {
+    used.ms += Date.now() - startMs;
+    props.setProperty('tickTime', JSON.stringify(used));
+  }
+}
+
+/** Whether a tick may run at `minute` of the hour, `usedMs` of this hour's share already used. */
+function tickAllowed_(usedMs, minute) {
+  return usedMs < ((minute + 1) * TICK_SECONDS_PER_HOUR / 60 + TICK_BURST_SECONDS) * 1000;
+}
+
+function tickWork_() {
   var m = nowDate_().getMinutes();
   var budget = fetchBudget_();
   if (budget.n > FETCH_SLOW_ABOVE) {
